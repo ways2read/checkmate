@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+*.egg
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Packaging output (regenerate with scripts/package.py)
+dist/
+build/
+*.spec
+
+# Large binaries — downloaded by packaging / first-run scripts, not for git
+#   runtime/  = bundled Temurin JRE
+#   checker/  = bundled or locally fetched eBraille Checker
+runtime/
+checker/
+
+# Local IDE / OS
+.idea/
+.vscode/
+.cursor/
+*.log
+.DS_Store
+Thumbs.db
+
+# Accidental sample publications at repo root (testdata/ has its own ignore)
+*.ebrl
+*.Ebrl
+*.EBRL
+*.epub
+*.EPUB

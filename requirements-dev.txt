@@ -1,0 +1,6 @@
+# Development / packaging dependencies.
+# Prefer:  uv sync --extra dev
+# Or:      pip install -e ".[dev]"
+
+-e .
+pyinstaller>=6.0

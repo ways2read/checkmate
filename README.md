@@ -1,0 +1,288 @@
+# eBraille Checker GUI
+
+An accessible, cross-platform desktop front-end for the
+[DAISY eBraille Checker](https://github.com/daisy/ebraille-checker).
+
+The official checker is a Java command-line tool. This app wraps it so you can
+open a publication and see a clear result — **Passed**, **Passed with warnings**,
+or **Failed** — without typing `java -jar` commands or reading a long console log
+first.
+
+Built with [wxPython](https://wxpython.org/) for native widgets and screen reader
+support on Windows, macOS, and Linux.
+
+## Features
+
+- Open a packaged `.ebrl` / `.epub` file, or an exploded publication folder
+  (**Select file…** / **Select folder…**, or drag and drop) — checking starts
+  automatically
+- Result-first UI: multi-line verdict with counts; colour cues (green / orange /
+  red) reinforce the text; issues listed by severity
+- Filter issues (all / errors / warnings / info)
+- Optional full checker log for advanced diagnosis
+- Copy summary or save a text report; **Clear results** returns to the launch state
+- UI languages: English, Français, Español, Deutsch, Português (remembered;
+  first run follows the OS language when supported)
+- Downloads the eBraille Checker on first run when not bundled
+- In-app update check; updates install to application data and leave the bundled
+  install-folder copy untouched
+- Uses `-Xss4m` when launching Java to avoid known stack overflow crashes on
+  smaller JREs
+- **Packaged builds** can include bundled Eclipse Temurin JRE and eBraille
+  Checker (works offline on first launch)
+
+## Requirements
+
+### Running from source (developers)
+
+- **Python** 3.10 or newer
+- **Java** Runtime (JRE 17+ recommended) on your `PATH`, *or* a local `runtime/`
+  folder (see packaging below)
+- **Network** on first launch (to download the checker), and when checking for
+  updates
+
+The checker jar is fetched from
+[daisy/ebraille-checker releases](https://github.com/daisy/ebraille-checker/releases).
+
+### Running a packaged build (end users)
+
+- No system Java required — the distribution includes `runtime/` with Temurin JRE 17
+- No download required on first run when `checker/` is bundled with the app
+- Network only needed when checking for checker updates (or if built with
+  `--no-bundle-checker`)
+
+## Install (developers)
+
+With [uv](https://docs.astral.sh/uv/) (recommended):
+
+```bash
+git clone https://github.com/ways2read/ebraille-checker-gui.git
+cd ebraille-checker-gui
+uv sync
+```
+
+With pip:
+
+```bash
+git clone https://github.com/ways2read/ebraille-checker-gui.git
+cd ebraille-checker-gui
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # macOS / Linux
+pip install -r requirements.txt
+```
+
+## Run
+
+```bash
+uv run python run.py
+# or, with venv activated:
+python run.py
+python -m app
+```
+
+## Using the app
+
+1. **Select file…** or **Select folder…**, or **drag and drop** a publication
+   onto the window — checking starts automatically.
+2. Read the **Result** summary (focus moves there when a check finishes), then
+   review **Issues** (filterable).
+3. Use **Show full log** only when you need the raw checker output.
+4. **Tools → Re-check publication** (`F5`) re-runs the current path after you
+   fix issues.
+5. **Edit → Clear results** (`Ctrl+Shift+N`) clears the path, verdict, issues,
+   and log back to the launch state.
+6. **Tools → Check for updates…** offers to download a newer eBraille Checker
+   release when one exists.
+
+The **title bar** keeps the app name and appends the verdict (for example
+`eBraille Checker — Failed — 3 errors`). The **status bar** shows checker and
+Java version information only.
+
+### Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+O` | Select file |
+| `Ctrl+Shift+O` | Select folder |
+| `F5` | Re-check current publication |
+| `Ctrl+S` | Save report |
+| `Ctrl+Shift+C` | Copy summary |
+| `Ctrl+Shift+N` | Clear results |
+| `Ctrl+L` | Show/hide full log |
+| `Esc` | Exit |
+| Enter (in path field) | Check the path currently shown |
+| Alt+letter | Button / menu mnemonics (underlined letters) |
+
+### Where data is stored
+
+**Checker** — the app uses the newest available copy in this order:
+
+1. **Updated copy** in application data (after you accept an in-app update)
+2. **Bundled copy** shipped with the packaged app (`checker/` next to the executable)
+3. **Downloaded copy** on first run (when running from source without a bundle)
+
+| OS | Application data |
+|---|---|
+| Windows | `%LOCALAPPDATA%\eBrailleCheckerGUI\` |
+| macOS | `~/Library/Application Support/eBrailleCheckerGUI/` |
+| Linux | `~/.local/share/eBrailleCheckerGUI/` |
+
+Under that folder:
+
+- `checker/` — downloaded or updated checker releases
+- `settings.json` — remembered UI language
+
+Packaged builds also include `checker/` beside the executable (or inside the
+`.app` bundle on macOS).
+
+## Accessibility
+
+- Native wxPython controls (menus, buttons, list, text fields)
+- Logical focus order; the **Result** pane is a large, bold, focusable
+  read-only multi-line field so screen readers can tab in and re-read with the
+  caret (Up/Down by line, Left/Right by character)
+- When a check finishes, focus moves to Result (with a brief leave/refocus if
+  it already had focus). The result text is selected on focus so screen readers
+  announce it; arrow keys then allow line/character review
+- Accessible name includes the verdict text; the window title also appends it
+- **Language** menu: English, Français, Español, Deutsch, Português
+- Severity and pass/fail are always in text; result colour is only a visual cue
+
+Designed for use with NVDA, JAWS, Narrator, and VoiceOver. Feedback on
+accessibility gaps is welcome via GitHub issues.
+
+## Equivalent command line
+
+This app runs the same checker you would invoke manually. For a packaged file:
+
+```bash
+java -Xss4m -jar path\to\ebraille-checker.jar --profile ebraille publication.ebrl
+```
+
+For an exploded (unpacked) publication folder:
+
+```bash
+java -Xss4m -jar path\to\ebraille-checker.jar -mode exp --profile ebraille path\to\folder
+```
+
+`-Xss4m` increases the Java thread stack size. Without it, some publications can
+trigger `java.lang.StackOverflowError` during RelaxNG validation on smaller JREs.
+
+## Troubleshooting
+
+### “Java was not found”
+
+**Packaged build:** use the full `dist/eBrailleChecker/` folder (or `.app` on macOS).
+It must contain a `runtime/` directory next to the executable. Do not copy only
+the `.exe` without the rest of the folder.
+
+**From source:** install a JRE or JDK (17+ recommended), ensure `java -version`
+works in a terminal, then restart. Or download a local runtime:
+
+```bash
+uv run python scripts/jre_bundle.py
+```
+
+The app prefers `runtime/bin/java` (bundled) over Java on your `PATH`.
+
+### `StackOverflowError` when running the jar yourself
+
+Add `-Xss4m` (or `-Xss8m`) before `-jar`, as shown above. The GUI already does this.
+
+### Checker download fails
+
+Check your network and GitHub availability, then use
+**Tools → Download / reinstall checker…**, or download the zip manually from the
+[releases page](https://github.com/daisy/ebraille-checker/releases) and extract
+`ebraille-checker.jar` into the application data `checker/` folder listed above.
+
+### Extension case (`.eBRL` vs `.ebrl`)
+
+The checker may report that a packaged eBraille file must use the lowercase
+extension `.ebrl`. Rename the file if needed.
+
+## Project layout
+
+```text
+ebraille-checker-gui/
+  app/
+    main.py            # wxPython UI
+    checker.py         # Run jar, parse JSON results
+    updater.py         # GitHub release download / update
+    java_util.py       # Locate Java (bundled or PATH)
+    models.py          # Verdict and issue models
+    i18n.py            # UI translations
+    settings.py        # Persisted preferences
+    paths.py           # App data and bundle locations
+    subprocess_util.py # Quiet subprocess helpers (Windows)
+  run.py               # Launcher (incl. SSL cert setup when frozen)
+  scripts/
+    package.py         # PyInstaller + bundled JRE and checker
+    jre_bundle.py      # Download Temurin JRE into runtime/
+    checker_bundle.py  # Download eBraille Checker into checker/
+  pyproject.toml
+  requirements.txt
+  requirements-dev.txt
+  testdata/            # Optional local sample publications (not shipped)
+```
+
+## Packaging
+
+Build a standalone app on each target OS (Windows or macOS). The script bundles
+**Eclipse Temurin JRE 17** and **eBraille Checker** by default.
+
+```bash
+uv sync --extra dev
+uv run python scripts/package.py --clean
+```
+
+Options:
+
+```bash
+uv run python scripts/package.py --no-bundle-java      # smaller build; needs system Java
+uv run python scripts/package.py --no-bundle-checker   # checker downloaded on first run
+uv run python scripts/package.py --onefile             # not recommended with bundles
+```
+
+Output layout (Windows example):
+
+```text
+dist/eBrailleChecker/
+  eBrailleChecker.exe
+  runtime/              # bundled Temurin JRE
+    bin/java.exe
+  checker/              # bundled eBraille Checker
+    bundled_version.txt
+    …/ebraille-checker.jar
+  … (PyInstaller support files)
+```
+
+Distribute the **entire folder** (or zip it).
+
+When a newer checker is released, **Tools → Check for updates…** compares against
+the version in use (bundled or previously updated). Accepting an update downloads
+the new release into application data; the bundled copy in the install folder is
+not modified.
+
+## Test data
+
+Place your own `.ebrl` files or exploded folders under `testdata/` for local
+testing. Sample publications are **not** included in the repository.
+
+## Credits
+
+- Conformance checking is performed by
+  [eBraille Checker](https://github.com/daisy/ebraille-checker) from the
+  [DAISY Consortium](https://daisy.org/), based on EPUBCheck.
+- Learn about the [eBraille standard](https://daisy.org/activities/standards/ebraille/)
+  and the [eBraille specification](https://daisy.org/s/ebraille/).
+- This GUI is a separate front-end project and is not an official DAISY release.
+
+## License
+
+This project (the GUI) is released under the [MIT License](LICENSE).
+
+The eBraille Checker jar downloaded at runtime remains under its own license
+(BSD 3-Clause); see the
+[upstream repository](https://github.com/daisy/ebraille-checker).

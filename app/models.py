@@ -1,0 +1,133 @@
+"""Result models for checker runs."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+
+from .i18n import _, ngettext
+
+
+class Severity(str, Enum):
+    FATAL = "fatal"
+    ERROR = "error"
+    WARNING = "warning"
+    INFO = "info"
+    USAGE = "usage"
+    UNKNOWN = "unknown"
+
+    @classmethod
+    def from_string(cls, value: str | None) -> Severity:
+        if not value:
+            return cls.UNKNOWN
+        key = value.strip().lower()
+        for member in cls:
+            if member.value == key:
+                return member
+        return cls.UNKNOWN
+
+    @property
+    def label(self) -> str:
+        return {
+            Severity.FATAL: _("Fatal"),
+            Severity.ERROR: _("Error"),
+            Severity.WARNING: _("Warning"),
+            Severity.INFO: _("Info"),
+            Severity.USAGE: _("Usage"),
+            Severity.UNKNOWN: _("Unknown"),
+        }[self]
+
+
+class Verdict(str, Enum):
+    PASSED = "passed"
+    PASSED_WITH_WARNINGS = "passed_with_warnings"
+    FAILED = "failed"
+    ERROR = "error"  # tool/runtime failure
+
+    @property
+    def label(self) -> str:
+        return {
+            Verdict.PASSED: _("Passed"),
+            Verdict.PASSED_WITH_WARNINGS: _("Passed with warnings"),
+            Verdict.FAILED: _("Failed"),
+            Verdict.ERROR: _("Could not complete check"),
+        }[self]
+
+
+SEVERITY_ORDER = {
+    Severity.FATAL: 0,
+    Severity.ERROR: 1,
+    Severity.WARNING: 2,
+    Severity.INFO: 3,
+    Severity.USAGE: 4,
+    Severity.UNKNOWN: 5,
+}
+
+
+@dataclass
+class Issue:
+    severity: Severity
+    code: str
+    message: str
+    location: str = ""
+
+    def summary_line(self) -> str:
+        parts = [self.severity.label, self.code]
+        if self.location:
+            parts.append(self.location)
+        head = "  ".join(p for p in parts if p)
+        return f"{head}: {self.message}" if self.message else head
+
+
+@dataclass
+class CheckResult:
+    verdict: Verdict
+    fatals: int = 0
+    errors: int = 0
+    warnings: int = 0
+    infos: int = 0
+    usages: int = 0
+    issues: list[Issue] = field(default_factory=list)
+    raw_log: str = ""
+    exit_code: int | None = None
+    command: list[str] = field(default_factory=list)
+    error_message: str = ""
+
+    @property
+    def headline(self) -> str:
+        """Single-line summary for title bar, clipboard, and announcements."""
+        return " — ".join(self.result_lines)
+
+    @property
+    def result_display(self) -> str:
+        """Multi-line text for the result pane (Up/Down line navigation)."""
+        return "\n".join(self.result_lines)
+
+    @property
+    def result_lines(self) -> list[str]:
+        if self.verdict == Verdict.ERROR:
+            if self.error_message:
+                # Keep the verdict on its own line; put the detail below.
+                msg = self.error_message.strip()
+                if msg.lower().startswith(self.verdict.label.lower()):
+                    return [msg]
+                return [self.verdict.label, msg]
+            return [self.verdict.label]
+
+        parts: list[str] = []
+        if self.fatals:
+            parts.append(ngettext("{n} fatal", "{n} fatals", self.fatals))
+        if self.errors:
+            parts.append(ngettext("{n} error", "{n} errors", self.errors))
+        if self.warnings:
+            parts.append(ngettext("{n} warning", "{n} warnings", self.warnings))
+
+        label = self.verdict.label
+        if not parts:
+            if self.verdict == Verdict.FAILED:
+                return [label, _("see the full log for details")]
+            return [label, _("no errors or warnings")]
+        return [label, ", ".join(parts)]
+
+    def announcement(self) -> str:
+        return _("Check finished. {headline}.", headline=self.headline)
