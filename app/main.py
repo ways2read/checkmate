@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 from pathlib import Path
 
 import wx
 import wx.adv
+import wx.dataview as dv
 import wx.lib.newevent
 
 from . import __version__
@@ -46,6 +48,56 @@ UpdateInfoEvent, EVT_UPDATE_INFO = wx.lib.newevent.NewEvent()
 InstallDoneEvent, EVT_INSTALL_DONE = wx.lib.newevent.NewEvent()
 JavaMissingEvent, EVT_JAVA_MISSING = wx.lib.newevent.NewEvent()
 
+# ListCtrl is native on Windows but generic (and VoiceOver/Orca-invisible) on
+# macOS/Linux. DataViewListCtrl is the reverse — use the native control per OS.
+_USE_DATAVIEW_ISSUES = sys.platform != "win32"
+
+
+def _macos_make_first_responder(window: wx.Window) -> bool:
+    """Set Cocoa first responder. wx.SetFocus often fails when a TextCtrl exists."""
+    handle = window.GetHandle()
+    if not handle:
+        return False
+    try:
+        import ctypes
+        import ctypes.util
+
+        lib = ctypes.util.find_library("objc")
+        if not lib:
+            return False
+        objc = ctypes.cdll.LoadLibrary(lib)
+        objc.sel_registerName.restype = ctypes.c_void_p
+        objc.sel_registerName.argtypes = [ctypes.c_char_p]
+
+        def _sel(name: str) -> ctypes.c_void_p:
+            return objc.sel_registerName(name.encode("utf-8"))
+
+        nsview = ctypes.c_void_p(handle)
+        send = objc.objc_msgSend
+        send.restype = ctypes.c_void_p
+        send.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        nswindow = send(nsview, _sel("window"))
+        if not nswindow:
+            return False
+
+        send_bool = objc.objc_msgSend
+        send_bool.restype = ctypes.c_bool
+        send_bool.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        ]
+        ok = bool(
+            send_bool(
+                ctypes.c_void_p(nswindow),
+                _sel("makeFirstResponder:"),
+                nsview,
+            )
+        )
+        return ok
+    except Exception:
+        return False
+
 
 def app_title() -> str:
     return _("eBraille Checker")
@@ -58,6 +110,96 @@ def filter_choices() -> tuple[str, ...]:
         _("Warnings only"),
         _("Info / usage"),
     )
+
+
+def _issue_column_specs() -> tuple[tuple[str, int], ...]:
+    return (
+        (_("Severity"), 90),
+        (_("Code"), 100),
+        (_("Location"), 280),
+        (_("Message"), 320),
+    )
+
+
+class IssuesList:
+    """Issues table with a ListCtrl-like API over the platform-native control."""
+
+    def __init__(self, parent: wx.Window, name: str) -> None:
+        self._dataview = _USE_DATAVIEW_ISSUES
+        if self._dataview:
+            self.ctrl: wx.Window = dv.DataViewListCtrl(
+                parent,
+                style=dv.DV_SINGLE | dv.DV_ROW_LINES | wx.BORDER_SUNKEN,
+            )
+            assert isinstance(self.ctrl, dv.DataViewListCtrl)
+            self.ctrl.SetName(name)
+            for title, width in _issue_column_specs():
+                self.ctrl.AppendTextColumn(
+                    title, width=width, mode=dv.DATAVIEW_CELL_INERT
+                )
+        else:
+            self.ctrl = wx.ListCtrl(
+                parent,
+                style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_SUNKEN,
+                name=name,
+            )
+            assert isinstance(self.ctrl, wx.ListCtrl)
+            for idx, (title, width) in enumerate(_issue_column_specs()):
+                self.ctrl.InsertColumn(idx, title, width=width)
+
+    def SetName(self, name: str) -> None:
+        self.ctrl.SetName(name)
+
+    def SetDropTarget(self, target: wx.DropTarget) -> None:
+        self.ctrl.SetDropTarget(target)
+
+    def Bind(self, event, handler) -> None:
+        self.ctrl.Bind(event, handler)
+
+    def DeleteAllItems(self) -> None:
+        # Both DataViewListCtrl and ListCtrl expose DeleteAllItems.
+        self.ctrl.DeleteAllItems()  # type: ignore[attr-defined]
+
+    def GetItemCount(self) -> int:
+        return int(self.ctrl.GetItemCount())  # type: ignore[attr-defined]
+
+    def AppendRow(
+        self, severity: str, code: str, location: str, message: str
+    ) -> None:
+        if self._dataview:
+            assert isinstance(self.ctrl, dv.DataViewListCtrl)
+            self.ctrl.AppendItem([severity, code, location, message])
+            return
+        assert isinstance(self.ctrl, wx.ListCtrl)
+        idx = self.ctrl.InsertItem(self.ctrl.GetItemCount(), severity)
+        self.ctrl.SetItem(idx, 1, code)
+        self.ctrl.SetItem(idx, 2, location)
+        self.ctrl.SetItem(idx, 3, message)
+
+    def SetColumnTitles(self, titles: tuple[str, ...]) -> None:
+        for idx, title in enumerate(titles):
+            if self._dataview:
+                assert isinstance(self.ctrl, dv.DataViewListCtrl)
+                self.ctrl.GetColumn(idx).SetTitle(title)
+            else:
+                assert isinstance(self.ctrl, wx.ListCtrl)
+                col = self.ctrl.GetColumn(idx)
+                col.SetText(title)
+                self.ctrl.SetColumn(idx, col)
+
+    def EnsureRowFocus(self) -> None:
+        if self.GetItemCount() <= 0:
+            return
+        if self._dataview:
+            assert isinstance(self.ctrl, dv.DataViewListCtrl)
+            if self.ctrl.GetSelectedRow() < 0:
+                self.ctrl.SelectRow(0)
+            self.ctrl.SetFocus()
+            return
+        assert isinstance(self.ctrl, wx.ListCtrl)
+        if self.ctrl.GetFocusedItem() < 0:
+            self.ctrl.Focus(0)
+            self.ctrl.Select(0)
 
 
 class AboutDialog(wx.Dialog):
@@ -145,6 +287,7 @@ class MainFrame(wx.Frame):
         self._last_result: CheckResult | None = None
         self._busy = False
         self._lang_menu_items: dict[str, wx.MenuItem] = {}
+        self._initial_focus_pending = True
         self._build_ui()
         self._bind()
         self._enable_drag_drop()
@@ -152,7 +295,13 @@ class MainFrame(wx.Frame):
         self.SetStatusText(_("Starting…"))
         self.Centre()
         self.Layout()
-        wx.CallAfter(self._focus_select_button)
+        if sys.platform == "darwin":
+            # On macOS, Cocoa assigns first responder to the path TextCtrl when
+            # the window activates; wx.SetFocus cannot override that. Use native
+            # makeFirstResponder once the frame becomes active.
+            self.Bind(wx.EVT_ACTIVATE, self._on_initial_activate_focus)
+        else:
+            wx.CallAfter(self._focus_select_button)
         wx.CallAfter(self._startup_tasks)
 
     def _set_result_title(self, summary: str | None = None) -> None:
@@ -196,7 +345,7 @@ class MainFrame(wx.Frame):
         elsewhere then returning triggers a fresh focus event.
         """
         if self.result_label.HasFocus():
-            self.select_file_btn.SetFocus()
+            self._focus_select_button()
             wx.CallAfter(self._return_focus_to_result)
         else:
             self.result_label.SetFocus()
@@ -241,7 +390,29 @@ class MainFrame(wx.Frame):
         wx.CallAfter(self._prepare_result_for_review)
 
     def _focus_select_button(self) -> None:
+        if sys.platform == "darwin":
+            # wx.SetFocus is unreliable on macOS whenever a TextCtrl is present;
+            # Cocoa keeps/returns first responder to the text field.
+            if not _macos_make_first_responder(self.select_file_btn):
+                self.select_file_btn.SetFocus()
+            return
         self.select_file_btn.SetFocus()
+
+    def _focus_select_button_if_still_on_path(self) -> None:
+        """Initial-focus retry: only steal focus back from the path field."""
+        focused = wx.Window.FindFocus()
+        if focused is None or focused is self.path_ctrl:
+            self._focus_select_button()
+
+    def _on_initial_activate_focus(self, event: wx.ActivateEvent) -> None:
+        event.Skip()
+        if not event.GetActive() or not self._initial_focus_pending:
+            return
+        self._initial_focus_pending = False
+        self.Unbind(wx.EVT_ACTIVATE, handler=self._on_initial_activate_focus)
+        # Defer past Cocoa's default first-responder assignment to the path field.
+        wx.CallLater(50, self._focus_select_button)
+        wx.CallLater(300, self._focus_select_button_if_still_on_path)
 
     def _build_ui(self) -> None:
         panel = wx.Panel(self)
@@ -253,14 +424,8 @@ class MainFrame(wx.Frame):
 
         path_row = wx.BoxSizer(wx.HORIZONTAL)
         self.path_label = wx.StaticText(panel, label=_("Path:"))
-        self.path_ctrl = wx.TextCtrl(
-            panel, style=wx.TE_PROCESS_ENTER, name=_("Publication")
-        )
-        self.path_ctrl.SetHint(
-            _(
-                "Select or drop a .ebrl file or folder — checking starts automatically"
-            )
-        )
+        # Create the primary action before the path field so it appears earlier
+        # in the macOS accessibility tree (VoiceOver often starts there).
         self.select_file_btn = wx.Button(panel, label=_("Select &file…"))
         self.select_file_btn.SetName(_("Select file"))
         self.select_file_btn.SetToolTip(
@@ -271,6 +436,16 @@ class MainFrame(wx.Frame):
         self.select_folder_btn.SetToolTip(
             _("Select an exploded publication folder (Ctrl+Shift+O)")
         )
+        self.path_ctrl = wx.TextCtrl(
+            panel, style=wx.TE_PROCESS_ENTER, name=_("Publication")
+        )
+        self.path_ctrl.SetHint(
+            _(
+                "Select or drop a .ebrl file or folder — checking starts automatically"
+            )
+        )
+        # Keep visual/tab order: path → select file → select folder.
+        self.path_ctrl.MoveBeforeInTabOrder(self.select_file_btn)
         path_row.Add(self.path_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         path_row.Add(self.path_ctrl, 1, wx.EXPAND | wx.RIGHT, 8)
         path_row.Add(self.select_file_btn, 0, wx.RIGHT, 4)
@@ -316,21 +491,16 @@ class MainFrame(wx.Frame):
         filter_row.Add(self.copy_btn, 0, wx.RIGHT, 4)
         filter_row.Add(self.save_btn, 0)
 
-        self.issues_list = wx.ListCtrl(
-            panel,
-            style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_SUNKEN,
-            name=_("Issues list"),
-        )
-        self.issues_list.InsertColumn(0, _("Severity"), width=90)
-        self.issues_list.InsertColumn(1, _("Code"), width=100)
-        self.issues_list.InsertColumn(2, _("Location"), width=280)
-        self.issues_list.InsertColumn(3, _("Message"), width=320)
+        self.issues_list = IssuesList(panel, name=_("Issues list"))
         self.issues_list.Bind(wx.EVT_SET_FOCUS, self.on_issues_list_focus)
         self.issues_list.Bind(wx.EVT_CHILD_FOCUS, self.on_issues_list_focus)
 
         issues_sizer.Add(filter_row, 0, wx.EXPAND | wx.ALL, 8)
         issues_sizer.Add(
-            self.issues_list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8
+            self.issues_list.ctrl,
+            1,
+            wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
+            8,
         )
         root.Add(issues_sizer, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
@@ -504,14 +674,9 @@ class MainFrame(wx.Frame):
         self.save_btn.SetLabel(_("&Save report…"))
         self.save_btn.SetToolTip(_("Save the report to a file (Ctrl+S)"))
         self.issues_list.SetName(_("Issues list"))
-        self.issues_list.SetColumnWidth(0, self.issues_list.GetColumnWidth(0))
-        # Column titles
-        for idx, title in enumerate(
+        self.issues_list.SetColumnTitles(
             (_("Severity"), _("Code"), _("Location"), _("Message"))
-        ):
-            col = self.issues_list.GetColumn(idx)
-            col.SetText(title)
-            self.issues_list.SetColumn(idx, col)
+        )
         show_log = self.log_ctrl.IsShown()
         self.log_toggle.SetLabel(
             _("Hide full &log") if show_log else _("Show full &log")
@@ -602,6 +767,7 @@ class MainFrame(wx.Frame):
             wx.OK | wx.ICON_WARNING,
             self,
         )
+        self._focus_select_button()
 
     # --- Helpers ---
 
@@ -626,7 +792,7 @@ class MainFrame(wx.Frame):
         self.log_ctrl.ChangeValue("")
         self._set_log_visible(False)
         self._update_status_bar()
-        self.select_file_btn.SetFocus()
+        self._focus_select_button()
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -693,12 +859,12 @@ class MainFrame(wx.Frame):
                 Severity.USAGE,
             ):
                 continue
-            idx = self.issues_list.InsertItem(
-                self.issues_list.GetItemCount(), issue.severity.label
+            self.issues_list.AppendRow(
+                issue.severity.label,
+                issue.code,
+                issue.location,
+                issue.message,
             )
-            self.issues_list.SetItem(idx, 1, issue.code)
-            self.issues_list.SetItem(idx, 2, issue.location)
-            self.issues_list.SetItem(idx, 3, issue.message)
         # Do not Focus()/Select() here — that steals keyboard focus from the
         # result pane and prevents screen readers from announcing the verdict.
 
@@ -764,7 +930,7 @@ class MainFrame(wx.Frame):
                 wx.OK | wx.ICON_INFORMATION,
                 self,
             )
-            self.select_file_btn.SetFocus()
+            self._focus_select_button()
             return
         if not path.exists():
             wx.MessageBox(
@@ -810,14 +976,7 @@ class MainFrame(wx.Frame):
     def on_issues_list_focus(self, event: wx.FocusEvent) -> None:
         event.Skip()
         # Tabbing into the list often lands on the header first; move to row 0.
-        wx.CallAfter(self._ensure_issues_row_focus)
-
-    def _ensure_issues_row_focus(self) -> None:
-        if self.issues_list.GetItemCount() <= 0:
-            return
-        if self.issues_list.GetFocusedItem() < 0:
-            self.issues_list.Focus(0)
-            self.issues_list.Select(0)
+        wx.CallAfter(self.issues_list.EnsureRowFocus)
 
     def on_toggle_log(self, event: wx.CommandEvent) -> None:
         show = bool(event.IsChecked()) if hasattr(event, "IsChecked") else self.log_toggle.GetValue()
