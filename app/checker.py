@@ -14,7 +14,7 @@ from .subprocess_util import hidden_run_kwargs
 from .updater import ensure_checker_installed, read_effective_version
 
 
-PACKAGED_SUFFIXES = {".ebrl", ".epub", ".zip"}
+PACKAGED_SUFFIXES = {".ebrl", ".zip"}
 
 
 def is_packaged_path(path: Path) -> bool:
@@ -286,7 +286,7 @@ def run_check(
             return CheckResult(
                 verdict=Verdict.ERROR,
                 error_message=(
-                    "Choose a packaged .ebrl/.epub file or an exploded publication folder."
+                    "Choose a packaged .ebrl file or an exploded publication folder."
                 ),
             )
 

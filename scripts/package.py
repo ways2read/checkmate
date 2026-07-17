@@ -16,6 +16,7 @@ default so end users do not need Java on their PATH.
 from __future__ import annotations
 
 import argparse
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -24,6 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 APP_NAME = "eBrailleChecker"
 ENTRY = ROOT / "run.py"
+APP_ICON = ROOT / "installer" / "eBrailleChecker.ico"
 
 
 def _ensure_pyinstaller() -> None:
@@ -65,6 +67,43 @@ def _checker_dir_for_output(output: Path) -> Path:
     if output.is_dir():
         return output / "checker"
     return output.parent / "checker"
+
+
+def _patch_macos_document_types(app_bundle: Path) -> None:
+    """Declare .ebrl for Finder Open With (Alternate — not the default double-click app)."""
+    info_plist = app_bundle / "Contents" / "Info.plist"
+    if not info_plist.is_file():
+        print(f"Warning: Info.plist not found at {info_plist}", file=sys.stderr)
+        return
+
+    with info_plist.open("rb") as fh:
+        info = plistlib.load(fh)
+
+    info["CFBundleDocumentTypes"] = [
+        {
+            "CFBundleTypeName": "eBraille Publication",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["org.daisy.ebraille"],
+            "CFBundleTypeExtensions": ["ebrl"],
+        }
+    ]
+    info["UTExportedTypeDeclarations"] = [
+        {
+            "UTTypeIdentifier": "org.daisy.ebraille",
+            "UTTypeDescription": "eBraille Publication",
+            "UTTypeConformsTo": ["public.data", "public.composite-content"],
+            "UTTypeTagSpecification": {
+                "public.filename-extension": ["ebrl"],
+            },
+        }
+    ]
+    # Ensure the process can receive Apple Events for document open
+    info["NSAppleScriptEnabled"] = True
+
+    with info_plist.open("wb") as fh:
+        plistlib.dump(info, fh)
+    print(f"Registered .ebrl document type in {info_plist}")
 
 
 def build(onefile: bool, clean: bool, bundle_java: bool, bundle_checker: bool) -> Path:
@@ -121,6 +160,11 @@ def build(onefile: bool, clean: bool, bundle_java: bool, bundle_checker: bool) -
         "app",
     ]
 
+    if APP_ICON.is_file():
+        cmd.extend(["--icon", str(APP_ICON)])
+    else:
+        print(f"Warning: app icon not found at {APP_ICON}", file=sys.stderr)
+
     if onefile:
         cmd.append("--onefile")
     else:
@@ -134,6 +178,16 @@ def build(onefile: bool, clean: bool, bundle_java: bool, bundle_checker: bool) -
 
     subprocess.run(cmd, cwd=ROOT, check=True)
     output = _resolve_output(dist_dir, onefile)
+
+    if (
+        sys.platform == "darwin"
+        and output.is_dir()
+        and output.suffix == ".app"
+        and not onefile
+    ):
+        print()
+        print("Registering .ebrl document types in Info.plist…")
+        _patch_macos_document_types(output)
 
     if bundle_java:
         if onefile:

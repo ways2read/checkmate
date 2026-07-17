@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "ways2read" }]
-keywords = ["ebraille", "accessibility", "epub", "validation", "daisy"]
+keywords = ["ebraille", "accessibility", "validation", "daisy"]
 dependencies = [
     "wxPython>=4.2.0",
     "requests>=2.31.0",

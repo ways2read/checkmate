@@ -2,7 +2,7 @@
 
 Put local sample publications here while developing or testing the GUI:
 
-- Packaged files: `*.ebrl` or `*.epub`
+- Packaged files: `*.ebrl`
 - Exploded publications: a folder containing `package.opf` (and related files)
 
 These files are ignored by git so copyrighted or private publications are not

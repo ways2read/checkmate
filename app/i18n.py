@@ -119,19 +119,20 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Une vérification est déjà en cours. Attendez la fin, puis déposez à nouveau."
         ),
         "Unsupported drop": "Dépôt non pris en charge",
-        "Drop a packaged .ebrl/.epub file or an exploded publication folder.": (
-            "Déposez un fichier .ebrl/.epub empaqueté ou un dossier de publication décompressé."
+        "Drop a packaged .ebrl file or an exploded publication folder.": (
+            "Déposez un fichier .ebrl empaqueté ou un dossier de publication décompressé."
         ),
         "Using first publication ({name}); ignored {count} other item(s).": (
             "Utilisation de la première publication ({name}) ; "
             "{count} autre(s) élément(s) ignoré(s)."
         ),
-        "Select an eBraille or EPUB publication": (
-            "Sélectionner une publication eBraille ou EPUB"
+        "Multiple items": "Plusieurs éléments",
+        "Select an eBraille publication": (
+            "Sélectionner une publication eBraille"
         ),
-        "eBraille/EPUB (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+        "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
         "All files (*.*)|*.*": (
-            "eBraille/EPUB (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+            "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
             "Tous les fichiers (*.*)|*.*"
         ),
         "Select an exploded eBraille publication folder": (
@@ -321,19 +322,20 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Ya hay una comprobación en curso. Espere a que termine y vuelva a soltar."
         ),
         "Unsupported drop": "Soltar no admitido",
-        "Drop a packaged .ebrl/.epub file or an exploded publication folder.": (
-            "Suelte un archivo .ebrl/.epub empaquetado o una carpeta de publicación descomprimida."
+        "Drop a packaged .ebrl file or an exploded publication folder.": (
+            "Suelte un archivo .ebrl empaquetado o una carpeta de publicación descomprimida."
         ),
         "Using first publication ({name}); ignored {count} other item(s).": (
             "Usando la primera publicación ({name}); "
             "se ignoraron {count} elemento(s)."
         ),
-        "Select an eBraille or EPUB publication": (
-            "Seleccionar una publicación eBraille o EPUB"
+        "Multiple items": "Varios elementos",
+        "Select an eBraille publication": (
+            "Seleccionar una publicación eBraille"
         ),
-        "eBraille/EPUB (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+        "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
         "All files (*.*)|*.*": (
-            "eBraille/EPUB (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+            "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
             "Todos los archivos (*.*)|*.*"
         ),
         "Select an exploded eBraille publication folder": (
@@ -526,20 +528,21 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Eine Prüfung läuft bereits. Warten Sie auf das Ende und ziehen Sie erneut."
         ),
         "Unsupported drop": "Ablegen nicht unterstützt",
-        "Drop a packaged .ebrl/.epub file or an exploded publication folder.": (
-            "Legen Sie eine gepackte .ebrl/.epub-Datei oder einen entpackten "
+        "Drop a packaged .ebrl file or an exploded publication folder.": (
+            "Legen Sie eine gepackte .ebrl-Datei oder einen entpackten "
             "Publikationsordner ab."
         ),
         "Using first publication ({name}); ignored {count} other item(s).": (
             "Erste Publikation wird verwendet ({name}); "
             "{count} weitere(s) Element(e) ignoriert."
         ),
-        "Select an eBraille or EPUB publication": (
-            "eBraille- oder EPUB-Publikation auswählen"
+        "Multiple items": "Mehrere Elemente",
+        "Select an eBraille publication": (
+            "eBraille-Publikation auswählen"
         ),
-        "eBraille/EPUB (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+        "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
         "All files (*.*)|*.*": (
-            "eBraille/EPUB (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+            "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
             "Alle Dateien (*.*)|*.*"
         ),
         "Select an exploded eBraille publication folder": (
@@ -729,19 +732,20 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Já existe uma verificação em curso. Aguarde que termine e solte novamente."
         ),
         "Unsupported drop": "Soltar não suportado",
-        "Drop a packaged .ebrl/.epub file or an exploded publication folder.": (
-            "Solte um ficheiro .ebrl/.epub empacotado ou uma pasta de publicação descompactada."
+        "Drop a packaged .ebrl file or an exploded publication folder.": (
+            "Solte um ficheiro .ebrl empacotado ou uma pasta de publicação descompactada."
         ),
         "Using first publication ({name}); ignored {count} other item(s).": (
             "A utilizar a primeira publicação ({name}); "
             "ignorado(s) {count} outro(s) item(ns)."
         ),
-        "Select an eBraille or EPUB publication": (
-            "Selecionar uma publicação eBraille ou EPUB"
+        "Multiple items": "Vários itens",
+        "Select an eBraille publication": (
+            "Selecionar uma publicação eBraille"
         ),
-        "eBraille/EPUB (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+        "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
         "All files (*.*)|*.*": (
-            "eBraille/EPUB (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+            "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
             "Todos os ficheiros (*.*)|*.*"
         ),
         "Select an exploded eBraille publication folder": (

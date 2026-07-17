@@ -13,9 +13,13 @@ support on Windows, macOS, and Linux.
 
 ## Features
 
-- Open a packaged `.ebrl` / `.epub` file, or an exploded publication folder
+- Open a packaged `.ebrl` file, or an exploded publication folder
   (**Select file…** / **Select folder…**, or drag and drop) — checking starts
   automatically
+- On Windows, right-click an `.ebrl` → **Validate with eBraille Checker**, or
+  **Open with** → eBraille Checker (does not change the double-click default)
+- On macOS packaged builds, Finder **Open With** for `.ebrl` (does not take over
+  double-click by default)
 - Result-first UI: multi-line verdict with counts; colour cues (green / orange /
   red) reinforce the text; issues listed by severity
 - Filter issues (all / errors / warnings / info)
@@ -84,7 +88,10 @@ python -m app
 ## Using the app
 
 1. **Select file…** or **Select folder…**, or **drag and drop** a publication
-   onto the window — checking starts automatically.
+   onto the window — checking starts automatically. On Windows you can also
+   right-click an `.ebrl` → **Validate with eBraille Checker**, or
+   **Open with** → eBraille Checker. On macOS, use Finder **Open With** for a
+   packaged `.app`.
 2. Read the **Result** summary (focus moves there when a check finishes), then
    review **Issues** (filterable).
 3. Use **Show full log** only when you need the raw checker output.
@@ -218,9 +225,14 @@ ebraille-checker-gui/
     subprocess_util.py # Quiet subprocess helpers (Windows)
   run.py               # Launcher (incl. SSL cert setup when frozen)
   scripts/
-    package.py         # PyInstaller + bundled JRE and checker
-    jre_bundle.py      # Download Temurin JRE into runtime/
-    checker_bundle.py  # Download eBraille Checker into checker/
+    package.py            # PyInstaller + bundled JRE and checker
+    jre_bundle.py         # Download Temurin JRE into runtime/
+    checker_bundle.py     # Download eBraille Checker into checker/
+    build_installer.ps1   # Windows: package + Inno Setup compile
+  installer/
+    eBrailleChecker.iss   # Inno Setup script (Windows installer)
+    eBrailleChecker.ico   # App / setup icon (Windows)
+    welcome.txt           # Setup wizard intro text
   pyproject.toml
   requirements.txt
   requirements-dev.txt
@@ -258,12 +270,55 @@ dist/eBrailleChecker/
   … (PyInstaller support files)
 ```
 
-Distribute the **entire folder** (or zip it).
+On Windows, prefer the **Inno Setup** installer (below) for end users. You can
+still zip and distribute the entire `dist/eBrailleChecker/` folder if needed —
+do not ship only the `.exe`.
 
 When a newer checker is released, **Tools → Check for updates…** compares against
 the version in use (bundled or previously updated). Accepting an update downloads
 the new release into application data; the bundled copy in the install folder is
 not modified.
+
+### Windows installer (Inno Setup)
+
+Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php). Keep
+`MyAppVersion` in `installer/eBrailleChecker.iss` in sync with
+`pyproject.toml` / `app/__init__.py`.
+
+One-shot (packages the app, then compiles the setup):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
+```
+
+Or step by step:
+
+```powershell
+uv sync --extra dev
+uv run python scripts/package.py --clean
+# Then compile with Inno Setup Compiler, or:
+iscc installer\eBrailleChecker.iss
+```
+
+Output: `installer/Output/eBrailleCheckerGUI-<version>-setup.exe`
+
+The installer:
+
+- Ships the full onedir tree (GUI + Temurin JRE 17 + checker) — no system Java
+- Supports per-user install (default) or Program Files with elevation
+- Adds `.ebrl` shell integration (optional task, on by default):
+  **Open with** → eBraille Checker, and context menu **Validate with eBraille
+  Checker** — does not change the double-click default
+- Offers an optional desktop shortcut and launch-on-finish
+- On uninstall, optionally removes `%LOCALAPPDATA%\eBrailleCheckerGUI\`
+  (settings and checker updates)
+
+### macOS packaged builds
+
+`scripts/package.py` registers the `.ebrl` document type in the `.app`
+`Info.plist` with rank **Alternate**, so the app appears under Finder
+**Open With** without becoming the default double-click handler. Opening a
+file that way launches the GUI and starts a check automatically.
 
 ## Test data
 

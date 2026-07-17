@@ -33,7 +33,9 @@ from .paths import (
     DAISY_WEBSITE,
     EBRAILLE_SPEC_URL,
     EBRAILLE_STANDARD_PAGE,
+    application_dir,
     find_checker_jar,
+    is_frozen,
 )
 from .updater import (
     check_for_update,
@@ -272,12 +274,58 @@ class PublicationDropTarget(wx.FileDropTarget):
     def OnDropFiles(self, _x: int, _y: int, filenames: list[str]) -> bool:
         if not filenames:
             return False
-        self.frame.open_dropped_paths(filenames)
+        self.frame.open_publication_paths(filenames)
         return True
 
 
+def parse_launch_paths(argv: list[str] | None = None) -> list[str]:
+    """Return publication paths passed on the command line (Explorer / Finder / CLI)."""
+    args = list(sys.argv[1:] if argv is None else argv)
+    paths: list[str] = []
+    skip_next = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            paths.append(arg)
+            continue
+        if arg in ("--open", "-o"):
+            skip_next = True
+            continue
+        # macOS Finder adds -psn_… when launching the .app
+        if arg.startswith("-psn_"):
+            continue
+        if arg.startswith("-") and not Path(arg).exists():
+            continue
+        paths.append(arg)
+    return paths
+
+
+class EBrailleApp(wx.App):
+    """wx app that accepts files from the shell (Windows args / macOS Open)."""
+
+    def __init__(self, initial_paths: list[str] | None = None) -> None:
+        self._pending_paths = list(initial_paths or [])
+        self.frame: MainFrame | None = None
+        super().__init__(False)
+
+    def OnInit(self) -> bool:  # noqa: N802 — wx API
+        self.frame = MainFrame(initial_paths=self._pending_paths)
+        self._pending_paths.clear()
+        self.frame.Show()
+        return True
+
+    def MacOpenFiles(self, fileNames: list[str]) -> None:  # noqa: N802 — wx API
+        """Finder 'Open With' / double-click while the app is running or launching."""
+        if not fileNames:
+            return
+        if self.frame is not None:
+            wx.CallAfter(self.frame.open_publication_paths, list(fileNames))
+        else:
+            self._pending_paths.extend(fileNames)
+
+
 class MainFrame(wx.Frame):
-    def __init__(self) -> None:
+    def __init__(self, initial_paths: list[str] | None = None) -> None:
         load_language()
         super().__init__(
             None,
@@ -288,6 +336,8 @@ class MainFrame(wx.Frame):
         self._busy = False
         self._lang_menu_items: dict[str, wx.MenuItem] = {}
         self._initial_focus_pending = True
+        self._pending_open_paths = list(initial_paths or [])
+        self._apply_window_icon()
         self._build_ui()
         self._bind()
         self._enable_drag_drop()
@@ -303,6 +353,21 @@ class MainFrame(wx.Frame):
         else:
             wx.CallAfter(self._focus_select_button)
         wx.CallAfter(self._startup_tasks)
+
+    def _apply_window_icon(self) -> None:
+        """Use the app icon in the title bar / task switcher when available."""
+        try:
+            if is_frozen() and sys.platform == "win32":
+                icon = wx.Icon(sys.executable, wx.BITMAP_TYPE_ICO)
+            else:
+                icon_path = application_dir() / "installer" / "eBrailleChecker.ico"
+                if not icon_path.is_file():
+                    return
+                icon = wx.Icon(str(icon_path), wx.BITMAP_TYPE_ICO)
+            if icon.IsOk():
+                self.SetIcon(icon)
+        except Exception:  # noqa: BLE001 — icon is cosmetic; never block startup
+            pass
 
     def _set_result_title(self, summary: str | None = None) -> None:
         """Append the verdict to the app name in the title bar."""
@@ -806,17 +871,27 @@ class MainFrame(wx.Frame):
             return None
         return Path(text)
 
-    def open_dropped_paths(self, filenames: list[str]) -> None:
-        """Handle paths dropped onto the window; run check on the first usable one."""
+    def open_publication_paths(
+        self,
+        filenames: list[str],
+        *,
+        notify_if_busy: bool = False,
+    ) -> None:
+        """Open paths from drop, CLI, or Finder; run check on the first usable one."""
+        if not filenames:
+            return
         if self._busy:
-            wx.MessageBox(
-                _(
-                    "A check is already running. Wait for it to finish, then drop again."
-                ),
-                _("Busy"),
-                wx.OK | wx.ICON_INFORMATION,
-                self,
-            )
+            if notify_if_busy:
+                wx.MessageBox(
+                    _(
+                        "A check is already running. Wait for it to finish, then drop again."
+                    ),
+                    _("Busy"),
+                    wx.OK | wx.ICON_INFORMATION,
+                    self,
+                )
+                return
+            self._pending_open_paths.extend(filenames)
             return
 
         paths = [Path(name) for name in filenames]
@@ -829,7 +904,7 @@ class MainFrame(wx.Frame):
         if chosen is None:
             wx.MessageBox(
                 _(
-                    "Drop a packaged .ebrl/.epub file or an exploded publication folder."
+                    "Drop a packaged .ebrl file or an exploded publication folder."
                 ),
                 _("Unsupported drop"),
                 wx.OK | wx.ICON_WARNING,
@@ -837,8 +912,31 @@ class MainFrame(wx.Frame):
             )
             return
 
+        if len(paths) > 1:
+            wx.MessageBox(
+                _(
+                    "Using first publication ({name}); ignored {count} other item(s).",
+                    name=chosen.name,
+                    count=len(paths) - 1,
+                ),
+                _("Multiple items"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+
         self.path_ctrl.SetValue(str(chosen))
         self.on_check(None)
+
+    def open_dropped_paths(self, filenames: list[str]) -> None:
+        """Handle paths dropped onto the window."""
+        self.open_publication_paths(filenames, notify_if_busy=True)
+
+    def _flush_pending_open_paths(self) -> None:
+        if self._busy or not self._pending_open_paths:
+            return
+        pending = self._pending_open_paths
+        self._pending_open_paths = []
+        self.open_publication_paths(pending)
 
     def _populate_issues(self) -> None:
         self.issues_list.DeleteAllItems()
@@ -896,9 +994,9 @@ class MainFrame(wx.Frame):
     def on_browse_file(self, _event: wx.CommandEvent) -> None:
         with wx.FileDialog(
             self,
-            _("Select an eBraille or EPUB publication"),
+            _("Select an eBraille publication"),
             wildcard=_(
-                "eBraille/EPUB (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+                "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
                 "All files (*.*)|*.*"
             ),
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
@@ -961,14 +1059,19 @@ class MainFrame(wx.Frame):
     def on_progress_event(self, event: ProgressEvent) -> None:
         # Keep the status bar on version info; show progress in the result area.
         if event.message == _("Ready"):
-            self._restore_result_display()
             self._update_status_bar()
+            # Prefer starting a shell-opened publication over resetting to idle.
+            if self._pending_open_paths:
+                self._flush_pending_open_paths()
+            elif not self._busy:
+                self._restore_result_display()
             return
         self._show_result_text(event.message, update_title=False)
 
     def on_result_event(self, event: ResultEvent) -> None:
         self._set_busy(False)
         self._apply_result(event.result)
+        self._flush_pending_open_paths()
 
     def on_filter_changed(self, _event: wx.CommandEvent) -> None:
         self._populate_issues()
@@ -1090,9 +1193,18 @@ class MainFrame(wx.Frame):
         threading.Thread(target=worker, daemon=True).start()
 
     def on_update_info_event(self, event: UpdateInfoEvent) -> None:
-        self._set_busy(False)
-        self._restore_result_display()
-        self._update_status_bar()
+        # Silent startup update probe must not clobber an in-flight publication
+        # check (e.g. launched from Explorer / Finder with a file path).
+        if event.silent:
+            if not self._busy:
+                self._restore_result_display()
+            self._update_status_bar()
+            if self._busy:
+                return
+        else:
+            self._set_busy(False)
+            self._restore_result_display()
+            self._update_status_bar()
         if getattr(event, "error", None):
             if not event.silent:
                 wx.MessageBox(
@@ -1224,8 +1336,7 @@ class MainFrame(wx.Frame):
             dlg.ShowModal()
 
 
-def run_app() -> None:
-    app = wx.App(False)
-    frame = MainFrame()
-    frame.Show()
+def run_app(argv: list[str] | None = None) -> None:
+    paths = parse_launch_paths(argv)
+    app = EBrailleApp(initial_paths=paths)
     app.MainLoop()

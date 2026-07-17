@@ -17,6 +17,9 @@ dist/
 build/
 *.spec
 
+# Inno Setup compiler output
+installer/Output/
+
 # Large binaries — downloaded by packaging / first-run scripts, not for git
 #   runtime/  = bundled Temurin JRE
 #   checker/  = bundled or locally fetched eBraille Checker
