@@ -25,7 +25,28 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 APP_NAME = "eBrailleChecker"
 ENTRY = ROOT / "run.py"
-APP_ICON = ROOT / "installer" / "eBrailleChecker.ico"
+APP_ICON_ICO = ROOT / "installer" / "eBrailleChecker.ico"
+APP_ICON_ICNS = ROOT / "installer" / "eBrailleChecker.icns"
+
+
+def _app_icon() -> Path | None:
+    if sys.platform == "darwin" and APP_ICON_ICNS.is_file():
+        return APP_ICON_ICNS
+    if APP_ICON_ICO.is_file():
+        return APP_ICON_ICO
+    return None
+
+
+def _project_version() -> str:
+    init = ROOT / "app" / "__init__.py"
+    if init.is_file():
+        for line in init.read_text(encoding="utf-8").splitlines():
+            if line.startswith("__version__"):
+                # __version__ = "0.1.0"
+                parts = line.split("=", 1)
+                if len(parts) == 2:
+                    return parts[1].strip().strip("\"'")
+    return "0.0.0"
 
 
 def _ensure_pyinstaller() -> None:
@@ -69,15 +90,26 @@ def _checker_dir_for_output(output: Path) -> Path:
     return output.parent / "checker"
 
 
-def _patch_macos_document_types(app_bundle: Path) -> None:
-    """Declare .ebrl for Finder Open With (Alternate — not the default double-click app)."""
+def _load_info_plist(app_bundle: Path) -> tuple[Path, dict] | None:
     info_plist = app_bundle / "Contents" / "Info.plist"
     if not info_plist.is_file():
         print(f"Warning: Info.plist not found at {info_plist}", file=sys.stderr)
-        return
-
+        return None
     with info_plist.open("rb") as fh:
-        info = plistlib.load(fh)
+        return info_plist, plistlib.load(fh)
+
+
+def _save_info_plist(info_plist: Path, info: dict) -> None:
+    with info_plist.open("wb") as fh:
+        plistlib.dump(info, fh)
+
+
+def _patch_macos_document_types(app_bundle: Path) -> None:
+    """Declare .ebrl for Finder Open With (Alternate — not the default double-click app)."""
+    loaded = _load_info_plist(app_bundle)
+    if loaded is None:
+        return
+    info_plist, info = loaded
 
     info["CFBundleDocumentTypes"] = [
         {
@@ -101,9 +133,19 @@ def _patch_macos_document_types(app_bundle: Path) -> None:
     # Ensure the process can receive Apple Events for document open
     info["NSAppleScriptEnabled"] = True
 
-    with info_plist.open("wb") as fh:
-        plistlib.dump(info, fh)
+    _save_info_plist(info_plist, info)
     print(f"Registered .ebrl document type in {info_plist}")
+
+
+def _patch_macos_bundle_version(app_bundle: Path, version: str) -> None:
+    loaded = _load_info_plist(app_bundle)
+    if loaded is None:
+        return
+    info_plist, info = loaded
+    info["CFBundleShortVersionString"] = version
+    info["CFBundleVersion"] = version
+    _save_info_plist(info_plist, info)
+    print(f"Set bundle version {version} in {info_plist}")
 
 
 def build(onefile: bool, clean: bool, bundle_java: bool, bundle_checker: bool) -> Path:
@@ -160,10 +202,15 @@ def build(onefile: bool, clean: bool, bundle_java: bool, bundle_checker: bool) -
         "app",
     ]
 
-    if APP_ICON.is_file():
-        cmd.extend(["--icon", str(APP_ICON)])
+    icon = _app_icon()
+    if icon is not None:
+        cmd.extend(["--icon", str(icon)])
     else:
-        print(f"Warning: app icon not found at {APP_ICON}", file=sys.stderr)
+        print(
+            f"Warning: app icon not found "
+            f"(looked for {APP_ICON_ICNS.name} / {APP_ICON_ICO.name})",
+            file=sys.stderr,
+        )
 
     if onefile:
         cmd.append("--onefile")
@@ -188,6 +235,7 @@ def build(onefile: bool, clean: bool, bundle_java: bool, bundle_checker: bool) -
         print()
         print("Registering .ebrl document types in Info.plist…")
         _patch_macos_document_types(output)
+        _patch_macos_bundle_version(output, _project_version())
 
     if bundle_java:
         if onefile:

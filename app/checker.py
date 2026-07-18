@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .java_util import JavaInfo, cached_java, detect_java
+from .java_util import JavaInfo, cached_java, detect_java, has_bundled_java
 from .models import CheckResult, Issue, Severity, Verdict, SEVERITY_ORDER
 from .paths import checker_uses_bundled_copy, find_checker_jar
 from .subprocess_util import hidden_run_kwargs
@@ -259,12 +259,21 @@ def run_check(
 
     java = detect_java()
     if java is None:
-        return CheckResult(
-            verdict=Verdict.ERROR,
-            error_message=(
+        if has_bundled_java():
+            message = (
+                "The bundled Java runtime could not be started. "
+                "On macOS this usually means the app needs to be re-signed "
+                "with JVM entitlements (allow-jit). Reinstall from a current "
+                "notarized build, or install a system JRE 17+."
+            )
+        else:
+            message = (
                 "Java was not found. Install a Java Runtime (JRE 8 or newer), "
                 "or use a packaged build that includes a bundled runtime."
-            ),
+            )
+        return CheckResult(
+            verdict=Verdict.ERROR,
+            error_message=message,
         )
 
     try:

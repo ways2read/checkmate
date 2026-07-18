@@ -180,9 +180,17 @@ trigger `java.lang.StackOverflowError` during RelaxNG validation on smaller JREs
 
 ### “Java was not found”
 
-**Packaged build:** use the full `dist/eBrailleChecker/` folder (or `.app` on macOS).
-It must contain a `runtime/` directory next to the executable. Do not copy only
-the `.exe` without the rest of the folder.
+**Packaged build (Windows):** use the full `dist/eBrailleChecker/` folder (or the
+Inno Setup installer). It must contain a `runtime/` directory next to the
+executable. Do not copy only the `.exe` without the rest of the folder.
+
+**Packaged build (macOS):** the `.app` includes `Contents/runtime/` with Temurin
+JRE. If checks fail with “Java was not found” even though `runtime/` is present,
+the bundle was almost certainly signed without the JVM entitlements in
+`packaging/macos/entitlements.plist` (`allow-jit` and
+`allow-unsigned-executable-memory`). Reinstall from a build produced by
+`scripts/build_macos_release.sh` (do not sign the app by hand without that
+plist). As a temporary workaround, install a system JRE 17+.
 
 **From source:** install a JRE or JDK (17+ recommended), ensure `java -version`
 works in a terminal, then restart. Or download a local runtime:
@@ -225,14 +233,25 @@ ebraille-checker-gui/
     subprocess_util.py # Quiet subprocess helpers (Windows)
   run.py               # Launcher (incl. SSL cert setup when frozen)
   scripts/
-    package.py            # PyInstaller + bundled JRE and checker
-    jre_bundle.py         # Download Temurin JRE into runtime/
-    checker_bundle.py     # Download eBraille Checker into checker/
-    build_installer.ps1   # Windows: package + Inno Setup compile
+    package.py               # PyInstaller + bundled JRE and checker
+    jre_bundle.py            # Download Temurin JRE into runtime/
+    checker_bundle.py        # Download eBraille Checker into checker/
+    build_installer.ps1      # Windows: package + Inno Setup compile
+    build_macos.sh           # macOS: package .app + zip
+    build_macos_dmg.sh       # macOS: drag-to-Applications .dmg
+    build_macos_release.sh   # macOS: sign + .dmg + notarize
+    make_icns.py             # Build .icns (defaults to .ico master)
+    macos_release_arch_suffix.inc.sh
   installer/
     eBrailleChecker.iss   # Inno Setup script (Windows installer)
-    eBrailleChecker.ico   # App / setup icon (Windows)
+    eBrailleChecker.ico   # App / setup icon (Windows; also Mac .icns master)
+    eBrailleChecker.icns  # App / volume icon (macOS)
+    icon.png              # Alternate flat artwork (--from-png)
     welcome.txt           # Setup wizard intro text
+  packaging/macos/
+    entitlements.plist    # Hardened runtime + JVM entitlements (required)
+    dmg_background.png    # Drag-install DMG window background
+    make_dmg_background.py
   pyproject.toml
   requirements.txt
   requirements-dev.txt
@@ -274,6 +293,9 @@ On Windows, prefer the **Inno Setup** installer (below) for end users. You can
 still zip and distribute the entire `dist/eBrailleChecker/` folder if needed —
 do not ship only the `.exe`.
 
+On macOS, prefer the **signed and notarized `.dmg`** (below). You can still
+distribute the `.app` zip from `scripts/build_macos.sh` if needed.
+
 When a newer checker is released, **Tools → Check for updates…** compares against
 the version in use (bundled or previously updated). Accepting an update downloads
 the new release into application data; the bundled copy in the install folder is
@@ -313,7 +335,63 @@ The installer:
 - On uninstall, optionally removes `%LOCALAPPDATA%\eBrailleCheckerGUI\`
   (settings and checker updates)
 
-### macOS packaged builds
+### macOS disk image + notarization
+
+Same pattern as FIDO: build an `.app`, wrap it in a drag-to-Applications
+`.dmg`, then **codesign** and **notarize** so Gatekeeper accepts the download.
+
+Prerequisites:
+
+- Xcode Command Line Tools (`xcode-select --install`)
+- [uv](https://docs.astral.sh/uv/)
+- A **Developer ID Application** certificate in your login keychain
+- Notary credentials (one of):
+  - Keychain profile: `xcrun notarytool store-credentials "ebraille-notary" …`
+  - Or App Store Connect API key (`AuthKey_*.p8` + key id + issuer)
+
+**Signing must use `packaging/macos/entitlements.plist`.** That plist enables
+hardened-runtime library loading for PyInstaller **and** the JVM entitlements
+(`allow-jit`, `allow-unsigned-executable-memory`) required for the bundled
+Temurin JRE. Signing without them makes `runtime/bin/java` crash (`SIGTRAP`),
+and the GUI reports Java as missing. `scripts/build_macos_release.sh` applies
+this plist automatically.
+
+One-shot release (package → sign → DMG → notarize → staple):
+
+```bash
+chmod +x scripts/build_macos_release.sh
+EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh
+# optional explicit version:
+EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh 0.1.0
+```
+
+Outputs (arch suffix is `-AppleSilicon` or `-Intel`):
+
+- `dist/eBrailleChecker_App/eBrailleChecker.app`
+- `dist/eBrailleCheckerGUI-macOS-<version>-<arch>.zip`
+- `dist/eBrailleCheckerGUI-macos-<version>-<arch>.dmg` (signed + notarized when credentials are set)
+
+Step by step:
+
+```bash
+./scripts/build_macos.sh 0.1.0          # .app + zip
+./scripts/build_macos_dmg.sh 0.1.0      # drag-install .dmg (unsigned)
+```
+
+App icon: `scripts/make_icns.py` builds `installer/eBrailleChecker.icns` from
+the Windows `.ico` by default (flatter master). Use `--from-png` for
+`installer/icon.png` instead.
+
+Useful environment variables:
+
+| Variable | Meaning |
+|----------|---------|
+| `EBC_NOTARY_PROFILE` | Keychain profile for `notarytool` |
+| `EBC_NOTARY_KEY` / `EBC_NOTARY_KEY_ID` / `EBC_NOTARY_ISSUER` | API-key notary credentials |
+| `EBC_APP_SIGN_IDENTITY` | Override Developer ID Application identity |
+| `EBC_SKIP_NOTARY=1` | Build and sign only (no notarization) |
+| `EBC_SKIP_APP_SIGN=1` | Skip codesign (local smoke builds) |
+| `EBC_SKIP_APPLICATION_BUILD=1` | Re-sign / notarize an existing `dist/eBrailleChecker_App/` |
 
 `scripts/package.py` registers the `.ebrl` document type in the `.app`
 `Info.plist` with rank **Alternate**, so the app appears under Finder

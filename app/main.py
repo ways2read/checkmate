@@ -817,8 +817,17 @@ class MainFrame(wx.Frame):
         threading.Thread(target=worker, daemon=True).start()
 
     def on_java_missing_event(self, _event: JavaMissingEvent) -> None:
-        wx.MessageBox(
-            _(
+        from .java_util import has_bundled_java
+
+        if has_bundled_java():
+            message = _(
+                "The bundled Java runtime could not be started.\n\n"
+                "On macOS, reinstall from a current signed build. "
+                "You can also install a system Java Runtime (JRE 17+) "
+                "as a temporary workaround."
+            )
+        else:
+            message = _(
                 "Java was not found.\n\n"
                 "If you are running from source, install a Java Runtime "
                 "(JRE 17 or newer recommended) and ensure java is on your PATH.\n\n"
@@ -827,7 +836,9 @@ class MainFrame(wx.Frame):
                 "with a bundled JRE.\n\n"
                 "The checker itself can still be downloaded, but checks "
                 "cannot run without Java."
-            ),
+            )
+        wx.MessageBox(
+            message,
             _("Java required"),
             wx.OK | wx.ICON_WARNING,
             self,

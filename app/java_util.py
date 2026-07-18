@@ -49,15 +49,16 @@ def _bundled_java_paths() -> list[str]:
         return []
     exe_name = _java_executable_name()
     direct = root / "bin" / exe_name
-    if direct.is_file():
+    # macOS may ship a broken symlink or non-executable file after a bad extract
+    if direct.is_file() and os.access(direct, os.X_OK):
         return [str(direct)]
     # macOS Temurin layout: runtime/Contents/Home/bin/java
     home_java = root / "Contents" / "Home" / "bin" / exe_name
-    if home_java.is_file():
+    if home_java.is_file() and os.access(home_java, os.X_OK):
         return [str(home_java)]
     found: list[str] = []
     for candidate in root.rglob(exe_name):
-        if candidate.parent.name.lower() == "bin":
+        if candidate.parent.name.lower() == "bin" and os.access(candidate, os.X_OK):
             found.append(str(candidate))
     return found
 
@@ -156,7 +157,9 @@ def detect_java() -> JavaInfo | None:
                 **hidden_run_kwargs(),
             )
             text = (proc.stderr or proc.stdout or "").strip()
-            if proc.returncode == 0 or text:
+            # Require success: a crashing JVM (e.g. hardened-runtime SIGTRAP) can
+            # still leave empty/partial stderr while returncode is non-zero.
+            if proc.returncode == 0 and text:
                 info = JavaInfo(path=path, version_text=text, source=source)
                 _java_cache = info
                 return info
