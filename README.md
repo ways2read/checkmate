@@ -369,7 +369,7 @@ The installer:
 
 ### macOS disk image + notarization
 
-Same pattern as FIDO: build an `.app`, wrap it in a drag-to-Applications
+Pattern is: build an `.app`, wrap it in a drag-to-Applications
 `.dmg`, then **codesign** and **notarize** so Gatekeeper accepts the download.
 
 Prerequisites:
