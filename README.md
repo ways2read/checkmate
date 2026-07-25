@@ -394,7 +394,7 @@ One-shot release (package → sign → DMG → notarize → staple):
 chmod +x scripts/build_macos_release.sh
 EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh
 # optional explicit version:
-EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh 0.2.0
+EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh 0.2.1
 ```
 
 Outputs (arch suffix is `-AppleSilicon` or `-Intel`):
@@ -406,8 +406,8 @@ Outputs (arch suffix is `-AppleSilicon` or `-Intel`):
 Step by step:
 
 ```bash
-./scripts/build_macos.sh 0.2.0          # .app + zip
-./scripts/build_macos_dmg.sh 0.2.0      # drag-install .dmg (unsigned)
+./scripts/build_macos.sh 0.2.1          # .app + zip
+./scripts/build_macos_dmg.sh 0.2.1      # drag-install .dmg (unsigned)
 ```
 
 App icon: `scripts/make_icns.py` builds `installer/eBrailleChecker.icns` from
