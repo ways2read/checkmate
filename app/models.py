@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 
 from .i18n import _, ngettext
@@ -92,6 +93,10 @@ class CheckResult:
     exit_code: int | None = None
     command: list[str] = field(default_factory=list)
     error_message: str = ""
+    tool_name: str = ""
+    tool_version: str = ""
+    checked_at: datetime | None = None
+    target_path: str = ""
 
     @property
     def headline(self) -> str:
@@ -128,6 +133,27 @@ class CheckResult:
                 return [label, _("see the full log for details")]
             return [label, _("no errors or warnings")]
         return [label, ", ".join(parts)]
+
+    def report_meta_lines(self) -> list[str]:
+        """Metadata lines for copy/save reports (publication, checker, date)."""
+        lines: list[str] = []
+        if self.target_path:
+            lines.append(_("Publication: {path}", path=self.target_path))
+        if self.tool_name:
+            if self.tool_version:
+                lines.append(
+                    _(
+                        "Checker: {name} {version}",
+                        name=self.tool_name,
+                        version=self.tool_version,
+                    )
+                )
+            else:
+                lines.append(_("Checker: {name}", name=self.tool_name))
+        if self.checked_at is not None:
+            when = self.checked_at.strftime("%Y-%m-%d %H:%M:%S")
+            lines.append(_("Date: {when}", when=when))
+        return lines
 
     def announcement(self) -> str:
         return _("Check finished. {headline}.", headline=self.headline)

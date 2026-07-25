@@ -1,16 +1,19 @@
 Welcome to the eBraille Checker GUI Setup Wizard.
 
 This application is an accessible desktop front-end for the DAISY eBraille
-Checker. It lets you open an .ebrl publication (or an exploded folder) and
-see a clear Passed / Passed with warnings / Failed result.
+Checker and W3C EPUBCheck. It lets you open an .ebrl or .epub publication
+(or an exploded folder) and see a clear Passed / Passed with warnings / Failed
+result. .ebrl files are checked with eBraille Checker; .epub files with
+EPUBCheck. Exploded folders are detected automatically.
 
-On Windows you can right-click an .ebrl file and choose "Validate with eBraille
-Checker", or use Open with → eBraille Checker.
+On Windows you can right-click an .ebrl or .epub file and choose "Validate with
+eBraille Checker", or use Open with → eBraille Checker.
 
 What this installer includes:
   • eBraille Checker GUI
   • Bundled Eclipse Temurin Java Runtime (JRE 17)
   • Bundled eBraille Checker
+  • Bundled EPUBCheck
 
 No separate Java installation is required.
 

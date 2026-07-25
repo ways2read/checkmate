@@ -1,20 +1,33 @@
-"""Run eBraille Checker and parse results."""
+"""Run eBraille Checker / EPUBCheck and parse results."""
 
 from __future__ import annotations
 
 import json
 import subprocess
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from .java_util import JavaInfo, cached_java, detect_java, has_bundled_java
 from .models import CheckResult, Issue, Severity, Verdict, SEVERITY_ORDER
-from .paths import checker_uses_bundled_copy, find_checker_jar
+from .paths import (
+    checker_uses_bundled_copy,
+    epubcheck_uses_bundled_copy,
+    find_checker_jar,
+    find_epubcheck_jar,
+)
+from .publication import PublicationKind, classify_publication
 from .subprocess_util import hidden_run_kwargs
-from .updater import ensure_checker_installed, read_effective_version
+from .updater import (
+    EBRAILLE_TOOL,
+    EPUBCHECK_TOOL,
+    ToolSpec,
+    ensure_tool_installed,
+    read_effective_version,
+)
 
 
-PACKAGED_SUFFIXES = {".ebrl", ".zip"}
+PACKAGED_SUFFIXES = {".ebrl", ".epub", ".zip"}
 
 
 def is_packaged_path(path: Path) -> bool:
@@ -25,11 +38,36 @@ def is_exploded_path(path: Path) -> bool:
     return path.is_dir()
 
 
+def tool_for_kind(kind: PublicationKind) -> ToolSpec | None:
+    if kind == PublicationKind.EBRAILLE:
+        return EBRAILLE_TOOL
+    if kind == PublicationKind.EPUB:
+        return EPUBCHECK_TOOL
+    return None
+
+
+def _stamp_result(
+    result: CheckResult,
+    *,
+    target: Path,
+    tool: ToolSpec | None = None,
+    checked_at: datetime | None = None,
+) -> CheckResult:
+    """Attach publication path, checker identity, and timestamp for reports."""
+    result.target_path = str(target)
+    result.checked_at = checked_at or datetime.now().astimezone()
+    if tool is not None:
+        result.tool_name = tool.display_name
+        result.tool_version = read_effective_version(tool) or ""
+    return result
+
+
 def build_command(
     java: JavaInfo,
     jar: Path,
     target: Path,
     *,
+    kind: PublicationKind,
     exploded: bool | None = None,
 ) -> list[str]:
     if exploded is None:
@@ -39,12 +77,11 @@ def build_command(
         "-Xss4m",
         "-jar",
         str(jar),
-        "--profile",
-        "ebraille",
     ]
+    if kind == PublicationKind.EBRAILLE:
+        cmd.extend(["--profile", "ebraille"])
     if exploded:
         cmd.extend(["-mode", "exp"])
-    # Write JSON report to a temp file; keep human log on stdout/stderr
     cmd.extend(["--json", "-"])
     cmd.append(str(target))
     return cmd
@@ -122,7 +159,6 @@ def _counts_from_json(data: dict, issues: list[Issue]) -> dict[str, int]:
                     continue
         return None
 
-    # Prefer checker summary if present
     for key in ("checker", "Checker", "counts"):
         block = data.get(key)
         if not isinstance(block, dict):
@@ -170,7 +206,6 @@ def _verdict_from_counts(counts: dict[str, int], exit_code: int) -> Verdict:
     if exit_code not in (0, None) and not (
         counts["warnings"] or counts["infos"] or counts["usages"]
     ):
-        # Non-zero exit with no parsed messages (e.g. JVM crash)
         return Verdict.FAILED
     if counts["warnings"]:
         return Verdict.PASSED_WITH_WARNINGS
@@ -184,7 +219,6 @@ def _extract_json_object(text: str) -> dict | None:
     text = text.strip()
     if not text:
         return None
-    # Fast path: whole output is JSON
     try:
         data = json.loads(text)
         if isinstance(data, dict):
@@ -217,7 +251,6 @@ def parse_checker_output(stdout: str, stderr: str, exit_code: int) -> CheckResul
     )
 
     if data is None:
-        # Fall back to exit code only
         verdict = Verdict.PASSED if exit_code == 0 else Verdict.FAILED
         return CheckResult(
             verdict=verdict,
@@ -257,6 +290,17 @@ def run_check(
             error_message=f"Path not found: {target}",
         )
 
+    kind = classify_publication(target)
+    tool = tool_for_kind(kind)
+    if tool is None:
+        return CheckResult(
+            verdict=Verdict.ERROR,
+            error_message=(
+                "Choose a packaged .ebrl or .epub file, or an exploded "
+                "eBraille/EPUB publication folder."
+            ),
+        )
+
     java = detect_java()
     if java is None:
         if has_bundled_java():
@@ -277,13 +321,13 @@ def run_check(
         )
 
     try:
-        jar = find_checker_jar()
+        jar = tool.find_installed_jar()
         if jar is None:
-            jar = ensure_checker_installed(progress=progress)
+            jar = ensure_tool_installed(tool, progress=progress)
     except Exception as exc:  # noqa: BLE001 — surface to UI
         return CheckResult(
             verdict=Verdict.ERROR,
-            error_message=f"Could not install eBraille Checker: {exc}",
+            error_message=f"Could not install {tool.display_name}: {exc}",
         )
 
     if exploded is None:
@@ -295,24 +339,21 @@ def run_check(
             return CheckResult(
                 verdict=Verdict.ERROR,
                 error_message=(
-                    "Choose a packaged .ebrl file or an exploded publication folder."
+                    "Choose a packaged .ebrl or .epub file, or an exploded "
+                    "eBraille/EPUB publication folder."
                 ),
             )
 
-    cmd = build_command(java, jar, target, exploded=exploded)
-
-    # Prefer writing JSON to a temp file for reliable parsing; also capture console
     with tempfile.TemporaryDirectory(prefix="ebraille-gui-") as tmp:
         json_path = Path(tmp) / "report.json"
-        # Rebuild with file path instead of stdout JSON to keep console readable
         cmd = [
             java.path,
             "-Xss4m",
             "-jar",
             str(jar),
-            "--profile",
-            "ebraille",
         ]
+        if kind == PublicationKind.EBRAILLE:
+            cmd.extend(["--profile", "ebraille"])
         if exploded:
             cmd.extend(["-mode", "exp"])
         cmd.extend(["--json", str(json_path), str(target)])
@@ -372,22 +413,28 @@ def run_check(
         return result
 
 
+def _tool_status_part(tool: ToolSpec, *, bundled: bool) -> str:
+    from .i18n import _
+
+    version = read_effective_version(tool)
+    jar = tool.find_installed_jar()
+    if version and jar:
+        if bundled:
+            return _("{name} {version} (bundled)", name=tool.display_name, version=version)
+        return _("{name} {version}", name=tool.display_name, version=version)
+    if jar:
+        return _("{name} installed", name=tool.display_name)
+    return _("{name} not installed", name=tool.display_name)
+
+
 def checker_status_text() -> str:
     from .i18n import _
 
-    version = read_effective_version()
-    jar = find_checker_jar()
     java = cached_java()
-    parts: list[str] = []
-    if version and jar:
-        if checker_uses_bundled_copy():
-            parts.append(_("Checker {version} (bundled)", version=version))
-        else:
-            parts.append(_("Checker {version}", version=version))
-    elif jar:
-        parts.append(_("Checker installed"))
-    else:
-        parts.append(_("Checker not installed"))
+    parts = [
+        _tool_status_part(EBRAILLE_TOOL, bundled=checker_uses_bundled_copy()),
+        _tool_status_part(EPUBCHECK_TOOL, bundled=epubcheck_uses_bundled_copy()),
+    ]
     if java:
         parts.append(java.label)
     else:

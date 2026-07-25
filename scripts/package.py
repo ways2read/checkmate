@@ -90,6 +90,15 @@ def _checker_dir_for_output(output: Path) -> Path:
     return output.parent / "checker"
 
 
+def _epubcheck_dir_for_output(output: Path) -> Path:
+    output = output.resolve()
+    if sys.platform == "darwin" and output.suffix == ".app":
+        return output / "Contents" / "epubcheck"
+    if output.is_dir():
+        return output / "epubcheck"
+    return output.parent / "epubcheck"
+
+
 def _load_info_plist(app_bundle: Path) -> tuple[Path, dict] | None:
     info_plist = app_bundle / "Contents" / "Info.plist"
     if not info_plist.is_file():
@@ -105,7 +114,7 @@ def _save_info_plist(info_plist: Path, info: dict) -> None:
 
 
 def _patch_macos_document_types(app_bundle: Path) -> None:
-    """Declare .ebrl for Finder Open With (Alternate — not the default double-click app)."""
+    """Declare .ebrl/.epub for Finder Open With (Alternate — not the default)."""
     loaded = _load_info_plist(app_bundle)
     if loaded is None:
         return
@@ -118,7 +127,14 @@ def _patch_macos_document_types(app_bundle: Path) -> None:
             "LSHandlerRank": "Alternate",
             "LSItemContentTypes": ["org.daisy.ebraille"],
             "CFBundleTypeExtensions": ["ebrl"],
-        }
+        },
+        {
+            "CFBundleTypeName": "EPUB Publication",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["org.idpf.epub-container"],
+            "CFBundleTypeExtensions": ["epub"],
+        },
     ]
     info["UTExportedTypeDeclarations"] = [
         {
@@ -134,7 +150,7 @@ def _patch_macos_document_types(app_bundle: Path) -> None:
     info["NSAppleScriptEnabled"] = True
 
     _save_info_plist(info_plist, info)
-    print(f"Registered .ebrl document type in {info_plist}")
+    print(f"Registered .ebrl/.epub document types in {info_plist}")
 
 
 def _patch_macos_bundle_version(app_bundle: Path, version: str) -> None:
@@ -148,7 +164,13 @@ def _patch_macos_bundle_version(app_bundle: Path, version: str) -> None:
     print(f"Set bundle version {version} in {info_plist}")
 
 
-def build(onefile: bool, clean: bool, bundle_java: bool, bundle_checker: bool) -> Path:
+def build(
+    onefile: bool,
+    clean: bool,
+    bundle_java: bool,
+    bundle_checker: bool,
+    bundle_epubcheck: bool,
+) -> Path:
     _ensure_pyinstaller()
 
     if not ENTRY.is_file():
@@ -233,7 +255,7 @@ def build(onefile: bool, clean: bool, bundle_java: bool, bundle_checker: bool) -
         and not onefile
     ):
         print()
-        print("Registering .ebrl document types in Info.plist…")
+        print("Registering .ebrl/.epub document types in Info.plist…")
         _patch_macos_document_types(output)
         _patch_macos_bundle_version(output, _project_version())
 
@@ -280,6 +302,27 @@ def build(onefile: bool, clean: bool, bundle_java: bool, bundle_checker: bool) -
                 check=True,
             )
 
+    if bundle_epubcheck:
+        if onefile:
+            print(
+                "Warning: --onefile with bundled EPUBCheck is not supported; "
+                "use onedir (default).",
+                file=sys.stderr,
+            )
+        else:
+            epubcheck_dir = _epubcheck_dir_for_output(output)
+            print()
+            print(f"Bundling EPUBCheck into {epubcheck_dir}…")
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "epubcheck_bundle.py"),
+                    str(epubcheck_dir),
+                ],
+                cwd=ROOT,
+                check=True,
+            )
+
     return output
 
 
@@ -307,6 +350,11 @@ def main() -> None:
         action="store_true",
         help="Skip bundling eBraille Checker (checker downloaded on first run).",
     )
+    parser.add_argument(
+        "--no-bundle-epubcheck",
+        action="store_true",
+        help="Skip bundling EPUBCheck (downloaded on first run).",
+    )
     args = parser.parse_args()
 
     try:
@@ -315,6 +363,7 @@ def main() -> None:
             clean=args.clean,
             bundle_java=not args.no_bundle_java,
             bundle_checker=not args.no_bundle_checker,
+            bundle_epubcheck=not args.no_bundle_epubcheck,
         )
     except subprocess.CalledProcessError as exc:
         print(f"\nPyInstaller failed with exit code {exc.returncode}.", file=sys.stderr)
@@ -341,10 +390,17 @@ def main() -> None:
     else:
         print("Bundled Temurin JRE is included (runtime/). No system Java required.")
     if args.no_bundle_checker:
-        print("Note: Checker was not bundled. It will be downloaded on first run.")
+        print("Note: eBraille Checker was not bundled. It will be downloaded on first run.")
     else:
         print(
             "Bundled eBraille Checker is included (checker/). "
+            "Updates install to application data when a newer release exists."
+        )
+    if args.no_bundle_epubcheck:
+        print("Note: EPUBCheck was not bundled. It will be downloaded on first run.")
+    else:
+        print(
+            "Bundled EPUBCheck is included (epubcheck/). "
             "Updates install to application data when a newer release exists."
         )
 

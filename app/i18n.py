@@ -28,8 +28,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "eBraille Checker GUI": "eBraille Checker GUI",
         "Publication": "Publication",
         "Path:": "Chemin :",
-        "Select or drop a .ebrl file or folder — checking starts automatically": (
-            "Sélectionnez ou déposez un fichier .ebrl ou un dossier — "
+        "Select or drop a .ebrl / .epub file or folder — "
+        "checking starts automatically": (
+            "Sélectionnez ou déposez un fichier .ebrl / .epub ou un dossier — "
             "la vérification démarre automatiquement"
         ),
         "Select &file…": "Sélectionner un &fichier…",
@@ -89,7 +90,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "&Re-check publication\tF5": "&Revérifier la publication\tF5",
         "Show/hide full &log\tCtrl+L": "Afficher/masquer le journal &complet\tCtrl+L",
         "Check for &updates…": "Rechercher des &mises à jour…",
-        "&Download / reinstall checker…": "&Télécharger / réinstaller le vérificateur…",
+        "&Download / reinstall checkers…": "&Télécharger / réinstaller les vérificateurs…",
         "&Language": "&Langue",
         "&Help": "&Aide",
         "&About": "À &propos",
@@ -119,24 +120,30 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Une vérification est déjà en cours. Attendez la fin, puis déposez à nouveau."
         ),
         "Unsupported drop": "Dépôt non pris en charge",
-        "Drop a packaged .ebrl file or an exploded publication folder.": (
-            "Déposez un fichier .ebrl empaqueté ou un dossier de publication décompressé."
+        "Drop a packaged .ebrl or .epub file, or an exploded "
+        "eBraille/EPUB publication folder.": (
+            "Déposez un fichier .ebrl ou .epub empaqueté, ou un dossier de "
+            "publication eBraille/EPUB décompressé."
         ),
         "Using first publication ({name}); ignored {count} other item(s).": (
             "Utilisation de la première publication ({name}) ; "
             "{count} autre(s) élément(s) ignoré(s)."
         ),
         "Multiple items": "Plusieurs éléments",
-        "Select an eBraille publication": (
-            "Sélectionner une publication eBraille"
+        "Select an eBraille or EPUB publication": (
+            "Sélectionner une publication eBraille ou EPUB"
         ),
+        "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
         "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
+        "EPUB (*.epub)|*.epub;*.EPUB|"
         "All files (*.*)|*.*": (
+            "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
             "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
+            "EPUB (*.epub)|*.epub;*.EPUB|"
             "Tous les fichiers (*.*)|*.*"
         ),
-        "Select an exploded eBraille publication folder": (
-            "Sélectionner un dossier de publication eBraille décompressé"
+        "Select an exploded eBraille or EPUB publication folder": (
+            "Sélectionner un dossier de publication eBraille ou EPUB décompressé"
         ),
         "Nothing to check": "Rien à vérifier",
         "Select a publication file or folder first.": (
@@ -155,38 +162,42 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Report saved to {path}": "Rapport enregistré dans {path}",
         "Checking for updates…": "Recherche de mises à jour…",
         "Update check failed": "Échec de la recherche de mises à jour",
-        "Could not check for updates:\n{error}\n\nReleases: {url}": (
-            "Impossible de rechercher les mises à jour :\n{error}\n\n"
-            "Versions : {url}"
+        "Could not check for updates:\n{error}": (
+            "Impossible de rechercher les mises à jour :\n{error}"
         ),
         "Up to date": "À jour",
-        "You have the latest checker{version}.": (
-            "Vous avez la dernière version du vérificateur{version}."
+        "You have the latest checkers.\n\n{detail}": (
+            "Vous avez les dernières versions des vérificateurs.\n\n{detail}"
         ),
         "Update available": "Mise à jour disponible",
-        "A new eBraille Checker release is available.\n\n"
-        "Installed: {installed}\n"
-        "Latest: {tag} — {name}\n\n"
-        "Download and install it now?": (
-            "Une nouvelle version d’eBraille Checker est disponible.\n\n"
-            "Installée : {installed}\n"
-            "Dernière : {tag} — {name}\n\n"
+        "New checker releases are available.\n\n"
+        "{detail}\n\n"
+        "Download and install them now?": (
+            "De nouvelles versions des vérificateurs sont disponibles.\n\n"
+            "{detail}\n\n"
             "Télécharger et installer maintenant ?"
         ),
+        "{name}\n  Installed: {installed}\n  Latest: {tag} — {label}": (
+            "{name}\n  Installée : {installed}\n  Dernière : {tag} — {label}"
+        ),
+        "Download and reinstall the latest checkers now?\n\n{detail}": (
+            "Télécharger et réinstaller les dernières versions maintenant ?\n\n{detail}"
+        ),
         "none": "aucune",
-        "Fetching latest release…": "Récupération de la dernière version…",
+        "Fetching latest releases…": "Récupération des dernières versions…",
         "Installing {tag}…": "Installation de {tag}…",
         "Installed": "Installé",
-        "Checker installed successfully.\n\n{path}": (
-            "Vérificateur installé avec succès.\n\n{path}"
+        "Checkers installed successfully.\n\n{path}": (
+            "Vérificateurs installés avec succès.\n\n{path}"
         ),
         "Install failed": "Échec de l’installation",
         "Installation failed:\n{error}": "Échec de l’installation :\n{error}",
         "An accessible, cross-platform front-end for the DAISY "
-        "eBraille Checker.": (
+        "eBraille Checker and W3C EPUBCheck.": (
             "Une interface accessible et multiplateforme pour le "
-            "vérificateur eBraille de la DAISY."
+            "vérificateur eBraille de la DAISY et EPUBCheck du W3C."
         ),
+        "EPUBCheck": "EPUBCheck",
         "About eBraille Checker GUI": "À propos d’eBraille Checker GUI",
         "Version {version}": "Version {version}",
         "Links": "Liens",
@@ -224,6 +235,10 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Checker {version} (bundled)": "Vérificateur {version} (inclus)",
         "Checker installed": "Vérificateur installé",
         "Checker not installed": "Vérificateur non installé",
+        "{name} {version}": "{name} {version}",
+        "{name} {version} (bundled)": "{name} {version} (inclus)",
+        "{name} installed": "{name} installé",
+        "{name} not installed": "{name} non installé",
         "Java not found": "Java introuvable",
         "Language changed to {language}.": "Langue changée : {language}.",
     },
@@ -232,8 +247,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "eBraille Checker GUI": "eBraille Checker GUI",
         "Publication": "Publicación",
         "Path:": "Ruta:",
-        "Select or drop a .ebrl file or folder — checking starts automatically": (
-            "Seleccione o suelte un archivo .ebrl o una carpeta — "
+        "Select or drop a .ebrl / .epub file or folder — "
+        "checking starts automatically": (
+            "Seleccione o suelte un archivo .ebrl / .epub o una carpeta — "
             "la comprobación empieza automáticamente"
         ),
         "Select &file…": "Seleccionar &archivo…",
@@ -292,7 +308,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "&Re-check publication\tF5": "&Volver a comprobar\tF5",
         "Show/hide full &log\tCtrl+L": "Mostrar/ocultar registro &completo\tCtrl+L",
         "Check for &updates…": "Buscar &actualizaciones…",
-        "&Download / reinstall checker…": "&Descargar / reinstalar el comprobador…",
+        "&Download / reinstall checkers…": "&Descargar / reinstalar los comprobadores…",
         "&Language": "&Idioma",
         "&Help": "A&yuda",
         "&About": "&Acerca de",
@@ -322,24 +338,30 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Ya hay una comprobación en curso. Espere a que termine y vuelva a soltar."
         ),
         "Unsupported drop": "Soltar no admitido",
-        "Drop a packaged .ebrl file or an exploded publication folder.": (
-            "Suelte un archivo .ebrl empaquetado o una carpeta de publicación descomprimida."
+        "Drop a packaged .ebrl or .epub file, or an exploded "
+        "eBraille/EPUB publication folder.": (
+            "Suelte un archivo .ebrl o .epub empaquetado, o una carpeta de "
+            "publicación eBraille/EPUB descomprimida."
         ),
         "Using first publication ({name}); ignored {count} other item(s).": (
             "Usando la primera publicación ({name}); "
             "se ignoraron {count} elemento(s)."
         ),
         "Multiple items": "Varios elementos",
-        "Select an eBraille publication": (
-            "Seleccionar una publicación eBraille"
+        "Select an eBraille or EPUB publication": (
+            "Seleccionar una publicación eBraille o EPUB"
         ),
+        "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
         "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
+        "EPUB (*.epub)|*.epub;*.EPUB|"
         "All files (*.*)|*.*": (
+            "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
             "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
+            "EPUB (*.epub)|*.epub;*.EPUB|"
             "Todos los archivos (*.*)|*.*"
         ),
-        "Select an exploded eBraille publication folder": (
-            "Seleccionar una carpeta de publicación eBraille descomprimida"
+        "Select an exploded eBraille or EPUB publication folder": (
+            "Seleccionar una carpeta de publicación eBraille o EPUB descomprimida"
         ),
         "Nothing to check": "Nada que comprobar",
         "Select a publication file or folder first.": (
@@ -358,38 +380,42 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Report saved to {path}": "Informe guardado en {path}",
         "Checking for updates…": "Buscando actualizaciones…",
         "Update check failed": "Error al buscar actualizaciones",
-        "Could not check for updates:\n{error}\n\nReleases: {url}": (
-            "No se pudieron buscar actualizaciones:\n{error}\n\n"
-            "Versiones: {url}"
+        "Could not check for updates:\n{error}": (
+            "No se pudieron buscar actualizaciones:\n{error}"
         ),
         "Up to date": "Actualizado",
-        "You have the latest checker{version}.": (
-            "Tiene la última versión del comprobador{version}."
+        "You have the latest checkers.\n\n{detail}": (
+            "Tiene las últimas versiones de los comprobadores.\n\n{detail}"
         ),
         "Update available": "Actualización disponible",
-        "A new eBraille Checker release is available.\n\n"
-        "Installed: {installed}\n"
-        "Latest: {tag} — {name}\n\n"
-        "Download and install it now?": (
-            "Hay una nueva versión de eBraille Checker disponible.\n\n"
-            "Instalada: {installed}\n"
-            "Última: {tag} — {name}\n\n"
+        "New checker releases are available.\n\n"
+        "{detail}\n\n"
+        "Download and install them now?": (
+            "Hay nuevas versiones de los comprobadores disponibles.\n\n"
+            "{detail}\n\n"
             "¿Descargar e instalar ahora?"
         ),
+        "{name}\n  Installed: {installed}\n  Latest: {tag} — {label}": (
+            "{name}\n  Instalada: {installed}\n  Última: {tag} — {label}"
+        ),
+        "Download and reinstall the latest checkers now?\n\n{detail}": (
+            "¿Descargar y reinstalar las últimas versiones ahora?\n\n{detail}"
+        ),
         "none": "ninguna",
-        "Fetching latest release…": "Obteniendo la última versión…",
+        "Fetching latest releases…": "Obteniendo las últimas versiones…",
         "Installing {tag}…": "Instalando {tag}…",
         "Installed": "Instalado",
-        "Checker installed successfully.\n\n{path}": (
-            "Comprobador instalado correctamente.\n\n{path}"
+        "Checkers installed successfully.\n\n{path}": (
+            "Comprobadores instalados correctamente.\n\n{path}"
         ),
         "Install failed": "Error de instalación",
         "Installation failed:\n{error}": "Error de instalación:\n{error}",
         "An accessible, cross-platform front-end for the DAISY "
-        "eBraille Checker.": (
+        "eBraille Checker and W3C EPUBCheck.": (
             "Una interfaz accesible y multiplataforma para el "
-            "comprobador eBraille de DAISY."
+            "comprobador eBraille de DAISY y EPUBCheck del W3C."
         ),
+        "EPUBCheck": "EPUBCheck",
         "About eBraille Checker GUI": "Acerca de eBraille Checker GUI",
         "Version {version}": "Versión {version}",
         "Links": "Enlaces",
@@ -429,6 +455,10 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Checker {version} (bundled)": "Comprobador {version} (incluido)",
         "Checker installed": "Comprobador instalado",
         "Checker not installed": "Comprobador no instalado",
+        "{name} {version}": "{name} {version}",
+        "{name} {version} (bundled)": "{name} {version} (incluido)",
+        "{name} installed": "{name} instalado",
+        "{name} not installed": "{name} no instalado",
         "Java not found": "Java no encontrado",
         "Language changed to {language}.": "Idioma cambiado a {language}.",
     },
@@ -437,8 +467,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "eBraille Checker GUI": "eBraille Checker GUI",
         "Publication": "Publikation",
         "Path:": "Pfad:",
-        "Select or drop a .ebrl file or folder — checking starts automatically": (
-            "Wählen oder ziehen Sie eine .ebrl-Datei oder einen Ordner — "
+        "Select or drop a .ebrl / .epub file or folder — "
+        "checking starts automatically": (
+            "Wählen oder ziehen Sie eine .ebrl-/.epub-Datei oder einen Ordner — "
             "die Prüfung startet automatisch"
         ),
         "Select &file…": "&Datei auswählen…",
@@ -498,7 +529,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "&Re-check publication\tF5": "Publikation erneut &prüfen\tF5",
         "Show/hide full &log\tCtrl+L": "Vollständiges &Protokoll ein-/ausblenden\tCtrl+L",
         "Check for &updates…": "Nach &Updates suchen…",
-        "&Download / reinstall checker…": "Prüfer &herunterladen / neu installieren…",
+        "&Download / reinstall checkers…": "Prüfer &herunterladen / neu installieren…",
         "&Language": "&Sprache",
         "&Help": "&Hilfe",
         "&About": "&Info",
@@ -528,25 +559,30 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Eine Prüfung läuft bereits. Warten Sie auf das Ende und ziehen Sie erneut."
         ),
         "Unsupported drop": "Ablegen nicht unterstützt",
-        "Drop a packaged .ebrl file or an exploded publication folder.": (
-            "Legen Sie eine gepackte .ebrl-Datei oder einen entpackten "
-            "Publikationsordner ab."
+        "Drop a packaged .ebrl or .epub file, or an exploded "
+        "eBraille/EPUB publication folder.": (
+            "Legen Sie eine gepackte .ebrl- oder .epub-Datei oder einen "
+            "entpackten eBraille-/EPUB-Publikationsordner ab."
         ),
         "Using first publication ({name}); ignored {count} other item(s).": (
             "Erste Publikation wird verwendet ({name}); "
             "{count} weitere(s) Element(e) ignoriert."
         ),
         "Multiple items": "Mehrere Elemente",
-        "Select an eBraille publication": (
-            "eBraille-Publikation auswählen"
+        "Select an eBraille or EPUB publication": (
+            "eBraille- oder EPUB-Publikation auswählen"
         ),
+        "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
         "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
+        "EPUB (*.epub)|*.epub;*.EPUB|"
         "All files (*.*)|*.*": (
+            "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
             "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
+            "EPUB (*.epub)|*.epub;*.EPUB|"
             "Alle Dateien (*.*)|*.*"
         ),
-        "Select an exploded eBraille publication folder": (
-            "Entpackten eBraille-Publikationsordner auswählen"
+        "Select an exploded eBraille or EPUB publication folder": (
+            "Entpackten eBraille- oder EPUB-Publikationsordner auswählen"
         ),
         "Nothing to check": "Nichts zu prüfen",
         "Select a publication file or folder first.": (
@@ -565,38 +601,42 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Report saved to {path}": "Bericht gespeichert unter {path}",
         "Checking for updates…": "Suche nach Updates…",
         "Update check failed": "Update-Prüfung fehlgeschlagen",
-        "Could not check for updates:\n{error}\n\nReleases: {url}": (
-            "Updates konnten nicht geprüft werden:\n{error}\n\n"
-            "Versionen: {url}"
+        "Could not check for updates:\n{error}": (
+            "Updates konnten nicht geprüft werden:\n{error}"
         ),
         "Up to date": "Aktuell",
-        "You have the latest checker{version}.": (
-            "Sie haben den neuesten Prüfer{version}."
+        "You have the latest checkers.\n\n{detail}": (
+            "Sie haben die neuesten Prüfer.\n\n{detail}"
         ),
         "Update available": "Update verfügbar",
-        "A new eBraille Checker release is available.\n\n"
-        "Installed: {installed}\n"
-        "Latest: {tag} — {name}\n\n"
-        "Download and install it now?": (
-            "Eine neue eBraille-Checker-Version ist verfügbar.\n\n"
-            "Installiert: {installed}\n"
-            "Neueste: {tag} — {name}\n\n"
+        "New checker releases are available.\n\n"
+        "{detail}\n\n"
+        "Download and install them now?": (
+            "Neue Prüferversionen sind verfügbar.\n\n"
+            "{detail}\n\n"
             "Jetzt herunterladen und installieren?"
         ),
+        "{name}\n  Installed: {installed}\n  Latest: {tag} — {label}": (
+            "{name}\n  Installiert: {installed}\n  Neueste: {tag} — {label}"
+        ),
+        "Download and reinstall the latest checkers now?\n\n{detail}": (
+            "Neueste Prüfer jetzt herunterladen und neu installieren?\n\n{detail}"
+        ),
         "none": "keine",
-        "Fetching latest release…": "Neueste Version wird geladen…",
+        "Fetching latest releases…": "Neueste Versionen werden geladen…",
         "Installing {tag}…": "{tag} wird installiert…",
         "Installed": "Installiert",
-        "Checker installed successfully.\n\n{path}": (
+        "Checkers installed successfully.\n\n{path}": (
             "Prüfer erfolgreich installiert.\n\n{path}"
         ),
         "Install failed": "Installation fehlgeschlagen",
         "Installation failed:\n{error}": "Installation fehlgeschlagen:\n{error}",
         "An accessible, cross-platform front-end for the DAISY "
-        "eBraille Checker.": (
+        "eBraille Checker and W3C EPUBCheck.": (
             "Eine barrierefreie, plattformübergreifende Oberfläche für den "
-            "DAISY eBraille Checker."
+            "DAISY eBraille Checker und W3C EPUBCheck."
         ),
+        "EPUBCheck": "EPUBCheck",
         "About eBraille Checker GUI": "Info zu eBraille Checker GUI",
         "Version {version}": "Version {version}",
         "Links": "Links",
@@ -634,6 +674,10 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Checker {version} (bundled)": "Prüfer {version} (mitgeliefert)",
         "Checker installed": "Prüfer installiert",
         "Checker not installed": "Prüfer nicht installiert",
+        "{name} {version}": "{name} {version}",
+        "{name} {version} (bundled)": "{name} {version} (mitgeliefert)",
+        "{name} installed": "{name} installiert",
+        "{name} not installed": "{name} nicht installiert",
         "Java not found": "Java nicht gefunden",
         "Language changed to {language}.": "Sprache geändert: {language}.",
     },
@@ -642,8 +686,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "eBraille Checker GUI": "eBraille Checker GUI",
         "Publication": "Publicação",
         "Path:": "Caminho:",
-        "Select or drop a .ebrl file or folder — checking starts automatically": (
-            "Selecione ou solte um ficheiro .ebrl ou uma pasta — "
+        "Select or drop a .ebrl / .epub file or folder — "
+        "checking starts automatically": (
+            "Selecione ou solte um ficheiro .ebrl / .epub ou uma pasta — "
             "a verificação inicia automaticamente"
         ),
         "Select &file…": "Selecionar &ficheiro…",
@@ -702,7 +747,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "&Re-check publication\tF5": "&Verificar novamente\tF5",
         "Show/hide full &log\tCtrl+L": "Mostrar/ocultar registo &completo\tCtrl+L",
         "Check for &updates…": "Procurar &atualizações…",
-        "&Download / reinstall checker…": "&Descarregar / reinstalar o verificador…",
+        "&Download / reinstall checkers…": "&Descarregar / reinstalar os verificadores…",
         "&Language": "&Idioma",
         "&Help": "A&juda",
         "&About": "&Acerca de",
@@ -732,24 +777,30 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Já existe uma verificação em curso. Aguarde que termine e solte novamente."
         ),
         "Unsupported drop": "Soltar não suportado",
-        "Drop a packaged .ebrl file or an exploded publication folder.": (
-            "Solte um ficheiro .ebrl empacotado ou uma pasta de publicação descompactada."
+        "Drop a packaged .ebrl or .epub file, or an exploded "
+        "eBraille/EPUB publication folder.": (
+            "Solte um ficheiro .ebrl ou .epub empacotado, ou uma pasta de "
+            "publicação eBraille/EPUB descompactada."
         ),
         "Using first publication ({name}); ignored {count} other item(s).": (
             "A utilizar a primeira publicação ({name}); "
             "ignorado(s) {count} outro(s) item(ns)."
         ),
         "Multiple items": "Vários itens",
-        "Select an eBraille publication": (
-            "Selecionar uma publicação eBraille"
+        "Select an eBraille or EPUB publication": (
+            "Selecionar uma publicação eBraille ou EPUB"
         ),
+        "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
         "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
+        "EPUB (*.epub)|*.epub;*.EPUB|"
         "All files (*.*)|*.*": (
+            "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
             "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
+            "EPUB (*.epub)|*.epub;*.EPUB|"
             "Todos os ficheiros (*.*)|*.*"
         ),
-        "Select an exploded eBraille publication folder": (
-            "Selecionar uma pasta de publicação eBraille descompactada"
+        "Select an exploded eBraille or EPUB publication folder": (
+            "Selecionar uma pasta de publicação eBraille ou EPUB descompactada"
         ),
         "Nothing to check": "Nada a verificar",
         "Select a publication file or folder first.": (
@@ -768,38 +819,42 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Report saved to {path}": "Relatório guardado em {path}",
         "Checking for updates…": "A procurar atualizações…",
         "Update check failed": "Falha ao procurar atualizações",
-        "Could not check for updates:\n{error}\n\nReleases: {url}": (
-            "Não foi possível procurar atualizações:\n{error}\n\n"
-            "Versões: {url}"
+        "Could not check for updates:\n{error}": (
+            "Não foi possível procurar atualizações:\n{error}"
         ),
         "Up to date": "Atualizado",
-        "You have the latest checker{version}.": (
-            "Tem a versão mais recente do verificador{version}."
+        "You have the latest checkers.\n\n{detail}": (
+            "Tem as versões mais recentes dos verificadores.\n\n{detail}"
         ),
         "Update available": "Atualização disponível",
-        "A new eBraille Checker release is available.\n\n"
-        "Installed: {installed}\n"
-        "Latest: {tag} — {name}\n\n"
-        "Download and install it now?": (
-            "Está disponível uma nova versão do eBraille Checker.\n\n"
-            "Instalada: {installed}\n"
-            "Mais recente: {tag} — {name}\n\n"
+        "New checker releases are available.\n\n"
+        "{detail}\n\n"
+        "Download and install them now?": (
+            "Estão disponíveis novas versões dos verificadores.\n\n"
+            "{detail}\n\n"
             "Descarregar e instalar agora?"
         ),
+        "{name}\n  Installed: {installed}\n  Latest: {tag} — {label}": (
+            "{name}\n  Instalada: {installed}\n  Mais recente: {tag} — {label}"
+        ),
+        "Download and reinstall the latest checkers now?\n\n{detail}": (
+            "Descarregar e reinstalar as versões mais recentes agora?\n\n{detail}"
+        ),
         "none": "nenhuma",
-        "Fetching latest release…": "A obter a versão mais recente…",
+        "Fetching latest releases…": "A obter as versões mais recentes…",
         "Installing {tag}…": "A instalar {tag}…",
         "Installed": "Instalado",
-        "Checker installed successfully.\n\n{path}": (
-            "Verificador instalado com sucesso.\n\n{path}"
+        "Checkers installed successfully.\n\n{path}": (
+            "Verificadores instalados com sucesso.\n\n{path}"
         ),
         "Install failed": "Falha na instalação",
         "Installation failed:\n{error}": "Falha na instalação:\n{error}",
         "An accessible, cross-platform front-end for the DAISY "
-        "eBraille Checker.": (
+        "eBraille Checker and W3C EPUBCheck.": (
             "Uma interface acessível e multiplataforma para o "
-            "verificador eBraille da DAISY."
+            "verificador eBraille da DAISY e o EPUBCheck do W3C."
         ),
+        "EPUBCheck": "EPUBCheck",
         "About eBraille Checker GUI": "Acerca do eBraille Checker GUI",
         "Version {version}": "Versão {version}",
         "Links": "Ligações",
@@ -839,6 +894,10 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Checker {version} (bundled)": "Verificador {version} (incluído)",
         "Checker installed": "Verificador instalado",
         "Checker not installed": "Verificador não instalado",
+        "{name} {version}": "{name} {version}",
+        "{name} {version} (bundled)": "{name} {version} (incluído)",
+        "{name} installed": "{name} instalado",
+        "{name} not installed": "{name} não instalado",
         "Java not found": "Java não encontrado",
         "Language changed to {language}.": "Idioma alterado para {language}.",
     },

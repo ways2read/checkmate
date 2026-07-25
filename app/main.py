@@ -14,8 +14,6 @@ import wx.lib.newevent
 from . import __version__
 from .checker import (
     checker_status_text,
-    is_exploded_path,
-    is_packaged_path,
     run_check,
 )
 from .i18n import (
@@ -28,20 +26,21 @@ from .i18n import (
 from .java_util import detect_java
 from .models import CheckResult, Severity, Verdict
 from .paths import (
-    CHECKER_RELEASES_PAGE,
     CHECKER_REPO_PAGE,
     DAISY_WEBSITE,
     EBRAILLE_SPEC_URL,
     EBRAILLE_STANDARD_PAGE,
+    EPUBCHECK_REPO_PAGE,
     application_dir,
-    find_checker_jar,
     is_frozen,
 )
+from .publication import is_checkable_path
 from .updater import (
-    check_for_update,
-    ensure_checker_installed,
+    ReleaseInfo,
+    ToolUpdateInfo,
+    check_for_updates,
+    ensure_tools_installed,
     install_release,
-    read_effective_version,
 )
 
 ProgressEvent, EVT_PROGRESS = wx.lib.newevent.NewEvent()
@@ -231,7 +230,7 @@ class AboutDialog(wx.Dialog):
             self,
             label=_(
                 "An accessible, cross-platform front-end for the DAISY "
-                "eBraille Checker."
+                "eBraille Checker and W3C EPUBCheck."
             ),
         )
         desc.Wrap(420)
@@ -249,6 +248,7 @@ class AboutDialog(wx.Dialog):
             (_("eBraille on the DAISY website"), EBRAILLE_STANDARD_PAGE),
             (_("eBraille specification"), EBRAILLE_SPEC_URL),
             (_("eBraille Checker"), CHECKER_REPO_PAGE),
+            (_("EPUBCheck"), EPUBCHECK_REPO_PAGE),
         ):
             link = wx.adv.HyperlinkCtrl(self, label=label, url=url)
             link.SetName(label)
@@ -506,7 +506,8 @@ class MainFrame(wx.Frame):
         )
         self.path_ctrl.SetHint(
             _(
-                "Select or drop a .ebrl file or folder — checking starts automatically"
+                "Select or drop a .ebrl / .epub file or folder — "
+                "checking starts automatically"
             )
         )
         # Keep visual/tab order: path → select file → select folder.
@@ -640,7 +641,7 @@ class MainFrame(wx.Frame):
             wx.ID_ANY, _("Check for &updates…")
         )
         self.menu_install = tools_menu.Append(
-            wx.ID_ANY, _("&Download / reinstall checker…")
+            wx.ID_ANY, _("&Download / reinstall checkers…")
         )
         menubar.Append(tools_menu, _("&Tools"))
 
@@ -712,7 +713,8 @@ class MainFrame(wx.Frame):
         self.path_label.SetLabel(_("Path:"))
         self.path_ctrl.SetHint(
             _(
-                "Select or drop a .ebrl file or folder — checking starts automatically"
+                "Select or drop a .ebrl / .epub file or folder — "
+                "checking starts automatically"
             )
         )
         self.select_file_btn.SetLabel(_("Select &file…"))
@@ -793,17 +795,19 @@ class MainFrame(wx.Frame):
                 def progress(msg: str) -> None:
                     wx.PostEvent(self, ProgressEvent(message=msg))
 
-                ensure_checker_installed(progress=progress)
+                ensure_tools_installed(progress=progress)
                 wx.PostEvent(self, ProgressEvent(message=_("Ready")))
                 try:
-                    latest, installed, available = check_for_update()
+                    updates = check_for_updates()
+                    available = any(u.available for u in updates)
                     wx.PostEvent(
                         self,
                         UpdateInfoEvent(
-                            latest=latest,
-                            installed=installed,
+                            updates=updates,
                             available=available,
                             silent=True,
+                            error=None,
+                            force=False,
                         ),
                     )
                 except Exception:  # noqa: BLE001
@@ -908,14 +912,15 @@ class MainFrame(wx.Frame):
         paths = [Path(name) for name in filenames]
         chosen: Path | None = None
         for path in paths:
-            if is_packaged_path(path) or is_exploded_path(path):
+            if is_checkable_path(path):
                 chosen = path
                 break
 
         if chosen is None:
             wx.MessageBox(
                 _(
-                    "Drop a packaged .ebrl file or an exploded publication folder."
+                    "Drop a packaged .ebrl or .epub file, or an exploded "
+                    "eBraille/EPUB publication folder."
                 ),
                 _("Unsupported drop"),
                 wx.OK | wx.ICON_WARNING,
@@ -1005,9 +1010,11 @@ class MainFrame(wx.Frame):
     def on_browse_file(self, _event: wx.CommandEvent) -> None:
         with wx.FileDialog(
             self,
-            _("Select an eBraille publication"),
+            _("Select an eBraille or EPUB publication"),
             wildcard=_(
+                "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
                 "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
+                "EPUB (*.epub)|*.epub;*.EPUB|"
                 "All files (*.*)|*.*"
             ),
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
@@ -1020,7 +1027,7 @@ class MainFrame(wx.Frame):
     def on_browse_folder(self, _event: wx.CommandEvent) -> None:
         with wx.DirDialog(
             self,
-            _("Select an exploded eBraille publication folder"),
+            _("Select an exploded eBraille or EPUB publication folder"),
             style=wx.DD_DIR_MUST_EXIST,
         ) as dlg:
             if dlg.ShowModal() != wx.ID_OK:
@@ -1178,26 +1185,28 @@ class MainFrame(wx.Frame):
 
         def worker() -> None:
             try:
-                latest, installed, available = check_for_update()
+                updates = check_for_updates()
+                available = any(u.available for u in updates)
+                errors = [u.error for u in updates if u.error]
                 wx.PostEvent(
                     self,
                     UpdateInfoEvent(
-                        latest=latest,
-                        installed=installed,
+                        updates=updates,
                         available=available,
                         silent=False,
-                        error=None,
+                        error="; ".join(errors) if errors and not available else None,
+                        force=False,
                     ),
                 )
             except Exception as exc:  # noqa: BLE001
                 wx.PostEvent(
                     self,
                     UpdateInfoEvent(
-                        latest=None,
-                        installed=read_effective_version(),
+                        updates=[],
                         available=False,
                         silent=False,
                         error=str(exc),
+                        force=False,
                     ),
                 )
 
@@ -1220,9 +1229,8 @@ class MainFrame(wx.Frame):
             if not event.silent:
                 wx.MessageBox(
                     _(
-                        "Could not check for updates:\n{error}\n\nReleases: {url}",
+                        "Could not check for updates:\n{error}",
                         error=event.error,
-                        url=CHECKER_RELEASES_PAGE,
                     ),
                     _("Update check failed"),
                     wx.OK | wx.ICON_ERROR,
@@ -1230,28 +1238,59 @@ class MainFrame(wx.Frame):
                 )
             return
 
-        latest = event.latest
-        installed = event.installed
-        if not event.available:
+        updates: list[ToolUpdateInfo] = list(getattr(event, "updates", None) or [])
+        force = bool(getattr(event, "force", False))
+        to_install = [
+            u for u in updates if u.latest is not None and (force or u.available)
+        ]
+
+        if not to_install:
             if not event.silent:
-                version = f" ({installed})" if installed else ""
+                lines = []
+                for u in updates:
+                    ver = f" ({u.installed})" if u.installed else ""
+                    lines.append(f"{u.tool.display_name}{ver}")
+                detail = "\n".join(lines)
                 wx.MessageBox(
-                    _("You have the latest checker{version}.", version=version),
+                    _(
+                        "You have the latest checkers.\n\n{detail}",
+                        detail=detail or _("none"),
+                    ),
                     _("Up to date"),
                     wx.OK | wx.ICON_INFORMATION,
                     self,
                 )
             return
 
-        msg = _(
-            "A new eBraille Checker release is available.\n\n"
-            "Installed: {installed}\n"
-            "Latest: {tag} — {name}\n\n"
-            "Download and install it now?",
-            installed=installed or _("none"),
-            tag=latest.tag,
-            name=latest.name,
-        )
+        if force:
+            msg = _(
+                "Download and reinstall the latest checkers now?\n\n{detail}",
+                detail="\n".join(
+                    f"{u.tool.display_name}: {u.latest.tag}"
+                    for u in to_install
+                    if u.latest is not None
+                ),
+            )
+        else:
+            detail_lines = []
+            for u in to_install:
+                if u.latest is None:
+                    continue
+                detail_lines.append(
+                    _(
+                        "{name}\n  Installed: {installed}\n  Latest: {tag} — {label}",
+                        name=u.tool.display_name,
+                        installed=u.installed or _("none"),
+                        tag=u.latest.tag,
+                        label=u.latest.name,
+                    )
+                )
+            msg = _(
+                "New checker releases are available.\n\n"
+                "{detail}\n\n"
+                "Download and install them now?",
+                detail="\n\n".join(detail_lines),
+            )
         if (
             wx.MessageBox(
                 msg, _("Update available"), wx.YES_NO | wx.ICON_QUESTION, self
@@ -1259,24 +1298,24 @@ class MainFrame(wx.Frame):
             != wx.YES
         ):
             return
-        self._start_install(latest)
+        releases = [u.latest for u in to_install if u.latest is not None]
+        self._start_install(releases)
 
     def on_reinstall_checker(self, _event: wx.CommandEvent) -> None:
         if self._busy:
             return
         self._set_busy(True)
         self._show_result_text(
-            _("Fetching latest release…"), update_title=False
+            _("Fetching latest releases…"), update_title=False
         )
 
         def worker() -> None:
             try:
-                latest, _, _ = check_for_update()
+                updates = check_for_updates()
                 wx.PostEvent(
                     self,
                     UpdateInfoEvent(
-                        latest=latest,
-                        installed=read_effective_version(),
+                        updates=updates,
                         available=True,
                         silent=False,
                         error=None,
@@ -1287,20 +1326,23 @@ class MainFrame(wx.Frame):
                 wx.PostEvent(
                     self,
                     UpdateInfoEvent(
-                        latest=None,
-                        installed=None,
+                        updates=[],
                         available=False,
                         silent=False,
                         error=str(exc),
+                        force=False,
                     ),
                 )
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _start_install(self, release) -> None:
+    def _start_install(self, releases: list[ReleaseInfo]) -> None:
+        if not releases:
+            return
         self._set_busy(True)
+        labels = ", ".join(r.tag for r in releases)
         self._show_result_text(
-            _("Installing {tag}…", tag=release.tag), update_title=False
+            _("Installing {tag}…", tag=labels), update_title=False
         )
 
         def worker() -> None:
@@ -1309,9 +1351,15 @@ class MainFrame(wx.Frame):
                 def progress(msg: str) -> None:
                     wx.PostEvent(self, ProgressEvent(message=msg))
 
-                jar = install_release(release, progress=progress)
+                paths: list[str] = []
+                for release in releases:
+                    jar = install_release(release, progress=progress)
+                    paths.append(str(jar))
                 wx.PostEvent(
-                    self, InstallDoneEvent(ok=True, message=str(jar), error=None)
+                    self,
+                    InstallDoneEvent(
+                        ok=True, message="\n".join(paths), error=None
+                    ),
                 )
             except Exception as exc:  # noqa: BLE001
                 wx.PostEvent(
@@ -1327,7 +1375,7 @@ class MainFrame(wx.Frame):
         if event.ok:
             wx.MessageBox(
                 _(
-                    "Checker installed successfully.\n\n{path}",
+                    "Checkers installed successfully.\n\n{path}",
                     path=event.message,
                 ),
                 _("Installed"),

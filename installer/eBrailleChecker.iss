@@ -2,17 +2,21 @@
 ;
 ; Prerequisites:
 ;   1. Install Inno Setup 6: https://jrsoftware.org/isinfo.php
-;   2. Build the app first:
+;   2. Build the app first (bundles Temurin JRE, eBraille Checker, EPUBCheck):
 ;        uv sync --extra dev
 ;        uv run python scripts/package.py --clean
+;      Or one-shot: powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
 ;   3. Compile this script (ISCC or Inno Setup Compiler GUI):
 ;        iscc installer\eBrailleChecker.iss
+;
+; The [Files] section ships the full dist\eBrailleChecker\ tree, including:
+;   runtime\   (JRE), checker\ (eBraille Checker), epubcheck\ (W3C EPUBCheck)
 ;
 ; Output: installer\Output\eBrailleCheckerGUI-<version>-setup.exe
 
 #define MyAppName "eBraille Checker"
 #define MyAppFullName "eBraille Checker GUI"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "ways2read"
 #define MyAppURL "https://github.com/ways2read/ebraille-checker-gui"
 #define MyAppExeName "eBrailleChecker.exe"
@@ -64,10 +68,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "fileassoc"; Description: "Add .ebrl Open with… and ""Validate with eBraille Checker"" context menu"; GroupDescription: "File associations:"; Flags: checkedonce
+Name: "fileassoc"; Description: "Add .ebrl/.epub Open with… and ""Validate with eBraille Checker"" context menu"; GroupDescription: "File associations:"; Flags: checkedonce
 
 [Files]
-; Entire PyInstaller onedir tree (exe + _internal + runtime + checker)
+; Entire PyInstaller onedir tree (exe + _internal + runtime + checker + epubcheck)
 Source: "..\dist\eBrailleChecker\*"; DestDir: "{app}"; \
   Flags: ignoreversion recursesubdirs createallsubdirs
 ; Explicit icon for Start Menu / desktop shortcuts (more reliable than exe embed)
@@ -76,25 +80,31 @@ Source: "eBrailleChecker.ico"; DestDir: "{app}"; Flags: ignoreversion
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
   IconFilename: "{app}\eBrailleChecker.ico"; \
-  Comment: "Check eBraille publications"
+  Comment: "Check eBraille and EPUB publications"
 Name: "{group}\{cm:UninstallProgram,{#MyAppFullName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
   IconFilename: "{app}\eBrailleChecker.ico"; \
-  Comment: "Check eBraille publications"; Tasks: desktopicon
+  Comment: "Check eBraille and EPUB publications"; Tasks: desktopicon
 
 [Registry]
-; Do not set Software\Classes\.ebrl (default) — that would steal double-click.
-; Clear it if an older installer claimed the default handler.
+; Do not set Software\Classes\.ebrl / .epub (default) — that would steal double-click.
+; Clear .ebrl default only if an older installer of this app claimed it.
 Root: HKA; Subkey: "Software\Classes\.ebrl"; ValueType: string; ValueName: ""; \
   Flags: deletevalue; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ebrl\shell\eBrailleCheck"; \
   Flags: deletekey; Tasks: fileassoc
-; Open with… — ProgID + OpenWithProgids (not the default association)
+; --- .ebrl: Open with… (ProgID + OpenWithProgids) ---
 Root: HKA; Subkey: "Software\Classes\eBrailleChecker.ebrl"; \
   ValueType: string; ValueName: ""; ValueData: "eBraille Publication"; \
   Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\eBrailleChecker.ebrl"; \
+  ValueType: string; ValueName: "FriendlyTypeName"; ValueData: "eBraille Publication"; \
+  Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\eBrailleChecker.ebrl\DefaultIcon"; \
   ValueType: string; ValueName: ""; ValueData: "{app}\eBrailleChecker.ico,0"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\eBrailleChecker.ebrl\shell\open"; \
+  ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#MyAppFullName}"; \
   Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\eBrailleChecker.ebrl\shell\open\command"; \
   ValueType: string; ValueName: ""; \
@@ -102,13 +112,53 @@ Root: HKA; Subkey: "Software\Classes\eBrailleChecker.ebrl\shell\open\command"; \
 Root: HKA; Subkey: "Software\Classes\.ebrl\OpenWithProgids"; \
   ValueType: string; ValueName: "eBrailleChecker.ebrl"; ValueData: ""; \
   Flags: uninsdeletevalue; Tasks: fileassoc
-; Dedicated context menu verb
+; --- .ebrl: context menu "Validate with eBraille Checker" ---
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ebrl\shell\eBrailleValidate"; \
   ValueType: string; ValueName: ""; ValueData: "Validate with eBraille Checker"; \
   Flags: uninsdeletekey; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ebrl\shell\eBrailleValidate\command"; \
   ValueType: string; ValueName: ""; \
   ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc
+; --- .epub: Open with… (do NOT clear Classes\.epub default — other apps own it) ---
+Root: HKA; Subkey: "Software\Classes\eBrailleChecker.epub"; \
+  ValueType: string; ValueName: ""; ValueData: "EPUB Publication"; \
+  Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\eBrailleChecker.epub"; \
+  ValueType: string; ValueName: "FriendlyTypeName"; ValueData: "EPUB Publication"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\eBrailleChecker.epub\DefaultIcon"; \
+  ValueType: string; ValueName: ""; ValueData: "{app}\eBrailleChecker.ico,0"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\eBrailleChecker.epub\shell\open"; \
+  ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#MyAppFullName}"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\eBrailleChecker.epub\shell\open\command"; \
+  ValueType: string; ValueName: ""; \
+  ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.epub\OpenWithProgids"; \
+  ValueType: string; ValueName: "eBrailleChecker.epub"; ValueData: ""; \
+  Flags: uninsdeletevalue; Tasks: fileassoc
+; --- .epub: context menu (same app; routes to stock EPUBCheck) ---
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.epub\shell\eBrailleValidate"; \
+  ValueType: string; ValueName: ""; ValueData: "Validate with eBraille Checker"; \
+  Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.epub\shell\eBrailleValidate\command"; \
+  ValueType: string; ValueName: ""; \
+  ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc
+; Also list under Applications\…\SupportedTypes for Open with… discovery
+Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; \
+  ValueType: string; ValueName: ".ebrl"; ValueData: ""; \
+  Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; \
+  ValueType: string; ValueName: ".epub"; ValueData: ""; \
+  Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}"; \
+  ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#MyAppFullName}"; \
+  Flags: uninsdeletekeyifempty; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\shell\open\command"; \
+  ValueType: string; ValueName: ""; \
+  ValueData: """{app}\{#MyAppExeName}"" ""%1"""; \
+  Flags: uninsdeletekey; Tasks: fileassoc
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; \
@@ -120,6 +170,7 @@ Filename: "{app}\{#MyAppExeName}"; \
 Type: filesandordirs; Name: "{app}\_internal"
 Type: filesandordirs; Name: "{app}\runtime"
 Type: filesandordirs; Name: "{app}\checker"
+Type: filesandordirs; Name: "{app}\epubcheck"
 
 [Code]
 function GetAppDataDir: String;
@@ -137,7 +188,7 @@ begin
     if DirExists(AppDataDir) then
     begin
       if MsgBox(
-           'Also remove saved settings and any downloaded checker updates?' + #13#10 + #13#10 +
+           'Also remove saved settings and any downloaded checker/EPUBCheck updates?' + #13#10 + #13#10 +
            AppDataDir,
            mbConfirmation, MB_YESNO) = IDYES then
       begin

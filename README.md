@@ -1,25 +1,28 @@
 # eBraille Checker GUI
 
 An accessible, cross-platform desktop front-end for the
-[DAISY eBraille Checker](https://github.com/daisy/ebraille-checker).
+[DAISY eBraille Checker](https://github.com/daisy/ebraille-checker) and
+[W3C EPUBCheck](https://github.com/w3c/epubcheck).
 
-The official checker is a Java command-line tool. This app wraps it so you can
-open a publication and see a clear result — **Passed**, **Passed with warnings**,
-or **Failed** — without typing `java -jar` commands or reading a long console log
-first.
+Those checkers are Java command-line tools. This app wraps them so you can open
+a publication and see a clear result — **Passed**, **Passed with warnings**, or
+**Failed** — without typing `java -jar` commands or reading a long console log
+first. `.ebrl` files use eBraille Checker; `.epub` files use stock EPUBCheck;
+exploded folders are classified automatically.
 
 Built with [wxPython](https://wxpython.org/) for native widgets and screen reader
 support on Windows, macOS, and Linux.
 
 ## Features
 
-- Open a packaged `.ebrl` file, or an exploded publication folder
+- Open a packaged `.ebrl` or `.epub` file, or an exploded publication folder
   (**Select file…** / **Select folder…**, or drag and drop) — checking starts
-  automatically
-- On Windows, right-click an `.ebrl` → **Validate with eBraille Checker**, or
-  **Open with** → eBraille Checker (does not change the double-click default)
-- On macOS packaged builds, Finder **Open With** for `.ebrl` (does not take over
-  double-click by default)
+  automatically with the matching engine
+- On Windows, right-click an `.ebrl` or `.epub` → **Validate with eBraille
+  Checker**, or **Open with** → eBraille Checker (does not change the
+  double-click default)
+- On macOS packaged builds, Finder **Open With** for `.ebrl` / `.epub` (does not
+  take over double-click by default)
 - Result-first UI: multi-line verdict with counts; colour cues (green / orange /
   red) reinforce the text; issues listed by severity
 - Filter issues (all / errors / warnings / info)
@@ -27,13 +30,13 @@ support on Windows, macOS, and Linux.
 - Copy summary or save a text report; **Clear results** returns to the launch state
 - UI languages: English, Français, Español, Deutsch, Português (remembered;
   first run follows the OS language when supported)
-- Downloads the eBraille Checker on first run when not bundled
-- In-app update check; updates install to application data and leave the bundled
-  install-folder copy untouched
+- Downloads eBraille Checker and EPUBCheck on first run when not bundled
+- In-app update check for both tools; updates install to application data and
+  leave the bundled install-folder copies untouched
 - Uses `-Xss4m` when launching Java to avoid known stack overflow crashes on
   smaller JREs
-- **Packaged builds** can include bundled Eclipse Temurin JRE and eBraille
-  Checker (works offline on first launch)
+- **Packaged builds** can include bundled Eclipse Temurin JRE, eBraille Checker,
+  and EPUBCheck (works offline on first launch)
 
 ## Requirements
 
@@ -42,18 +45,19 @@ support on Windows, macOS, and Linux.
 - **Python** 3.10 or newer
 - **Java** Runtime (JRE 17+ recommended) on your `PATH`, *or* a local `runtime/`
   folder (see packaging below)
-- **Network** on first launch (to download the checker), and when checking for
-  updates
+- **Network** on first launch (to download checkers when not bundled), and when
+  checking for updates
 
-The checker jar is fetched from
-[daisy/ebraille-checker releases](https://github.com/daisy/ebraille-checker/releases).
+Jars are fetched from
+[daisy/ebraille-checker releases](https://github.com/daisy/ebraille-checker/releases)
+and [w3c/epubcheck releases](https://github.com/w3c/epubcheck/releases).
 
 ### Running a packaged build (end users)
 
 - No system Java required — the distribution includes `runtime/` with Temurin JRE 17
-- No download required on first run when `checker/` is bundled with the app
-- Network only needed when checking for checker updates (or if built with
-  `--no-bundle-checker`)
+- No download required on first run when `checker/` and `epubcheck/` are bundled
+- Network only needed when checking for tool updates (or if built with
+  `--no-bundle-checker` / `--no-bundle-epubcheck`)
 
 ## Install (developers)
 
@@ -89,7 +93,7 @@ python -m app
 
 1. **Select file…** or **Select folder…**, or **drag and drop** a publication
    onto the window — checking starts automatically. On Windows you can also
-   right-click an `.ebrl` → **Validate with eBraille Checker**, or
+   right-click an `.ebrl` or `.epub` → **Validate with eBraille Checker**, or
    **Open with** → eBraille Checker. On macOS, use Finder **Open With** for a
    packaged `.app`.
 2. Read the **Result** summary (focus moves there when a check finishes), then
@@ -99,12 +103,12 @@ python -m app
    fix issues.
 5. **Edit → Clear results** (`Ctrl+Shift+N`) clears the path, verdict, issues,
    and log back to the launch state.
-6. **Tools → Check for updates…** offers to download a newer eBraille Checker
-   release when one exists.
+6. **Tools → Check for updates…** offers to download newer eBraille Checker
+   and/or EPUBCheck releases when they exist.
 
 The **title bar** keeps the app name and appends the verdict (for example
-`eBraille Checker — Failed — 3 errors`). The **status bar** shows checker and
-Java version information only.
+`eBraille Checker — Failed — 3 errors`). The **status bar** shows both tool
+versions and Java information.
 
 ### Keyboard shortcuts
 
@@ -123,10 +127,12 @@ Java version information only.
 
 ### Where data is stored
 
-**Checker** — the app uses the newest available copy in this order:
+**Checkers** — for each tool (eBraille Checker and EPUBCheck), the app uses the
+newest available copy in this order:
 
 1. **Updated copy** in application data (after you accept an in-app update)
-2. **Bundled copy** shipped with the packaged app (`checker/` next to the executable)
+2. **Bundled copy** shipped with the packaged app (`checker/` or `epubcheck/`
+   next to the executable)
 3. **Downloaded copy** on first run (when running from source without a bundle)
 
 | OS | Application data |
@@ -137,11 +143,12 @@ Java version information only.
 
 Under that folder:
 
-- `checker/` — downloaded or updated checker releases
+- `checker/` — downloaded or updated eBraille Checker releases
+- `epubcheck/` — downloaded or updated EPUBCheck releases
 - `settings.json` — remembered UI language
 
-Packaged builds also include `checker/` beside the executable (or inside the
-`.app` bundle on macOS).
+Packaged builds also include `checker/` and `epubcheck/` beside the executable
+(or inside the `.app` bundle on macOS).
 
 ## Accessibility
 
@@ -161,16 +168,30 @@ accessibility gaps is welcome via GitHub issues.
 
 ## Equivalent command line
 
-This app runs the same checker you would invoke manually. For a packaged file:
+This app runs the same checkers you would invoke manually.
+
+eBraille (packaged):
 
 ```bash
 java -Xss4m -jar path\to\ebraille-checker.jar --profile ebraille publication.ebrl
 ```
 
-For an exploded (unpacked) publication folder:
+eBraille (exploded folder):
 
 ```bash
 java -Xss4m -jar path\to\ebraille-checker.jar -mode exp --profile ebraille path\to\folder
+```
+
+EPUB (packaged):
+
+```bash
+java -Xss4m -jar path\to\epubcheck.jar publication.epub
+```
+
+EPUB (exploded folder):
+
+```bash
+java -Xss4m -jar path\to\epubcheck.jar -mode exp path\to\folder
 ```
 
 `-Xss4m` increases the Java thread stack size. Without it, some publications can
@@ -208,9 +229,11 @@ Add `-Xss4m` (or `-Xss8m`) before `-jar`, as shown above. The GUI already does t
 ### Checker download fails
 
 Check your network and GitHub availability, then use
-**Tools → Download / reinstall checker…**, or download the zip manually from the
-[releases page](https://github.com/daisy/ebraille-checker/releases) and extract
-`ebraille-checker.jar` into the application data `checker/` folder listed above.
+**Tools → Download / reinstall checkers…**, or download zips manually from the
+[eBraille Checker releases](https://github.com/daisy/ebraille-checker/releases)
+and [EPUBCheck releases](https://github.com/w3c/epubcheck/releases) pages and
+extract the jars into the application data `checker/` or `epubcheck/` folders
+listed above.
 
 ### Extension case (`.eBRL` vs `.ebrl`)
 
@@ -224,6 +247,7 @@ ebraille-checker-gui/
   app/
     main.py            # wxPython UI
     checker.py         # Run jar, parse JSON results
+    publication.py     # Classify .ebrl / .epub / exploded folders
     updater.py         # GitHub release download / update
     java_util.py       # Locate Java (bundled or PATH)
     models.py          # Verdict and issue models
@@ -233,9 +257,10 @@ ebraille-checker-gui/
     subprocess_util.py # Quiet subprocess helpers (Windows)
   run.py               # Launcher (incl. SSL cert setup when frozen)
   scripts/
-    package.py               # PyInstaller + bundled JRE and checker
+    package.py               # PyInstaller + bundled JRE, checker, EPUBCheck
     jre_bundle.py            # Download Temurin JRE into runtime/
     checker_bundle.py        # Download eBraille Checker into checker/
+    epubcheck_bundle.py      # Download EPUBCheck into epubcheck/
     build_installer.ps1      # Windows: package + Inno Setup compile
     build_macos.sh           # macOS: package .app + zip
     build_macos_dmg.sh       # macOS: drag-to-Applications .dmg
@@ -261,7 +286,7 @@ ebraille-checker-gui/
 ## Packaging
 
 Build a standalone app on each target OS (Windows or macOS). The script bundles
-**Eclipse Temurin JRE 17** and **eBraille Checker** by default.
+**Eclipse Temurin JRE 17**, **eBraille Checker**, and **EPUBCheck** by default.
 
 ```bash
 uv sync --extra dev
@@ -271,9 +296,10 @@ uv run python scripts/package.py --clean
 Options:
 
 ```bash
-uv run python scripts/package.py --no-bundle-java      # smaller build; needs system Java
-uv run python scripts/package.py --no-bundle-checker   # checker downloaded on first run
-uv run python scripts/package.py --onefile             # not recommended with bundles
+uv run python scripts/package.py --no-bundle-java       # smaller build; needs system Java
+uv run python scripts/package.py --no-bundle-checker    # eBraille Checker on first run
+uv run python scripts/package.py --no-bundle-epubcheck  # EPUBCheck on first run
+uv run python scripts/package.py --onefile              # not recommended with bundles
 ```
 
 Output layout (Windows example):
@@ -286,6 +312,9 @@ dist/eBrailleChecker/
   checker/              # bundled eBraille Checker
     bundled_version.txt
     …/ebraille-checker.jar
+  epubcheck/            # bundled EPUBCheck
+    bundled_version.txt
+    …/epubcheck.jar
   … (PyInstaller support files)
 ```
 
@@ -296,10 +325,10 @@ do not ship only the `.exe`.
 On macOS, prefer the **signed and notarized `.dmg`** (below). You can still
 distribute the `.app` zip from `scripts/build_macos.sh` if needed.
 
-When a newer checker is released, **Tools → Check for updates…** compares against
-the version in use (bundled or previously updated). Accepting an update downloads
-the new release into application data; the bundled copy in the install folder is
-not modified.
+When a newer eBraille Checker or EPUBCheck is released, **Tools → Check for
+updates…** compares against the versions in use (bundled or previously updated).
+Accepting an update downloads the new release(s) into application data; the
+bundled copies in the install folder are not modified.
 
 ### Windows installer (Inno Setup)
 
@@ -326,14 +355,17 @@ Output: `installer/Output/eBrailleCheckerGUI-<version>-setup.exe`
 
 The installer:
 
-- Ships the full onedir tree (GUI + Temurin JRE 17 + checker) — no system Java
+- Ships the full onedir tree (GUI + Temurin JRE 17 + eBraille Checker +
+  EPUBCheck) — no system Java (`build_installer.ps1` refuses to compile if
+  `runtime/`, `checker/`, or `epubcheck/` is missing from `dist/`)
 - Supports per-user install (default) or Program Files with elevation
-- Adds `.ebrl` shell integration (optional task, on by default):
-  **Open with** → eBraille Checker, and context menu **Validate with eBraille
-  Checker** — does not change the double-click default
+- Adds `.ebrl` / `.epub` shell integration (optional task, on by default):
+  **Open with** → eBraille Checker GUI, and context menu **Validate with
+  eBraille Checker** — does not change the double-click default for either
+  extension (`.epub` readers stay as the default opener)
 - Offers an optional desktop shortcut and launch-on-finish
 - On uninstall, optionally removes `%LOCALAPPDATA%\eBrailleCheckerGUI\`
-  (settings and checker updates)
+  (settings and checker/EPUBCheck updates)
 
 ### macOS disk image + notarization
 
@@ -362,7 +394,7 @@ One-shot release (package → sign → DMG → notarize → staple):
 chmod +x scripts/build_macos_release.sh
 EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh
 # optional explicit version:
-EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh 0.1.0
+EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh 0.2.0
 ```
 
 Outputs (arch suffix is `-AppleSilicon` or `-Intel`):
@@ -374,8 +406,8 @@ Outputs (arch suffix is `-AppleSilicon` or `-Intel`):
 Step by step:
 
 ```bash
-./scripts/build_macos.sh 0.1.0          # .app + zip
-./scripts/build_macos_dmg.sh 0.1.0      # drag-install .dmg (unsigned)
+./scripts/build_macos.sh 0.2.0          # .app + zip
+./scripts/build_macos_dmg.sh 0.2.0      # drag-install .dmg (unsigned)
 ```
 
 App icon: `scripts/make_icns.py` builds `installer/eBrailleChecker.icns` from
@@ -393,21 +425,24 @@ Useful environment variables:
 | `EBC_SKIP_APP_SIGN=1` | Skip codesign (local smoke builds) |
 | `EBC_SKIP_APPLICATION_BUILD=1` | Re-sign / notarize an existing `dist/eBrailleChecker_App/` |
 
-`scripts/package.py` registers the `.ebrl` document type in the `.app`
+`scripts/package.py` registers `.ebrl` and `.epub` document types in the `.app`
 `Info.plist` with rank **Alternate**, so the app appears under Finder
 **Open With** without becoming the default double-click handler. Opening a
 file that way launches the GUI and starts a check automatically.
 
 ## Test data
 
-Place your own `.ebrl` files or exploded folders under `testdata/` for local
-testing. Sample publications are **not** included in the repository.
+Place your own `.ebrl` / `.epub` files or exploded folders under `testdata/` for
+local testing. Sample publications are **not** included in the repository. See
+[`testdata/README.md`](testdata/README.md) for folder detection notes.
 
 ## Credits
 
-- Conformance checking is performed by
+- eBraille conformance checking is performed by
   [eBraille Checker](https://github.com/daisy/ebraille-checker) from the
   [DAISY Consortium](https://daisy.org/), based on EPUBCheck.
+- EPUB conformance checking is performed by
+  [EPUBCheck](https://github.com/w3c/epubcheck) (W3C / DAISY).
 - Learn about the [eBraille standard](https://daisy.org/activities/standards/ebraille/)
   and the [eBraille specification](https://daisy.org/s/ebraille/).
 - This GUI is a separate front-end project and is not an official DAISY release.
@@ -416,6 +451,7 @@ testing. Sample publications are **not** included in the repository.
 
 This project (the GUI) is released under the [MIT License](LICENSE).
 
-The eBraille Checker jar downloaded at runtime remains under its own license
-(BSD 3-Clause); see the
-[upstream repository](https://github.com/daisy/ebraille-checker).
+The eBraille Checker and EPUBCheck jars downloaded at runtime remain under their
+own licenses; see the
+[eBraille Checker](https://github.com/daisy/ebraille-checker) and
+[EPUBCheck](https://github.com/w3c/epubcheck) repositories.

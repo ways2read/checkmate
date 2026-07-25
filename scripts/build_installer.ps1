@@ -40,9 +40,11 @@ or add ISCC.exe to your PATH.
 "@
 }
 
-$distExe = Join-Path $Root "dist\eBrailleChecker\eBrailleChecker.exe"
+$distRoot = Join-Path $Root "dist\eBrailleChecker"
+$distExe = Join-Path $distRoot "eBrailleChecker.exe"
 if (-not $SkipPackage) {
     Write-Host "==> Packaging app with PyInstaller…" -ForegroundColor Cyan
+    Write-Host "    (bundles Temurin JRE, eBraille Checker, and EPUBCheck)" -ForegroundColor DarkGray
     $pkgArgs = @("run", "python", "scripts/package.py")
     if (-not $NoClean) { $pkgArgs += "--clean" }
     & uv @pkgArgs
@@ -51,6 +53,23 @@ if (-not $SkipPackage) {
 elseif (-not (Test-Path $distExe)) {
     Write-Error "Packaged app not found at $distExe. Run without -SkipPackage first."
 }
+
+# Ensure the installer will ship the Java runtime and both checker jars.
+$requiredDirs = @(
+    @{ Path = (Join-Path $distRoot "runtime");   Label = "bundled Temurin JRE (runtime/)" },
+    @{ Path = (Join-Path $distRoot "checker");   Label = "bundled eBraille Checker (checker/)" },
+    @{ Path = (Join-Path $distRoot "epubcheck"); Label = "bundled EPUBCheck (epubcheck/)" }
+)
+foreach ($req in $requiredDirs) {
+    if (-not (Test-Path $req.Path -PathType Container)) {
+        Write-Error @"
+Missing $($req.Label) under dist\eBrailleChecker\.
+Re-run packaging without --no-bundle-java / --no-bundle-checker / --no-bundle-epubcheck:
+  uv run python scripts/package.py --clean
+"@
+    }
+}
+Write-Host "==> Bundled components present: runtime/, checker/, epubcheck/" -ForegroundColor DarkGray
 
 Write-Host "==> Compiling Inno Setup installer…" -ForegroundColor Cyan
 $iss = Join-Path $Root "installer\eBrailleChecker.iss"

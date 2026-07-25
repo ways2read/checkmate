@@ -21,10 +21,12 @@ build/
 installer/Output/
 
 # Large binaries — downloaded by packaging / first-run scripts, not for git
-#   runtime/  = bundled Temurin JRE
-#   checker/  = bundled or locally fetched eBraille Checker
+#   runtime/   = bundled Temurin JRE
+#   checker/   = bundled or locally fetched eBraille Checker
+#   epubcheck/ = bundled or locally fetched W3C EPUBCheck
 runtime/
 checker/
+epubcheck/
 
 # Local IDE / OS
 .idea/
