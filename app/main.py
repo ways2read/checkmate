@@ -1000,9 +1000,16 @@ class MainFrame(wx.Frame):
         result = self._last_result
         if result is None:
             return ""
-        lines = [result.headline, ""]
-        for issue in result.issues:
-            lines.append(issue.summary_line())
+        lines: list[str] = []
+        meta = result.report_meta_lines()
+        if meta:
+            lines.extend(meta)
+            lines.append("")
+        lines.append(result.headline)
+        if result.issues:
+            lines.append("")
+            for issue in result.issues:
+                lines.append(issue.summary_line())
         return "\n".join(lines).strip() + "\n"
 
     # --- Events ---

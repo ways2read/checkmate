@@ -284,21 +284,30 @@ def run_check(
     progress=None,
 ) -> CheckResult:
     target = target.expanduser().resolve()
+    checked_at = datetime.now().astimezone()
     if not target.exists():
-        return CheckResult(
-            verdict=Verdict.ERROR,
-            error_message=f"Path not found: {target}",
+        return _stamp_result(
+            CheckResult(
+                verdict=Verdict.ERROR,
+                error_message=f"Path not found: {target}",
+            ),
+            target=target,
+            checked_at=checked_at,
         )
 
     kind = classify_publication(target)
     tool = tool_for_kind(kind)
     if tool is None:
-        return CheckResult(
-            verdict=Verdict.ERROR,
-            error_message=(
-                "Choose a packaged .ebrl or .epub file, or an exploded "
-                "eBraille/EPUB publication folder."
+        return _stamp_result(
+            CheckResult(
+                verdict=Verdict.ERROR,
+                error_message=(
+                    "Choose a packaged .ebrl or .epub file, or an exploded "
+                    "eBraille/EPUB publication folder."
+                ),
             ),
+            target=target,
+            checked_at=checked_at,
         )
 
     java = detect_java()
@@ -315,9 +324,11 @@ def run_check(
                 "Java was not found. Install a Java Runtime (JRE 8 or newer), "
                 "or use a packaged build that includes a bundled runtime."
             )
-        return CheckResult(
-            verdict=Verdict.ERROR,
-            error_message=message,
+        return _stamp_result(
+            CheckResult(verdict=Verdict.ERROR, error_message=message),
+            target=target,
+            tool=tool,
+            checked_at=checked_at,
         )
 
     try:
@@ -325,9 +336,14 @@ def run_check(
         if jar is None:
             jar = ensure_tool_installed(tool, progress=progress)
     except Exception as exc:  # noqa: BLE001 — surface to UI
-        return CheckResult(
-            verdict=Verdict.ERROR,
-            error_message=f"Could not install {tool.display_name}: {exc}",
+        return _stamp_result(
+            CheckResult(
+                verdict=Verdict.ERROR,
+                error_message=f"Could not install {tool.display_name}: {exc}",
+            ),
+            target=target,
+            tool=tool,
+            checked_at=checked_at,
         )
 
     if exploded is None:
@@ -336,12 +352,17 @@ def run_check(
         elif is_exploded_path(target):
             exploded = True
         else:
-            return CheckResult(
-                verdict=Verdict.ERROR,
-                error_message=(
-                    "Choose a packaged .ebrl or .epub file, or an exploded "
-                    "eBraille/EPUB publication folder."
+            return _stamp_result(
+                CheckResult(
+                    verdict=Verdict.ERROR,
+                    error_message=(
+                        "Choose a packaged .ebrl or .epub file, or an exploded "
+                        "eBraille/EPUB publication folder."
+                    ),
                 ),
+                target=target,
+                tool=tool,
+                checked_at=checked_at,
             )
 
     with tempfile.TemporaryDirectory(prefix="ebraille-gui-") as tmp:
@@ -368,16 +389,26 @@ def run_check(
                 **hidden_run_kwargs(),
             )
         except subprocess.TimeoutExpired:
-            return CheckResult(
-                verdict=Verdict.ERROR,
-                command=cmd,
-                error_message="Check timed out after 10 minutes.",
+            return _stamp_result(
+                CheckResult(
+                    verdict=Verdict.ERROR,
+                    command=cmd,
+                    error_message="Check timed out after 10 minutes.",
+                ),
+                target=target,
+                tool=tool,
+                checked_at=checked_at,
             )
         except OSError as exc:
-            return CheckResult(
-                verdict=Verdict.ERROR,
-                command=cmd,
-                error_message=f"Failed to start Java: {exc}",
+            return _stamp_result(
+                CheckResult(
+                    verdict=Verdict.ERROR,
+                    command=cmd,
+                    error_message=f"Failed to start Java: {exc}",
+                ),
+                target=target,
+                tool=tool,
+                checked_at=checked_at,
             )
 
         stdout = proc.stdout or ""
@@ -395,22 +426,29 @@ def run_check(
             issues = _issues_from_json(data)
             counts = _counts_from_json(data, issues)
             verdict = _verdict_from_counts(counts, proc.returncode)
-            return CheckResult(
-                verdict=verdict,
-                fatals=counts["fatals"],
-                errors=counts["errors"],
-                warnings=counts["warnings"],
-                infos=counts["infos"],
-                usages=counts["usages"],
-                issues=issues,
-                raw_log=raw_log or json.dumps(data, indent=2),
-                exit_code=proc.returncode,
-                command=cmd,
+            return _stamp_result(
+                CheckResult(
+                    verdict=verdict,
+                    fatals=counts["fatals"],
+                    errors=counts["errors"],
+                    warnings=counts["warnings"],
+                    infos=counts["infos"],
+                    usages=counts["usages"],
+                    issues=issues,
+                    raw_log=raw_log or json.dumps(data, indent=2),
+                    exit_code=proc.returncode,
+                    command=cmd,
+                ),
+                target=target,
+                tool=tool,
+                checked_at=checked_at,
             )
 
         result = parse_checker_output(stdout, stderr, proc.returncode)
         result.command = cmd
-        return result
+        return _stamp_result(
+            result, target=target, tool=tool, checked_at=checked_at
+        )
 
 
 def _tool_status_part(tool: ToolSpec, *, bundled: bool) -> str:
