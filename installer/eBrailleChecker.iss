@@ -2,7 +2,7 @@
 ;
 ; Prerequisites:
 ;   1. Install Inno Setup 6: https://jrsoftware.org/isinfo.php
-;   2. Build the app first (bundles Temurin JRE, eBraille Checker, EPUBCheck):
+;   2. Build the app first (bundles Temurin JRE, eBraille Checker, EPUBCheck, veraPDF):
 ;        uv sync --extra dev
 ;        uv run python scripts/package.py --clean
 ;      Or one-shot: powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
@@ -10,13 +10,14 @@
 ;        iscc installer\eBrailleChecker.iss
 ;
 ; The [Files] section ships the full dist\eBrailleChecker\ tree, including:
-;   runtime\   (JRE), checker\ (eBraille Checker), epubcheck\ (W3C EPUBCheck)
+;   runtime\   (JRE), checker\ (eBraille Checker), epubcheck\ (W3C EPUBCheck),
+;   verapdf\   (veraPDF CLI)
 ;
 ; Output: installer\Output\eBrailleCheckerGUI-<version>-setup.exe
 
 #define MyAppName "eBraille Checker"
 #define MyAppFullName "eBraille Checker GUI"
-#define MyAppVersion "0.2.2"
+#define MyAppVersion "0.3.0"
 #define MyAppPublisher "ways2read"
 #define MyAppURL "https://github.com/ways2read/ebraille-checker-gui"
 #define MyAppExeName "eBrailleChecker.exe"
@@ -71,7 +72,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "fileassoc"; Description: "Add .ebrl/.epub Open with… and ""Validate with eBraille Checker"" context menu"; GroupDescription: "File associations:"; Flags: checkedonce
 
 [Files]
-; Entire PyInstaller onedir tree (exe + _internal + runtime + checker + epubcheck)
+; Entire PyInstaller onedir tree (exe + _internal + runtime + checker + epubcheck + verapdf)
 Source: "..\dist\eBrailleChecker\*"; DestDir: "{app}"; \
   Flags: ignoreversion recursesubdirs createallsubdirs
 ; Explicit icon for Start Menu / desktop shortcuts (more reliable than exe embed)
@@ -171,6 +172,7 @@ Type: filesandordirs; Name: "{app}\_internal"
 Type: filesandordirs; Name: "{app}\runtime"
 Type: filesandordirs; Name: "{app}\checker"
 Type: filesandordirs; Name: "{app}\epubcheck"
+Type: filesandordirs; Name: "{app}\verapdf"
 
 [Code]
 function GetAppDataDir: String;

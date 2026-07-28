@@ -1,4 +1,4 @@
-"""Detect whether a path is an eBraille or EPUB publication."""
+"""Detect whether a path is an eBraille, EPUB, or (secret) DAISY publication."""
 
 from __future__ import annotations
 
@@ -10,7 +10,27 @@ from pathlib import Path
 class PublicationKind(str, Enum):
     EBRAILLE = "ebraille"
     EPUB = "epub"
+    PDF = "pdf"
+    DAISY202 = "daisy202"
     UNSUPPORTED = "unsupported"
+
+
+def find_ncc(folder: Path) -> Path | None:
+    """Return ncc.html in a DAISY 2.02 folder, if present."""
+    folder = folder.expanduser().resolve()
+    if not folder.is_dir():
+        return None
+    for name in ("ncc.html", "NCC.HTML", "Ncc.html"):
+        candidate = folder / name
+        if candidate.is_file():
+            return candidate
+    try:
+        for child in folder.iterdir():
+            if child.is_file() and child.name.lower() == "ncc.html":
+                return child
+    except OSError:
+        return None
+    return None
 
 
 def _opf_has_ebraille_format(opf_path: Path) -> bool:
@@ -73,7 +93,7 @@ def find_package_document(folder: Path) -> Path | None:
 
 
 def classify_publication(path: Path) -> PublicationKind:
-    """Classify a file or folder as eBraille, EPUB, or unsupported."""
+    """Classify a file or folder as eBraille, EPUB, PDF, DAISY 2.02, or unsupported."""
     path = path.expanduser().resolve()
     suffix = path.suffix.lower()
 
@@ -82,12 +102,19 @@ def classify_publication(path: Path) -> PublicationKind:
         return PublicationKind.EBRAILLE
     if suffix == ".epub":
         return PublicationKind.EPUB
+    if suffix == ".pdf":
+        return PublicationKind.PDF
     if path.is_file() and suffix == ".zip":
         # Legacy packaged path: treat as eBraille (same as before)
         return PublicationKind.EBRAILLE
 
     if not path.is_dir():
         return PublicationKind.UNSUPPORTED
+
+    # Secret: DAISY 2.02 book folder (ncc.html). Checked before OPF so plain
+    # DAISY titles are not misclassified as EPUB when an unrelated .opf exists.
+    if find_ncc(path) is not None:
+        return PublicationKind.DAISY202
 
     opf = find_package_document(path)
     if opf is None:
@@ -98,8 +125,16 @@ def classify_publication(path: Path) -> PublicationKind:
 
 
 def is_checkable_path(path: Path) -> bool:
-    """True when path exists and classifies as eBraille or EPUB."""
+    """True when path exists and can be checked with an available engine."""
     path = path.expanduser().resolve()
     if not path.exists():
         return False
-    return classify_publication(path) != PublicationKind.UNSUPPORTED
+    kind = classify_publication(path)
+    if kind == PublicationKind.UNSUPPORTED:
+        return False
+    if kind == PublicationKind.DAISY202:
+        # Secret feature: only when a local Pipeline webservice is usable.
+        from .pipeline_client import pipeline_usable
+
+        return pipeline_usable()
+    return True

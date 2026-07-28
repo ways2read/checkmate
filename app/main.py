@@ -27,13 +27,14 @@ from .i18n import (
     set_language,
 )
 from .java_util import detect_java
-from .models import CheckResult, Severity, Verdict
+from .models import CheckResult, Issue, Severity, Verdict
 from .paths import (
     CHECKER_REPO_PAGE,
     DAISY_WEBSITE,
     EBRAILLE_SPEC_URL,
     EBRAILLE_STANDARD_PAGE,
     EPUBCHECK_REPO_PAGE,
+    VERAPDF_HOME_PAGE,
     application_dir,
     is_frozen,
 )
@@ -42,6 +43,7 @@ from .report_export import format_text_report, report_title, save_report
 from .updater import (
     EBRAILLE_TOOL,
     EPUBCHECK_TOOL,
+    VERAPDF_TOOL,
     ReleaseInfo,
     ToolUpdateInfo,
     check_for_updates,
@@ -208,6 +210,55 @@ class IssuesList:
             self.ctrl.Focus(0)
             self.ctrl.Select(0)
 
+    def GetSelectedRow(self) -> int:
+        if self._dataview:
+            assert isinstance(self.ctrl, dv.DataViewListCtrl)
+            return int(self.ctrl.GetSelectedRow())
+        assert isinstance(self.ctrl, wx.ListCtrl)
+        return int(self.ctrl.GetFirstSelected())
+
+
+class IssueDetailDialog(wx.Dialog):
+    """Full issue text in a keyboard-navigable, read-only view."""
+
+    def __init__(self, parent: wx.Window, issue: Issue) -> None:
+        super().__init__(
+            parent,
+            title=_("Issue details"),
+            style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX,
+        )
+        self.SetSize((640, 420))
+        root = wx.BoxSizer(wx.VERTICAL)
+
+        body = "\n".join(
+            [
+                _("Severity: {value}", value=issue.severity.label),
+                _("Code: {value}", value=issue.code or "—"),
+                "",
+                _("Location"),
+                issue.location or _("(none)"),
+                "",
+                _("Message"),
+                issue.message or _("(none)"),
+            ]
+        )
+        text = wx.TextCtrl(
+            self,
+            value=body,
+            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_WORDWRAP | wx.BORDER_SUNKEN,
+            name=_("Issue details"),
+        )
+        root.Add(text, 1, wx.EXPAND | wx.ALL, 12)
+
+        buttons = self.CreateStdDialogButtonSizer(wx.CLOSE)
+        if buttons is not None:
+            root.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+
+        self.SetSizer(root)
+        self.CentreOnParent()
+        text.SetFocus()
+        text.SetInsertionPoint(0)
+
 
 class AboutDialog(wx.Dialog):
     """About box with multiple clickable links (native AboutBox allows only one)."""
@@ -236,7 +287,7 @@ class AboutDialog(wx.Dialog):
             self,
             label=_(
                 "An accessible, cross-platform front-end for the DAISY "
-                "eBraille Checker and W3C EPUBCheck."
+                "eBraille Checker, W3C EPUBCheck, and veraPDF (PDF/UA)."
             ),
         )
         desc.Wrap(420)
@@ -255,6 +306,7 @@ class AboutDialog(wx.Dialog):
             (_("eBraille specification"), EBRAILLE_SPEC_URL),
             (_("eBraille Checker"), CHECKER_REPO_PAGE),
             (_("EPUBCheck"), EPUBCHECK_REPO_PAGE),
+            (_("veraPDF"), VERAPDF_HOME_PAGE),
         ):
             link = wx.adv.HyperlinkCtrl(self, label=label, url=url)
             link.SetName(label)
@@ -339,6 +391,7 @@ class MainFrame(wx.Frame):
             size=(860, 640),
         )
         self._last_result: CheckResult | None = None
+        self._displayed_issues: list[Issue] = []
         self._busy = False
         self._lang_menu_items: dict[str, wx.MenuItem] = {}
         self._initial_focus_pending = True
@@ -512,7 +565,7 @@ class MainFrame(wx.Frame):
         )
         self.path_ctrl.SetHint(
             _(
-                "Select or drop a .ebrl / .epub file or folder — "
+                "Select or drop a .ebrl / .epub / .pdf file or folder — "
                 "checking starts automatically"
             )
         )
@@ -568,6 +621,18 @@ class MainFrame(wx.Frame):
         self.issues_list = IssuesList(panel, name=_("Issues list"))
         self.issues_list.Bind(wx.EVT_SET_FOCUS, self.on_issues_list_focus)
         self.issues_list.Bind(wx.EVT_CHILD_FOCUS, self.on_issues_list_focus)
+        if _USE_DATAVIEW_ISSUES:
+            self.issues_list.Bind(
+                dv.EVT_DATAVIEW_ITEM_ACTIVATED, self.on_issue_activated
+            )
+        else:
+            self.issues_list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.on_issue_activated)
+        self.issues_list.Bind(wx.EVT_CHAR_HOOK, self.on_issues_char_hook)
+        self.issues_hint = wx.StaticText(
+            panel,
+            label=_("Press Enter or double-click an issue to read the full details."),
+        )
+        self.issues_hint.SetName(_("Issues hint"))
 
         issues_sizer.Add(filter_row, 0, wx.EXPAND | wx.ALL, 8)
         issues_sizer.Add(
@@ -575,6 +640,9 @@ class MainFrame(wx.Frame):
             1,
             wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
             8,
+        )
+        issues_sizer.Add(
+            self.issues_hint, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8
         )
         root.Add(issues_sizer, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
@@ -761,7 +829,7 @@ class MainFrame(wx.Frame):
         self.path_label.SetLabel(_("Path:"))
         self.path_ctrl.SetHint(
             _(
-                "Select or drop a .ebrl / .epub file or folder — "
+                "Select or drop a .ebrl / .epub / .pdf file or folder — "
                 "checking starts automatically"
             )
         )
@@ -794,6 +862,10 @@ class MainFrame(wx.Frame):
         self.issues_list.SetColumnTitles(
             (_("Severity"), _("Code"), _("Location"), _("Message"))
         )
+        self.issues_hint.SetLabel(
+            _("Press Enter or double-click an issue to read the full details.")
+        )
+        self.issues_hint.SetName(_("Issues hint"))
         show_log = self.log_ctrl.IsShown()
         self.log_toggle.SetLabel(
             _("Hide full &log") if show_log else _("Show full &log")
@@ -917,6 +989,7 @@ class MainFrame(wx.Frame):
     def _clear_to_launch_state(self) -> None:
         """Reset the UI to the same state as a fresh launch."""
         self._last_result = None
+        self._displayed_issues = []
         self.path_ctrl.ChangeValue("")
         self._show_result_text(_("No check run yet."), title=None)
         self.issues_list.DeleteAllItems()
@@ -972,7 +1045,7 @@ class MainFrame(wx.Frame):
         if chosen is None:
             wx.MessageBox(
                 _(
-                    "Drop a packaged .ebrl or .epub file, or an exploded "
+                    "Drop a packaged .ebrl, .epub, or .pdf file, or an exploded "
                     "eBraille/EPUB publication folder."
                 ),
                 _("Unsupported drop"),
@@ -1009,6 +1082,7 @@ class MainFrame(wx.Frame):
 
     def _populate_issues(self) -> None:
         self.issues_list.DeleteAllItems()
+        self._displayed_issues = []
         result = self._last_result
         if result is None:
             return
@@ -1026,6 +1100,7 @@ class MainFrame(wx.Frame):
                 Severity.USAGE,
             ):
                 continue
+            self._displayed_issues.append(issue)
             self.issues_list.AppendRow(
                 issue.severity.label,
                 issue.code,
@@ -1034,6 +1109,31 @@ class MainFrame(wx.Frame):
             )
         # Do not Focus()/Select() here — that steals keyboard focus from the
         # result pane and prevents screen readers from announcing the verdict.
+
+    def _selected_issue(self) -> Issue | None:
+        row = self.issues_list.GetSelectedRow()
+        if row < 0 or row >= len(self._displayed_issues):
+            return None
+        return self._displayed_issues[row]
+
+    def _show_issue_details(self, issue: Issue | None = None) -> None:
+        issue = issue if issue is not None else self._selected_issue()
+        if issue is None:
+            return
+        dlg = IssueDetailDialog(self, issue)
+        dlg.ShowModal()
+        dlg.Destroy()
+
+    def on_issue_activated(self, _event: wx.Event) -> None:
+        self._show_issue_details()
+
+    def on_issues_char_hook(self, event: wx.KeyEvent) -> None:
+        key = event.GetKeyCode()
+        if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER, wx.WXK_SPACE):
+            if self._selected_issue() is not None:
+                self._show_issue_details()
+                return
+        event.Skip()
 
     def _apply_result(self, result: CheckResult) -> None:
         self._last_result = result
@@ -1061,11 +1161,13 @@ class MainFrame(wx.Frame):
     def on_browse_file(self, _event: wx.CommandEvent) -> None:
         with wx.FileDialog(
             self,
-            _("Select an eBraille or EPUB publication"),
+            _("Select an eBraille, EPUB, or PDF publication"),
             wildcard=_(
-                "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+                "Publications (*.ebrl;*.epub;*.pdf)|"
+                "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
                 "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
                 "EPUB (*.epub)|*.epub;*.EPUB|"
+                "PDF (*.pdf)|*.pdf;*.PDF|"
                 "All files (*.*)|*.*"
             ),
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
@@ -1240,6 +1342,8 @@ class MainFrame(wx.Frame):
             return "epubcheck-report"
         if name == EBRAILLE_TOOL.display_name.lower() or "ebraille" in name:
             return "ebraille-checker-report"
+        if name == VERAPDF_TOOL.display_name.lower() or "verapdf" in name:
+            return "verapdf-report"
         return "check-report"
 
     def on_view_text_report(self, _event: wx.CommandEvent) -> None:

@@ -1,4 +1,4 @@
-"""Run eBraille Checker / EPUBCheck and parse results."""
+"""Run eBraille Checker / EPUBCheck / veraPDF and parse results."""
 
 from __future__ import annotations
 
@@ -14,21 +14,21 @@ from .models import CheckResult, Issue, Severity, Verdict, SEVERITY_ORDER
 from .paths import (
     checker_uses_bundled_copy,
     epubcheck_uses_bundled_copy,
-    find_checker_jar,
-    find_epubcheck_jar,
+    verapdf_uses_bundled_copy,
 )
 from .publication import PublicationKind, classify_publication
 from .subprocess_util import hidden_run_kwargs
 from .updater import (
     EBRAILLE_TOOL,
     EPUBCHECK_TOOL,
+    VERAPDF_TOOL,
     ToolSpec,
     ensure_tool_installed,
     read_effective_version,
 )
 
 
-PACKAGED_SUFFIXES = {".ebrl", ".epub", ".zip"}
+PACKAGED_SUFFIXES = {".ebrl", ".epub", ".zip", ".pdf"}
 
 
 def is_packaged_path(path: Path) -> bool:
@@ -44,7 +44,15 @@ def tool_for_kind(kind: PublicationKind) -> ToolSpec | None:
         return EBRAILLE_TOOL
     if kind == PublicationKind.EPUB:
         return EPUBCHECK_TOOL
+    if kind == PublicationKind.PDF:
+        return VERAPDF_TOOL
     return None
+
+
+_UNSUPPORTED_PATH_MESSAGE = (
+    "Choose a packaged .ebrl, .epub, or .pdf file, or an exploded "
+    "eBraille/EPUB publication folder."
+)
 
 
 def _stamp_result(
@@ -59,7 +67,9 @@ def _stamp_result(
     result.checked_at = checked_at or datetime.now().astimezone()
     if tool is not None:
         result.tool_name = tool.display_name
-        result.tool_version = read_effective_version(tool) or ""
+        # Prefer a version already taken from the tool's own report JSON.
+        if not result.tool_version:
+            result.tool_version = read_effective_version(tool) or ""
     return result
 
 
@@ -386,6 +396,7 @@ def _extract_json_object(text: str) -> dict | None:
                 or "Messages" in data
                 or "checker" in data
                 or "publication" in data
+                or "report" in data
             ):
                 return data
         except json.JSONDecodeError:
@@ -480,6 +491,439 @@ def _compose_raw_log(
     return "\n".join(parts).strip()
 
 
+def _verapdf_rule_code(summary: dict) -> str:
+    clause = str(summary.get("clause") or "").strip()
+    test_number = summary.get("testNumber")
+    if clause and test_number not in (None, ""):
+        return f"{clause}-{test_number}"
+    if clause:
+        return clause
+    return str(summary.get("specification") or "rule")
+
+
+def _verapdf_failed_check_count(summary: dict) -> int:
+    try:
+        return max(int(summary.get("failedChecks") or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _verapdf_task_exception(data: dict) -> dict | None:
+    report = data.get("report") if isinstance(data.get("report"), dict) else data
+    if not isinstance(report, dict):
+        return None
+    jobs = report.get("jobs")
+    if not isinstance(jobs, list):
+        return None
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        exception = job.get("taskException")
+        if isinstance(exception, dict):
+            return exception
+    return None
+
+
+def _simplify_verapdf_exception_message(message: str) -> str:
+    text = " ".join((message or "").split())
+    if not text:
+        return "Unexpected error during validation."
+    # Collapse nested "caused by exception:" chains to the root cause.
+    marker = "caused by exception:"
+    if marker in text.lower():
+        parts = re.split(re.escape(marker), text, flags=re.IGNORECASE)
+        text = parts[-1].strip() or text
+    if text.lower().startswith("exception:"):
+        text = text[len("exception:") :].strip()
+    return text
+
+
+def _verapdf_tool_error_message(exception: dict, *, flavour: str) -> str:
+    exc_type = str(exception.get("type") or "").strip().upper()
+    detail = _simplify_verapdf_exception_message(
+        str(
+            exception.get("exceptionMessage")
+            or exception.get("exception")
+            or ""
+        )
+    )
+    profile = {
+        "ua1": "PDF/UA-1",
+        "ua2": "PDF/UA-2",
+    }.get(flavour, flavour)
+    if exc_type == "PARSE":
+        return (
+            f"veraPDF could not open this PDF ({profile}).\n\n{detail}"
+        )
+    return (
+        f"veraPDF stopped with an internal error while validating this PDF "
+        f"({profile}). This is a tool bug on some files, not a normal "
+        f"accessibility finding.\n\n{detail}"
+    )
+
+
+def _issues_from_verapdf_json(data: dict) -> list[Issue]:
+    """Map veraPDF JSON into Issues — one row per failed rule (GUI-style).
+
+    veraPDF's summary count is ``failedRules``. A single rule can fail thousands
+    of times (``failedChecks``); the GUI lists rules, not every occurrence.
+    Tool crashes (``taskException``) are handled separately as Verdict.ERROR.
+    """
+    issues: list[Issue] = []
+    report = data.get("report") if isinstance(data.get("report"), dict) else data
+    jobs = report.get("jobs") if isinstance(report, dict) else None
+    if not isinstance(jobs, list):
+        return issues
+
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        if isinstance(job.get("taskException"), dict):
+            continue
+
+        results = job.get("validationResult") or []
+        if not isinstance(results, list):
+            results = [results] if isinstance(results, dict) else []
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            details = result.get("details") or {}
+            if not isinstance(details, dict):
+                continue
+            summaries = details.get("ruleSummaries") or []
+            if not isinstance(summaries, list):
+                continue
+            for summary in summaries:
+                if not isinstance(summary, dict):
+                    continue
+                status = str(
+                    summary.get("status") or summary.get("ruleStatus") or ""
+                ).lower()
+                if status not in ("failed", "fail"):
+                    continue
+                code = _verapdf_rule_code(summary)
+                description = str(summary.get("description") or "").strip()
+                checks = summary.get("checks") or []
+                if not isinstance(checks, list):
+                    checks = []
+                sample = next((c for c in checks if isinstance(c, dict)), None)
+                error_message = ""
+                location = ""
+                if sample is not None:
+                    error_message = str(sample.get("errorMessage") or "").strip()
+                    location = str(sample.get("context") or "").strip()
+                message = description or error_message or "Failed validation rule"
+                if (
+                    error_message
+                    and description
+                    and error_message != description
+                ):
+                    message = f"{description} — {error_message}"
+                failed_total = _verapdf_failed_check_count(summary)
+                if failed_total > 1:
+                    message = (
+                        f"{message} ({failed_total} failures)"
+                        if message
+                        else f"{failed_total} failures"
+                    )
+                issues.append(
+                    Issue(
+                        severity=Severity.ERROR,
+                        code=code,
+                        message=message,
+                        location=location,
+                    )
+                )
+
+    issues.sort(
+        key=lambda i: (
+            SEVERITY_ORDER.get(i.severity, 99),
+            i.code,
+            i.location,
+            i.message,
+        )
+    )
+    return issues
+
+
+def _counts_from_verapdf_json(data: dict, issues: list[Issue]) -> dict[str, int]:
+    """Count veraPDF failures like the GUI: failed rules, not failed checks."""
+    counts = {
+        "fatals": 0,
+        "errors": 0,
+        "warnings": 0,
+        "infos": 0,
+        "usages": 0,
+    }
+    report = data.get("report") if isinstance(data.get("report"), dict) else data
+    jobs = report.get("jobs") if isinstance(report, dict) else None
+    if isinstance(jobs, list):
+        for job in jobs:
+            if not isinstance(job, dict):
+                continue
+            if isinstance(job.get("taskException"), dict):
+                counts["fatals"] += 1
+                continue
+            results = job.get("validationResult") or []
+            if not isinstance(results, list):
+                results = [results] if isinstance(results, dict) else []
+            for result in results:
+                if not isinstance(result, dict):
+                    continue
+                details = result.get("details") or {}
+                if not isinstance(details, dict):
+                    continue
+                try:
+                    failed_rules = int(details.get("failedRules") or 0)
+                except (TypeError, ValueError):
+                    failed_rules = 0
+                if failed_rules:
+                    counts["errors"] += failed_rules
+                    continue
+                # Fall back to counting failed rule summaries.
+                summaries = details.get("ruleSummaries") or []
+                if isinstance(summaries, list):
+                    for summary in summaries:
+                        if not isinstance(summary, dict):
+                            continue
+                        status = str(
+                            summary.get("status") or summary.get("ruleStatus") or ""
+                        ).lower()
+                        if status in ("failed", "fail"):
+                            counts["errors"] += 1
+
+    if any(counts.values()):
+        return counts
+
+    for issue in issues:
+        if issue.severity == Severity.FATAL:
+            counts["fatals"] += 1
+        elif issue.severity == Severity.ERROR:
+            counts["errors"] += 1
+        elif issue.severity == Severity.WARNING:
+            counts["warnings"] += 1
+        elif issue.severity == Severity.INFO:
+            counts["infos"] += 1
+        elif issue.severity == Severity.USAGE:
+            counts["usages"] += 1
+    return counts
+
+
+def _verapdf_build_meta(report: dict) -> tuple[str | None, str | None]:
+    """Return (version, build_date_iso) from report.buildInformation if present."""
+    info = report.get("buildInformation")
+    if not isinstance(info, dict):
+        return None, None
+    details = info.get("releaseDetails") or []
+    if not isinstance(details, list) or not details:
+        return None, None
+
+    preferred = None
+    for detail in details:
+        if isinstance(detail, dict) and detail.get("id") == "apps":
+            preferred = detail
+            break
+    if preferred is None:
+        preferred = next((d for d in details if isinstance(d, dict)), None)
+    if preferred is None:
+        return None, None
+
+    version = str(preferred.get("version") or "").strip() or None
+    build_date = None
+    raw = preferred.get("buildDate")
+    if isinstance(raw, (int, float)) and raw > 0:
+        try:
+            build_date = datetime.fromtimestamp(raw / 1000.0).astimezone().isoformat(
+                timespec="seconds"
+            )
+        except (OverflowError, OSError, ValueError):
+            build_date = None
+    elif isinstance(raw, str) and raw.strip():
+        build_date = raw.strip()
+    return version, build_date
+
+
+def _verapdf_extra_meta(data: dict) -> list[tuple[str, str]]:
+    """Extract GUI-style summary fields that are stable in veraPDF JSON."""
+    report = data.get("report") if isinstance(data.get("report"), dict) else data
+    if not isinstance(report, dict):
+        return []
+
+    meta: list[tuple[str, str]] = []
+    version, build_date = _verapdf_build_meta(report)
+    # We only ship the greenfield installer; the GUI labels this "GreenField".
+    meta.append(("Parser", "Greenfield"))
+    if build_date:
+        meta.append(("Build date", build_date))
+
+    jobs = report.get("jobs")
+    job = jobs[0] if isinstance(jobs, list) and jobs and isinstance(jobs[0], dict) else None
+    if job is not None:
+        processing = job.get("processingTime")
+        if isinstance(processing, dict):
+            duration = str(processing.get("duration") or "").strip()
+            if duration:
+                meta.append(("Processing time", duration))
+
+        results = job.get("validationResult") or []
+        if not isinstance(results, list):
+            results = [results] if isinstance(results, dict) else []
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            profile = str(result.get("profileName") or "").strip()
+            if profile:
+                meta.append(("Validation profile", profile))
+            details = result.get("details")
+            if isinstance(details, dict):
+                try:
+                    passed_rules = int(details.get("passedRules") or 0)
+                    failed_rules = int(details.get("failedRules") or 0)
+                except (TypeError, ValueError):
+                    passed_rules = failed_rules = 0
+                total_rules = passed_rules + failed_rules
+                if total_rules:
+                    meta.append(("Total rules in profile", str(total_rules)))
+                try:
+                    passed_checks = int(details.get("passedChecks") or 0)
+                except (TypeError, ValueError):
+                    passed_checks = 0
+                try:
+                    failed_checks = int(details.get("failedChecks") or 0)
+                except (TypeError, ValueError):
+                    failed_checks = 0
+                if passed_checks or failed_checks:
+                    meta.append(("Passed checks", str(passed_checks)))
+                    meta.append(("Failed checks", str(failed_checks)))
+            break
+
+    # Prefer JSON version when present (same as GUI "Version").
+    if version:
+        # Put version near the top, after parser is fine; callers may also set
+        # tool_version from this value.
+        meta.insert(0, ("Version", version))
+    return meta
+
+
+def parse_verapdf_output(
+    stdout: str,
+    stderr: str,
+    exit_code: int,
+    *,
+    flavour: str = "ua2",
+) -> CheckResult:
+    combined = "\n".join(part for part in (stdout, stderr) if part)
+    data = _extract_json_object(stdout) or _extract_json_object(combined)
+    if data is None:
+        verdict = Verdict.PASSED if exit_code == 0 else Verdict.FAILED
+        return CheckResult(
+            verdict=verdict,
+            raw_log=combined,
+            exit_code=exit_code,
+            error_message=""
+            if exit_code == 0
+            else "Could not parse structured results; see the full log.",
+        )
+
+    extra_meta = _verapdf_extra_meta(data)
+    version_from_json = ""
+    display_meta: list[tuple[str, str]] = []
+    for label, value in extra_meta:
+        if label == "Version":
+            version_from_json = value
+            continue
+        display_meta.append((label, value))
+
+    exception = _verapdf_task_exception(data)
+    if exception is not None:
+        error_message = _verapdf_tool_error_message(exception, flavour=flavour)
+        return CheckResult(
+            verdict=Verdict.ERROR,
+            raw_log=_compose_raw_log(
+                "\n".join(p for p in (stderr,) if p),
+                data=data,
+                issues=[],
+            )
+            or combined,
+            exit_code=exit_code,
+            error_message=error_message,
+            extra_meta=display_meta,
+            tool_version=version_from_json,
+        )
+
+    issues = _issues_from_verapdf_json(data)
+    counts = _counts_from_verapdf_json(data, issues)
+    verdict = _verdict_from_counts(counts, exit_code)
+    return CheckResult(
+        verdict=verdict,
+        fatals=counts["fatals"],
+        errors=counts["errors"],
+        warnings=counts["warnings"],
+        infos=counts["infos"],
+        usages=counts["usages"],
+        issues=issues,
+        raw_log=_compose_raw_log(
+            "\n".join(p for p in (stderr,) if p),
+            data=data,
+            issues=issues,
+        )
+        or combined,
+        exit_code=exit_code,
+        extra_meta=display_meta,
+        tool_version=version_from_json,
+    )
+
+
+def build_verapdf_command(
+    java: JavaInfo,
+    jar: Path,
+    target: Path,
+    *,
+    flavour: str = "ua2",
+) -> list[str]:
+    """Build the veraPDF CLI for PDF/UA validation (default: UA-2)."""
+    return [
+        java.path,
+        "-Djava.awt.headless=true",
+        "-jar",
+        str(jar),
+        "--flavour",
+        flavour,
+        "--format",
+        "json",
+        # One sample location per failed rule is enough; the GUI counts rules.
+        "--maxfailuresdisplayed",
+        "1",
+        str(target),
+    ]
+
+
+def _run_verapdf_once(
+    *,
+    java: JavaInfo,
+    jar: Path,
+    target: Path,
+    flavour: str,
+) -> tuple[list[str], CheckResult]:
+    cmd = build_verapdf_command(java, jar, target, flavour=flavour)
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=600,
+        **hidden_run_kwargs(),
+    )
+    result = parse_verapdf_output(
+        proc.stdout or "",
+        proc.stderr or "",
+        proc.returncode,
+        flavour=flavour,
+    )
+    result.command = cmd
+    return cmd, result
+
+
 def run_check(
     target: Path,
     *,
@@ -499,15 +943,28 @@ def run_check(
         )
 
     kind = classify_publication(target)
+    if kind == PublicationKind.DAISY202:
+        from .pipeline_check import run_daisy202_check
+
+        daisy_result = run_daisy202_check(target, progress=progress)
+        if daisy_result is not None:
+            return daisy_result
+        # Pipeline not usable — fall through as unsupported (silent).
+        return _stamp_result(
+            CheckResult(
+                verdict=Verdict.ERROR,
+                error_message=_UNSUPPORTED_PATH_MESSAGE,
+            ),
+            target=target,
+            checked_at=checked_at,
+        )
+
     tool = tool_for_kind(kind)
     if tool is None:
         return _stamp_result(
             CheckResult(
                 verdict=Verdict.ERROR,
-                error_message=(
-                    "Choose a packaged .ebrl or .epub file, or an exploded "
-                    "eBraille/EPUB publication folder."
-                ),
+                error_message=_UNSUPPORTED_PATH_MESSAGE,
             ),
             target=target,
             checked_at=checked_at,
@@ -558,15 +1015,71 @@ def run_check(
             return _stamp_result(
                 CheckResult(
                     verdict=Verdict.ERROR,
-                    error_message=(
-                        "Choose a packaged .ebrl or .epub file, or an exploded "
-                        "eBraille/EPUB publication folder."
-                    ),
+                    error_message=_UNSUPPORTED_PATH_MESSAGE,
                 ),
                 target=target,
                 tool=tool,
                 checked_at=checked_at,
             )
+
+    if kind == PublicationKind.PDF:
+        # Prefer PDF/UA-2; some files trigger an internal veraPDF NPE on UA-2,
+        # so fall back to PDF/UA-1 (still accessibility) when that happens.
+        try:
+            _cmd, result = _run_verapdf_once(
+                java=java, jar=jar, target=target, flavour="ua2"
+            )
+        except subprocess.TimeoutExpired:
+            return _stamp_result(
+                CheckResult(
+                    verdict=Verdict.ERROR,
+                    error_message="Check timed out after 10 minutes.",
+                ),
+                target=target,
+                tool=tool,
+                checked_at=checked_at,
+            )
+        except OSError as exc:
+            return _stamp_result(
+                CheckResult(
+                    verdict=Verdict.ERROR,
+                    error_message=f"Failed to start Java: {exc}",
+                ),
+                target=target,
+                tool=tool,
+                checked_at=checked_at,
+            )
+
+        if (
+            result.verdict == Verdict.ERROR
+            and result.error_message
+            and "internal error" in result.error_message.lower()
+        ):
+            try:
+                _cmd_ua1, ua1_result = _run_verapdf_once(
+                    java=java, jar=jar, target=target, flavour="ua1"
+                )
+            except (subprocess.TimeoutExpired, OSError):
+                return _stamp_result(
+                    result, target=target, tool=tool, checked_at=checked_at
+                )
+            if ua1_result.verdict != Verdict.ERROR:
+                note = (
+                    "PDF/UA-2 hit an internal veraPDF error; "
+                    "results are from PDF/UA-1."
+                )
+                ua1_result.extra_meta = [("Note", note), *ua1_result.extra_meta]
+                if ua1_result.raw_log:
+                    ua1_result.raw_log = f"{note}\n\n{ua1_result.raw_log}"
+                else:
+                    ua1_result.raw_log = note
+                return _stamp_result(
+                    ua1_result, target=target, tool=tool, checked_at=checked_at
+                )
+
+        return _stamp_result(
+            result, target=target, tool=tool, checked_at=checked_at
+        )
 
     with tempfile.TemporaryDirectory(prefix="ebraille-gui-") as tmp:
         json_path = Path(tmp) / "report.json"
@@ -721,6 +1234,7 @@ def checker_status_text() -> str:
     parts = [
         _tool_status_part(EBRAILLE_TOOL, bundled=checker_uses_bundled_copy()),
         _tool_status_part(EPUBCHECK_TOOL, bundled=epubcheck_uses_bundled_copy()),
+        _tool_status_part(VERAPDF_TOOL, bundled=verapdf_uses_bundled_copy()),
     ]
     if java:
         parts.append(java.label)

@@ -8,7 +8,7 @@ from pathlib import Path
 from . import __version__
 from .i18n import _, get_language
 from .models import CheckResult, Severity, Verdict
-from .updater import EBRAILLE_TOOL, EPUBCHECK_TOOL
+from .updater import EBRAILLE_TOOL, EPUBCHECK_TOOL, VERAPDF_TOOL
 
 
 def report_title(result: CheckResult) -> str:
@@ -19,6 +19,8 @@ def report_title(result: CheckResult) -> str:
         return _("EPUBCheck report")
     if key == EBRAILLE_TOOL.display_name.lower() or "ebraille" in key:
         return _("eBraille Checker report")
+    if key == VERAPDF_TOOL.display_name.lower() or "verapdf" in key:
+        return _("veraPDF report")
     return _("Check report")
 
 
@@ -85,6 +87,9 @@ def format_html_report(result: CheckResult, *, include_full_log: bool = True) ->
                 esc(result.checked_at.strftime("%Y-%m-%d %H:%M:%S")),
             )
         )
+    for label, value in result.extra_meta:
+        if value:
+            meta_rows.append((_(label), esc(value)))
     meta_rows.append((_("GUI version"), esc(__version__)))
 
     meta_html = "\n".join(

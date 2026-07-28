@@ -99,6 +99,15 @@ def _epubcheck_dir_for_output(output: Path) -> Path:
     return output.parent / "epubcheck"
 
 
+def _verapdf_dir_for_output(output: Path) -> Path:
+    output = output.resolve()
+    if sys.platform == "darwin" and output.suffix == ".app":
+        return output / "Contents" / "verapdf"
+    if output.is_dir():
+        return output / "verapdf"
+    return output.parent / "verapdf"
+
+
 def _load_info_plist(app_bundle: Path) -> tuple[Path, dict] | None:
     info_plist = app_bundle / "Contents" / "Info.plist"
     if not info_plist.is_file():
@@ -170,6 +179,7 @@ def build(
     bundle_java: bool,
     bundle_checker: bool,
     bundle_epubcheck: bool,
+    bundle_verapdf: bool,
 ) -> Path:
     _ensure_pyinstaller()
 
@@ -323,6 +333,27 @@ def build(
                 check=True,
             )
 
+    if bundle_verapdf:
+        if onefile:
+            print(
+                "Warning: --onefile with bundled veraPDF is not supported; "
+                "use onedir (default).",
+                file=sys.stderr,
+            )
+        else:
+            verapdf_dir = _verapdf_dir_for_output(output)
+            print()
+            print(f"Bundling veraPDF into {verapdf_dir}…")
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "verapdf_bundle.py"),
+                    str(verapdf_dir),
+                ],
+                cwd=ROOT,
+                check=True,
+            )
+
     return output
 
 
@@ -355,6 +386,11 @@ def main() -> None:
         action="store_true",
         help="Skip bundling EPUBCheck (downloaded on first run).",
     )
+    parser.add_argument(
+        "--no-bundle-verapdf",
+        action="store_true",
+        help="Skip bundling veraPDF (downloaded on first PDF check).",
+    )
     args = parser.parse_args()
 
     try:
@@ -364,6 +400,7 @@ def main() -> None:
             bundle_java=not args.no_bundle_java,
             bundle_checker=not args.no_bundle_checker,
             bundle_epubcheck=not args.no_bundle_epubcheck,
+            bundle_verapdf=not args.no_bundle_verapdf,
         )
     except subprocess.CalledProcessError as exc:
         print(f"\nPyInstaller failed with exit code {exc.returncode}.", file=sys.stderr)
@@ -401,6 +438,15 @@ def main() -> None:
     else:
         print(
             "Bundled EPUBCheck is included (epubcheck/). "
+            "Updates install to application data when a newer release exists."
+        )
+    if args.no_bundle_verapdf:
+        print(
+            "Note: veraPDF was not bundled. It will be downloaded on first PDF check."
+        )
+    else:
+        print(
+            "Bundled veraPDF is included (verapdf/). "
             "Updates install to application data when a newer release exists."
         )
 

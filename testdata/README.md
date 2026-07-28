@@ -4,6 +4,7 @@ Put local sample publications here while developing or testing the GUI:
 
 - Packaged eBraille: `*.ebrl`
 - Packaged EPUB: `*.epub`
+- PDF: `*.pdf` (veraPDF against PDF/UA-2)
 - Exploded publications: a folder containing a package document
   - eBraille: root `package.opf` with `dc:format` containing `eBraille`
     (e.g. `eBraille 1.0`), plus related files such as `index.html`
@@ -19,6 +20,7 @@ Example:
 testdata/
   my-book.ebrl
   my-book.epub
+  my-doc.pdf
   my-exploded-ebraille/
     package.opf
     index.html

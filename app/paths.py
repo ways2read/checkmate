@@ -23,6 +23,14 @@ EPUBCHECK_RELEASES_API = (
 EPUBCHECK_RELEASES_PAGE = f"https://github.com/{EPUBCHECK_REPO}/releases"
 EPUBCHECK_REPO_PAGE = f"https://github.com/{EPUBCHECK_REPO}"
 
+# veraPDF ships installers from its download site (not GitHub release assets).
+VERAPDF_HOME_PAGE = "https://verapdf.org/"
+VERAPDF_DOWNLOAD_PAGE = "https://software.verapdf.org/rel/"
+VERAPDF_RELEASES_PAGE = VERAPDF_DOWNLOAD_PAGE
+VERAPDF_INSTALLER_ZIP_URL = (
+    "https://software.verapdf.org/rel/verapdf-installer.zip"
+)
+
 DAISY_WEBSITE = "https://daisy.org/"
 EBRAILLE_STANDARD_PAGE = "https://daisy.org/activities/standards/ebraille/"
 EBRAILLE_SPEC_URL = "https://daisy.org/s/ebraille/"
@@ -30,6 +38,7 @@ EBRAILLE_SPEC_URL = "https://daisy.org/s/ebraille/"
 BUNDLED_JAVA_DIRNAME = "runtime"
 BUNDLED_CHECKER_DIRNAME = "checker"
 BUNDLED_EPUBCHECK_DIRNAME = "epubcheck"
+BUNDLED_VERAPDF_DIRNAME = "verapdf"
 BUNDLED_VERSION_FILE = "bundled_version.txt"
 BUNDLED_CHECKER_VERSION_FILE = BUNDLED_VERSION_FILE
 
@@ -60,6 +69,10 @@ def bundled_epubcheck_dir() -> Path:
     return application_dir() / BUNDLED_EPUBCHECK_DIRNAME
 
 
+def bundled_verapdf_dir() -> Path:
+    return application_dir() / BUNDLED_VERAPDF_DIRNAME
+
+
 def app_data_dir() -> Path:
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
@@ -84,6 +97,12 @@ def epubcheck_dir() -> Path:
     return path
 
 
+def verapdf_dir() -> Path:
+    path = app_data_dir() / "verapdf"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def version_file() -> Path:
     return checker_dir() / "installed_version.txt"
 
@@ -92,12 +111,20 @@ def epubcheck_version_file() -> Path:
     return epubcheck_dir() / "installed_version.txt"
 
 
+def verapdf_version_file() -> Path:
+    return verapdf_dir() / "installed_version.txt"
+
+
 def bundled_version_file() -> Path:
     return bundled_checker_dir() / BUNDLED_VERSION_FILE
 
 
 def bundled_epubcheck_version_file() -> Path:
     return bundled_epubcheck_dir() / BUNDLED_VERSION_FILE
+
+
+def bundled_verapdf_version_file() -> Path:
+    return bundled_verapdf_dir() / BUNDLED_VERSION_FILE
 
 
 def _find_jar_in_tree(
@@ -141,6 +168,40 @@ def find_epubcheck_jar_in_tree(root: Path) -> Path | None:
     )
 
 
+def find_verapdf_cli_jar_in_tree(root: Path) -> Path | None:
+    """Locate the veraPDF CLI jar produced by the greenfield installer."""
+    if not root.is_dir():
+        return None
+
+    from packaging.version import InvalidVersion, Version
+
+    def _cli_version(path: Path) -> Version | None:
+        match = re.search(r"cli-(\d+(?:\.\d+)*)\.jar$", path.name, re.I)
+        if not match:
+            return None
+        try:
+            return Version(match.group(1))
+        except InvalidVersion:
+            return None
+
+    candidates: list[Path] = []
+    bin_dir = root / "bin"
+    if bin_dir.is_dir():
+        candidates.extend(p for p in bin_dir.glob("cli-*.jar") if p.is_file())
+    if not candidates:
+        candidates = [
+            p
+            for p in root.rglob("cli-*.jar")
+            if p.is_file() and "javadoc" not in p.name.lower()
+        ]
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda p: (_cli_version(p) is not None, _cli_version(p) or p.name),
+    )
+
+
 def find_app_data_checker_jar() -> Path | None:
     return find_ebraille_jar_in_tree(checker_dir())
 
@@ -175,4 +236,23 @@ def epubcheck_uses_bundled_copy() -> bool:
     return (
         find_app_data_epubcheck_jar() is None
         and find_bundled_epubcheck_jar() is not None
+    )
+
+
+def find_app_data_verapdf_jar() -> Path | None:
+    return find_verapdf_cli_jar_in_tree(verapdf_dir())
+
+
+def find_bundled_verapdf_jar() -> Path | None:
+    return find_verapdf_cli_jar_in_tree(bundled_verapdf_dir())
+
+
+def find_verapdf_jar() -> Path | None:
+    """Resolve veraPDF CLI jar: app-data copy first, then bundled copy."""
+    return find_app_data_verapdf_jar() or find_bundled_verapdf_jar()
+
+
+def verapdf_uses_bundled_copy() -> bool:
+    return (
+        find_app_data_verapdf_jar() is None and find_bundled_verapdf_jar() is not None
     )

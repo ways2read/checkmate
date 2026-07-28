@@ -97,6 +97,8 @@ class CheckResult:
     tool_version: str = ""
     checked_at: datetime | None = None
     target_path: str = ""
+    # Optional checker-specific summary rows (label, value), e.g. veraPDF profile.
+    extra_meta: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def headline(self) -> str:
@@ -130,9 +132,18 @@ class CheckResult:
         label = self.verdict.label
         if not parts:
             if self.verdict == Verdict.FAILED:
-                return [label, _("see the full log for details")]
-            return [label, _("no errors or warnings")]
-        return [label, ", ".join(parts)]
+                lines = [label, _("see the full log for details")]
+            else:
+                lines = [label, _("no errors or warnings")]
+        else:
+            lines = [label, ", ".join(parts)]
+
+        # Surface a short profile line in the result pane when present.
+        for meta_label, meta_value in self.extra_meta:
+            if meta_label == "Validation profile" and meta_value:
+                lines.append(meta_value)
+                break
+        return lines
 
     def report_meta_lines(self) -> list[str]:
         """Metadata lines for copy/save reports (publication, checker, date)."""
@@ -153,6 +164,10 @@ class CheckResult:
         if self.checked_at is not None:
             when = self.checked_at.strftime("%Y-%m-%d %H:%M:%S")
             lines.append(_("Date: {when}", when=when))
+        for label, value in self.extra_meta:
+            if not value:
+                continue
+            lines.append(f"{_(label)}: {value}")
         return lines
 
     def announcement(self) -> str:

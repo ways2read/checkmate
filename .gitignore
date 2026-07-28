@@ -24,9 +24,11 @@ installer/Output/
 #   runtime/   = bundled Temurin JRE
 #   checker/   = bundled or locally fetched eBraille Checker
 #   epubcheck/ = bundled or locally fetched W3C EPUBCheck
+#   verapdf/   = bundled or locally fetched veraPDF CLI
 runtime/
 checker/
 epubcheck/
+verapdf/
 
 # Local IDE / OS
 .idea/
@@ -42,3 +44,5 @@ Thumbs.db
 *.EBRL
 *.epub
 *.EPUB
+*.pdf
+*.PDF

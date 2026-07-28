@@ -28,9 +28,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "eBraille Checker GUI": "eBraille Checker GUI",
         "Publication": "Publication",
         "Path:": "Chemin :",
-        "Select or drop a .ebrl / .epub file or folder — "
+        "Select or drop a .ebrl / .epub / .pdf file or folder — "
         "checking starts automatically": (
-            "Sélectionnez ou déposez un fichier .ebrl / .epub ou un dossier — "
+            "Sélectionnez ou déposez un fichier .ebrl / .epub / .pdf ou un dossier — "
             "la vérification démarre automatiquement"
         ),
         "Select &file…": "Sélectionner un &fichier…",
@@ -67,6 +67,16 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Code": "Code",
         "Location": "Emplacement",
         "Message": "Message",
+        "Issue details": "Détails du problème",
+        "Severity: {value}": "Sévérité : {value}",
+        "Code: {value}": "Code : {value}",
+        "(none)": "(aucun)",
+        "Press Enter or double-click an issue to read the full details.": (
+            "Appuyez sur Entrée ou double-cliquez un problème pour lire "
+            "tous les détails."
+        ),
+        "Issues hint": "Conseil sur les problèmes",
+        "Note": "Remarque",
         "Show full &log": "Afficher le journal &complet",
         "Hide full &log": "Masquer le journal &complet",
         "Show full log": "Afficher le journal complet",
@@ -128,9 +138,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Une vérification est déjà en cours. Attendez la fin, puis déposez à nouveau."
         ),
         "Unsupported drop": "Dépôt non pris en charge",
-        "Drop a packaged .ebrl or .epub file, or an exploded "
+        "Drop a packaged .ebrl, .epub, or .pdf file, or an exploded "
         "eBraille/EPUB publication folder.": (
-            "Déposez un fichier .ebrl ou .epub empaqueté, ou un dossier de "
+            "Déposez un fichier .ebrl, .epub ou .pdf empaqueté, ou un dossier de "
             "publication eBraille/EPUB décompressé."
         ),
         "Using first publication ({name}); ignored {count} other item(s).": (
@@ -138,16 +148,20 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "{count} autre(s) élément(s) ignoré(s)."
         ),
         "Multiple items": "Plusieurs éléments",
-        "Select an eBraille or EPUB publication": (
-            "Sélectionner une publication eBraille ou EPUB"
+        "Select an eBraille, EPUB, or PDF publication": (
+            "Sélectionner une publication eBraille, EPUB ou PDF"
         ),
-        "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+        "Publications (*.ebrl;*.epub;*.pdf)|"
+        "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
         "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
         "EPUB (*.epub)|*.epub;*.EPUB|"
+        "PDF (*.pdf)|*.pdf;*.PDF|"
         "All files (*.*)|*.*": (
-            "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+            "Publications (*.ebrl;*.epub;*.pdf)|"
+            "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
             "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
             "EPUB (*.epub)|*.epub;*.EPUB|"
+            "PDF (*.pdf)|*.pdf;*.PDF|"
             "Tous les fichiers (*.*)|*.*"
         ),
         "Select an exploded eBraille or EPUB publication folder": (
@@ -182,6 +196,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Check report": "Rapport de vérification",
         "EPUBCheck report": "Rapport EPUBCheck",
         "eBraille Checker report": "Rapport eBraille Checker",
+        "veraPDF report": "Rapport veraPDF",
         "Checker": "Vérificateur",
         "Date": "Date",
         "GUI version": "Version de l’interface",
@@ -222,11 +237,13 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Install failed": "Échec de l’installation",
         "Installation failed:\n{error}": "Échec de l’installation :\n{error}",
         "An accessible, cross-platform front-end for the DAISY "
-        "eBraille Checker and W3C EPUBCheck.": (
+        "eBraille Checker, W3C EPUBCheck, and veraPDF (PDF/UA).": (
             "Une interface accessible et multiplateforme pour le "
-            "vérificateur eBraille de la DAISY et EPUBCheck du W3C."
+            "vérificateur eBraille de la DAISY, EPUBCheck du W3C et "
+            "veraPDF (PDF/UA)."
         ),
         "EPUBCheck": "EPUBCheck",
+        "veraPDF": "veraPDF",
         "About eBraille Checker GUI": "À propos d’eBraille Checker GUI",
         "Version {version}": "Version {version}",
         "Links": "Liens",
@@ -272,6 +289,13 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Checker: {name} {version}": "Vérificateur : {name} {version}",
         "Checker: {name}": "Vérificateur : {name}",
         "Date: {when}": "Date : {when}",
+        "Parser": "Analyseur",
+        "Build date": "Date de compilation",
+        "Processing time": "Temps de traitement",
+        "Validation profile": "Profil de validation",
+        "Total rules in profile": "Règles totales dans le profil",
+        "Passed checks": "Contrôles réussis",
+        "Failed checks": "Contrôles échoués",
         "Java not found": "Java introuvable",
         "Language changed to {language}.": "Langue changée : {language}.",
     },
@@ -280,9 +304,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "eBraille Checker GUI": "eBraille Checker GUI",
         "Publication": "Publicación",
         "Path:": "Ruta:",
-        "Select or drop a .ebrl / .epub file or folder — "
+        "Select or drop a .ebrl / .epub / .pdf file or folder — "
         "checking starts automatically": (
-            "Seleccione o suelte un archivo .ebrl / .epub o una carpeta — "
+            "Seleccione o suelte un archivo .ebrl / .epub / .pdf o una carpeta — "
             "la comprobación empieza automáticamente"
         ),
         "Select &file…": "Seleccionar &archivo…",
@@ -319,6 +343,16 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Code": "Código",
         "Location": "Ubicación",
         "Message": "Mensaje",
+        "Issue details": "Detalles del problema",
+        "Severity: {value}": "Gravedad: {value}",
+        "Code: {value}": "Código: {value}",
+        "(none)": "(ninguno)",
+        "Press Enter or double-click an issue to read the full details.": (
+            "Pulse Intro o haga doble clic en un problema para leer "
+            "todos los detalles."
+        ),
+        "Issues hint": "Consejo de problemas",
+        "Note": "Nota",
         "Show full &log": "Mostrar registro &completo",
         "Hide full &log": "Ocultar registro &completo",
         "Show full log": "Mostrar registro completo",
@@ -379,9 +413,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Ya hay una comprobación en curso. Espere a que termine y vuelva a soltar."
         ),
         "Unsupported drop": "Soltar no admitido",
-        "Drop a packaged .ebrl or .epub file, or an exploded "
+        "Drop a packaged .ebrl, .epub, or .pdf file, or an exploded "
         "eBraille/EPUB publication folder.": (
-            "Suelte un archivo .ebrl o .epub empaquetado, o una carpeta de "
+            "Suelte un archivo .ebrl, .epub o .pdf empaquetado, o una carpeta de "
             "publicación eBraille/EPUB descomprimida."
         ),
         "Using first publication ({name}); ignored {count} other item(s).": (
@@ -389,16 +423,20 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "se ignoraron {count} elemento(s)."
         ),
         "Multiple items": "Varios elementos",
-        "Select an eBraille or EPUB publication": (
-            "Seleccionar una publicación eBraille o EPUB"
+        "Select an eBraille, EPUB, or PDF publication": (
+            "Seleccionar una publicación eBraille, EPUB o PDF"
         ),
-        "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+        "Publications (*.ebrl;*.epub;*.pdf)|"
+        "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
         "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
         "EPUB (*.epub)|*.epub;*.EPUB|"
+        "PDF (*.pdf)|*.pdf;*.PDF|"
         "All files (*.*)|*.*": (
-            "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+            "Publications (*.ebrl;*.epub;*.pdf)|"
+            "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
             "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
             "EPUB (*.epub)|*.epub;*.EPUB|"
+            "PDF (*.pdf)|*.pdf;*.PDF|"
             "Todos los archivos (*.*)|*.*"
         ),
         "Select an exploded eBraille or EPUB publication folder": (
@@ -433,6 +471,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Check report": "Informe de comprobación",
         "EPUBCheck report": "Informe EPUBCheck",
         "eBraille Checker report": "Informe eBraille Checker",
+        "veraPDF report": "Informe veraPDF",
         "Checker": "Comprobador",
         "Date": "Fecha",
         "GUI version": "Versión de la interfaz",
@@ -473,11 +512,13 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Install failed": "Error de instalación",
         "Installation failed:\n{error}": "Error de instalación:\n{error}",
         "An accessible, cross-platform front-end for the DAISY "
-        "eBraille Checker and W3C EPUBCheck.": (
+        "eBraille Checker, W3C EPUBCheck, and veraPDF (PDF/UA).": (
             "Una interfaz accesible y multiplataforma para el "
-            "comprobador eBraille de DAISY y EPUBCheck del W3C."
+            "comprobador eBraille de DAISY, EPUBCheck del W3C y "
+            "veraPDF (PDF/UA)."
         ),
         "EPUBCheck": "EPUBCheck",
+        "veraPDF": "veraPDF",
         "About eBraille Checker GUI": "Acerca de eBraille Checker GUI",
         "Version {version}": "Versión {version}",
         "Links": "Enlaces",
@@ -525,6 +566,13 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Checker: {name} {version}": "Comprobador: {name} {version}",
         "Checker: {name}": "Comprobador: {name}",
         "Date: {when}": "Fecha: {when}",
+        "Parser": "Analizador",
+        "Build date": "Fecha de compilación",
+        "Processing time": "Tiempo de procesamiento",
+        "Validation profile": "Perfil de validación",
+        "Total rules in profile": "Reglas totales en el perfil",
+        "Passed checks": "Comprobaciones correctas",
+        "Failed checks": "Comprobaciones fallidas",
         "Java not found": "Java no encontrado",
         "Language changed to {language}.": "Idioma cambiado a {language}.",
     },
@@ -533,9 +581,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "eBraille Checker GUI": "eBraille Checker GUI",
         "Publication": "Publikation",
         "Path:": "Pfad:",
-        "Select or drop a .ebrl / .epub file or folder — "
+        "Select or drop a .ebrl / .epub / .pdf file or folder — "
         "checking starts automatically": (
-            "Wählen oder ziehen Sie eine .ebrl-/.epub-Datei oder einen Ordner — "
+            "Wählen oder ziehen Sie eine .ebrl-/.epub-/.pdf-Datei oder einen Ordner — "
             "die Prüfung startet automatisch"
         ),
         "Select &file…": "&Datei auswählen…",
@@ -573,6 +621,16 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Code": "Code",
         "Location": "Ort",
         "Message": "Meldung",
+        "Issue details": "Problemdetails",
+        "Severity: {value}": "Schweregrad: {value}",
+        "Code: {value}": "Code: {value}",
+        "(none)": "(keine)",
+        "Press Enter or double-click an issue to read the full details.": (
+            "Drücken Sie die Eingabetaste oder doppelklicken Sie auf ein "
+            "Problem, um alle Details zu lesen."
+        ),
+        "Issues hint": "Hinweis zu Problemen",
+        "Note": "Hinweis",
         "Show full &log": "Vollständiges &Protokoll anzeigen",
         "Hide full &log": "Vollständiges &Protokoll ausblenden",
         "Show full log": "Vollständiges Protokoll anzeigen",
@@ -634,9 +692,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Eine Prüfung läuft bereits. Warten Sie auf das Ende und ziehen Sie erneut."
         ),
         "Unsupported drop": "Ablegen nicht unterstützt",
-        "Drop a packaged .ebrl or .epub file, or an exploded "
+        "Drop a packaged .ebrl, .epub, or .pdf file, or an exploded "
         "eBraille/EPUB publication folder.": (
-            "Legen Sie eine gepackte .ebrl- oder .epub-Datei oder einen "
+            "Legen Sie eine gepackte .ebrl-, .epub- oder .pdf-Datei oder einen "
             "entpackten eBraille-/EPUB-Publikationsordner ab."
         ),
         "Using first publication ({name}); ignored {count} other item(s).": (
@@ -644,16 +702,20 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "{count} weitere(s) Element(e) ignoriert."
         ),
         "Multiple items": "Mehrere Elemente",
-        "Select an eBraille or EPUB publication": (
-            "eBraille- oder EPUB-Publikation auswählen"
+        "Select an eBraille, EPUB, or PDF publication": (
+            "eBraille-, EPUB- oder PDF-Publikation auswählen"
         ),
-        "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+        "Publications (*.ebrl;*.epub;*.pdf)|"
+        "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
         "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
         "EPUB (*.epub)|*.epub;*.EPUB|"
+        "PDF (*.pdf)|*.pdf;*.PDF|"
         "All files (*.*)|*.*": (
-            "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+            "Publications (*.ebrl;*.epub;*.pdf)|"
+            "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
             "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
             "EPUB (*.epub)|*.epub;*.EPUB|"
+            "PDF (*.pdf)|*.pdf;*.PDF|"
             "Alle Dateien (*.*)|*.*"
         ),
         "Select an exploded eBraille or EPUB publication folder": (
@@ -688,6 +750,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Check report": "Prüfbericht",
         "EPUBCheck report": "EPUBCheck-Bericht",
         "eBraille Checker report": "eBraille-Checker-Bericht",
+        "veraPDF report": "veraPDF-Bericht",
         "Checker": "Prüfer",
         "Date": "Datum",
         "GUI version": "GUI-Version",
@@ -728,11 +791,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Install failed": "Installation fehlgeschlagen",
         "Installation failed:\n{error}": "Installation fehlgeschlagen:\n{error}",
         "An accessible, cross-platform front-end for the DAISY "
-        "eBraille Checker and W3C EPUBCheck.": (
+        "eBraille Checker, W3C EPUBCheck, and veraPDF (PDF/UA).": (
             "Eine barrierefreie, plattformübergreifende Oberfläche für den "
-            "DAISY eBraille Checker und W3C EPUBCheck."
+            "DAISY eBraille Checker, W3C EPUBCheck und veraPDF (PDF/UA)."
         ),
         "EPUBCheck": "EPUBCheck",
+        "veraPDF": "veraPDF",
         "About eBraille Checker GUI": "Info zu eBraille Checker GUI",
         "Version {version}": "Version {version}",
         "Links": "Links",
@@ -778,6 +842,13 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Checker: {name} {version}": "Prüfer: {name} {version}",
         "Checker: {name}": "Prüfer: {name}",
         "Date: {when}": "Datum: {when}",
+        "Parser": "Parser",
+        "Build date": "Build-Datum",
+        "Processing time": "Verarbeitungszeit",
+        "Validation profile": "Validierungsprofil",
+        "Total rules in profile": "Regeln im Profil gesamt",
+        "Passed checks": "Bestandene Prüfungen",
+        "Failed checks": "Fehlgeschlagene Prüfungen",
         "Java not found": "Java nicht gefunden",
         "Language changed to {language}.": "Sprache geändert: {language}.",
     },
@@ -786,9 +857,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "eBraille Checker GUI": "eBraille Checker GUI",
         "Publication": "Publicação",
         "Path:": "Caminho:",
-        "Select or drop a .ebrl / .epub file or folder — "
+        "Select or drop a .ebrl / .epub / .pdf file or folder — "
         "checking starts automatically": (
-            "Selecione ou solte um ficheiro .ebrl / .epub ou uma pasta — "
+            "Selecione ou solte um ficheiro .ebrl / .epub / .pdf ou uma pasta — "
             "a verificação inicia automaticamente"
         ),
         "Select &file…": "Selecionar &ficheiro…",
@@ -825,6 +896,16 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Code": "Código",
         "Location": "Localização",
         "Message": "Mensagem",
+        "Issue details": "Detalhes do problema",
+        "Severity: {value}": "Gravidade: {value}",
+        "Code: {value}": "Código: {value}",
+        "(none)": "(nenhum)",
+        "Press Enter or double-click an issue to read the full details.": (
+            "Prima Enter ou faça duplo clique num problema para ler "
+            "todos os detalhes."
+        ),
+        "Issues hint": "Dica de problemas",
+        "Note": "Nota",
         "Show full &log": "Mostrar registo &completo",
         "Hide full &log": "Ocultar registo &completo",
         "Show full log": "Mostrar registo completo",
@@ -885,9 +966,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Já existe uma verificação em curso. Aguarde que termine e solte novamente."
         ),
         "Unsupported drop": "Soltar não suportado",
-        "Drop a packaged .ebrl or .epub file, or an exploded "
+        "Drop a packaged .ebrl, .epub, or .pdf file, or an exploded "
         "eBraille/EPUB publication folder.": (
-            "Solte um ficheiro .ebrl ou .epub empacotado, ou uma pasta de "
+            "Solte um ficheiro .ebrl, .epub ou .pdf empacotado, ou uma pasta de "
             "publicação eBraille/EPUB descompactada."
         ),
         "Using first publication ({name}); ignored {count} other item(s).": (
@@ -895,16 +976,20 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "ignorado(s) {count} outro(s) item(ns)."
         ),
         "Multiple items": "Vários itens",
-        "Select an eBraille or EPUB publication": (
-            "Selecionar uma publicação eBraille ou EPUB"
+        "Select an eBraille, EPUB, or PDF publication": (
+            "Selecionar uma publicação eBraille, EPUB ou PDF"
         ),
-        "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+        "Publications (*.ebrl;*.epub;*.pdf)|"
+        "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
         "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
         "EPUB (*.epub)|*.epub;*.EPUB|"
+        "PDF (*.pdf)|*.pdf;*.PDF|"
         "All files (*.*)|*.*": (
-            "Publications (*.ebrl;*.epub)|*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB|"
+            "Publications (*.ebrl;*.epub;*.pdf)|"
+            "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
             "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
             "EPUB (*.epub)|*.epub;*.EPUB|"
+            "PDF (*.pdf)|*.pdf;*.PDF|"
             "Todos os ficheiros (*.*)|*.*"
         ),
         "Select an exploded eBraille or EPUB publication folder": (
@@ -939,6 +1024,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Check report": "Relatório de verificação",
         "EPUBCheck report": "Relatório EPUBCheck",
         "eBraille Checker report": "Relatório eBraille Checker",
+        "veraPDF report": "Relatório veraPDF",
         "Checker": "Verificador",
         "Date": "Data",
         "GUI version": "Versão da interface",
@@ -979,11 +1065,13 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Install failed": "Falha na instalação",
         "Installation failed:\n{error}": "Falha na instalação:\n{error}",
         "An accessible, cross-platform front-end for the DAISY "
-        "eBraille Checker and W3C EPUBCheck.": (
+        "eBraille Checker, W3C EPUBCheck, and veraPDF (PDF/UA).": (
             "Uma interface acessível e multiplataforma para o "
-            "verificador eBraille da DAISY e o EPUBCheck do W3C."
+            "verificador eBraille da DAISY, o EPUBCheck do W3C e o "
+            "veraPDF (PDF/UA)."
         ),
         "EPUBCheck": "EPUBCheck",
+        "veraPDF": "veraPDF",
         "About eBraille Checker GUI": "Acerca do eBraille Checker GUI",
         "Version {version}": "Versão {version}",
         "Links": "Ligações",
@@ -1031,6 +1119,13 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Checker: {name} {version}": "Verificador: {name} {version}",
         "Checker: {name}": "Verificador: {name}",
         "Date: {when}": "Data: {when}",
+        "Parser": "Analisador",
+        "Build date": "Data de compilação",
+        "Processing time": "Tempo de processamento",
+        "Validation profile": "Perfil de validação",
+        "Total rules in profile": "Regras totais no perfil",
+        "Passed checks": "Verificações aprovadas",
+        "Failed checks": "Verificações falhadas",
         "Java not found": "Java não encontrado",
         "Language changed to {language}.": "Idioma alterado para {language}.",
     },

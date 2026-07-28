@@ -1,23 +1,25 @@
 # eBraille Checker GUI
 
 An accessible, cross-platform desktop front-end for the
-[DAISY eBraille Checker](https://github.com/daisy/ebraille-checker) and
-[W3C EPUBCheck](https://github.com/w3c/epubcheck).
+[DAISY eBraille Checker](https://github.com/daisy/ebraille-checker),
+[W3C EPUBCheck](https://github.com/w3c/epubcheck), and
+[veraPDF](https://verapdf.org/) (PDF/UA).
 
 Those checkers are Java command-line tools. This app wraps them so you can open
 a publication and see a clear result — **Passed**, **Passed with warnings**, or
 **Failed** — without typing `java -jar` commands or reading a long console log
 first. `.ebrl` files use eBraille Checker; `.epub` files use stock EPUBCheck;
-exploded folders are classified automatically.
+`.pdf` files use veraPDF against PDF/UA-2; exploded folders are classified
+automatically.
 
 Built with [wxPython](https://wxpython.org/) for native widgets and screen reader
 support on Windows, macOS, and Linux.
 
 ## Features
 
-- Open a packaged `.ebrl` or `.epub` file, or an exploded publication folder
-  (**Select file…** / **Select folder…**, or drag and drop) — checking starts
-  automatically with the matching engine
+- Open a packaged `.ebrl`, `.epub`, or `.pdf` file, or an exploded publication
+  folder (**Select file…** / **Select folder…**, or drag and drop) — checking
+  starts automatically with the matching engine
 - On Windows, right-click an `.ebrl` or `.epub` → **Validate with eBraille
   Checker**, or **Open with** → eBraille Checker (does not change the
   double-click default)
@@ -31,13 +33,14 @@ support on Windows, macOS, and Linux.
   results** returns to the launch state
 - UI languages: English, Français, Español, Deutsch, Português (remembered;
   first run follows the OS language when supported)
-- Downloads eBraille Checker and EPUBCheck on first run when not bundled
-- In-app update check for both tools; updates install to application data and
+- Downloads eBraille Checker and EPUBCheck on first run when not bundled;
+  downloads veraPDF on first PDF check when not bundled
+- In-app update check for all tools; updates install to application data and
   leave the bundled install-folder copies untouched
 - Uses `-Xss4m` when launching Java to avoid known stack overflow crashes on
   smaller JREs
 - **Packaged builds** can include bundled Eclipse Temurin JRE, eBraille Checker,
-  and EPUBCheck (works offline on first launch)
+  EPUBCheck, and veraPDF (works offline on first launch)
 
 ## Requirements
 
@@ -50,15 +53,17 @@ support on Windows, macOS, and Linux.
   checking for updates
 
 Jars are fetched from
-[daisy/ebraille-checker releases](https://github.com/daisy/ebraille-checker/releases)
-and [w3c/epubcheck releases](https://github.com/w3c/epubcheck/releases).
+[daisy/ebraille-checker releases](https://github.com/daisy/ebraille-checker/releases),
+[w3c/epubcheck releases](https://github.com/w3c/epubcheck/releases), and
+[veraPDF downloads](https://software.verapdf.org/rel/).
 
 ### Running a packaged build (end users)
 
 - No system Java required — the distribution includes `runtime/` with Temurin JRE 17
-- No download required on first run when `checker/` and `epubcheck/` are bundled
+- No download required on first run when `checker/`, `epubcheck/`, and `verapdf/`
+  are bundled
 - Network only needed when checking for tool updates (or if built with
-  `--no-bundle-checker` / `--no-bundle-epubcheck`)
+  `--no-bundle-checker` / `--no-bundle-epubcheck` / `--no-bundle-verapdf`)
 
 ## Install (developers)
 
@@ -104,11 +109,11 @@ python -m app
    fix issues.
 5. **Report → Clear results** (`Ctrl+Shift+N`) clears the path, verdict, issues,
    and log back to the launch state.
-6. **Tools → Check for updates…** offers to download newer eBraille Checker
-   and/or EPUBCheck releases when they exist.
+6. **Tools → Check for updates…** offers to download newer eBraille Checker,
+   EPUBCheck, and/or veraPDF releases when they exist.
 
 The **title bar** keeps the app name and appends the verdict (for example
-`eBraille Checker — Failed — 3 errors`). The **status bar** shows both tool
+`eBraille Checker — Failed — 3 errors`). The **status bar** shows tool
 versions and Java information.
 
 ### Keyboard shortcuts
@@ -128,13 +133,14 @@ versions and Java information.
 
 ### Where data is stored
 
-**Checkers** — for each tool (eBraille Checker and EPUBCheck), the app uses the
-newest available copy in this order:
+**Checkers** — for each tool (eBraille Checker, EPUBCheck, and veraPDF), the app
+uses the newest available copy in this order:
 
 1. **Updated copy** in application data (after you accept an in-app update)
-2. **Bundled copy** shipped with the packaged app (`checker/` or `epubcheck/`
-   next to the executable)
-3. **Downloaded copy** on first run (when running from source without a bundle)
+2. **Bundled copy** shipped with the packaged app (`checker/`, `epubcheck/`, or
+   `verapdf/` next to the executable)
+3. **Downloaded copy** on demand (eBraille/EPUBCheck on first run when missing;
+   veraPDF on first PDF check)
 
 | OS | Application data |
 |---|---|
@@ -146,10 +152,11 @@ Under that folder:
 
 - `checker/` — downloaded or updated eBraille Checker releases
 - `epubcheck/` — downloaded or updated EPUBCheck releases
+- `verapdf/` — downloaded or updated veraPDF CLI installs
 - `settings.json` — remembered UI language
 
-Packaged builds also include `checker/` and `epubcheck/` beside the executable
-(or inside the `.app` bundle on macOS).
+Packaged builds also include `checker/`, `epubcheck/`, and `verapdf/` beside the
+executable (or inside the `.app` bundle on macOS).
 
 ## Accessibility
 
@@ -195,6 +202,12 @@ EPUB (exploded folder):
 java -Xss4m -jar path\to\epubcheck.jar -mode exp path\to\folder
 ```
 
+PDF (PDF/UA-2 via veraPDF; falls back to PDF/UA-1 if veraPDF crashes on UA-2):
+
+```bash
+java -Djava.awt.headless=true -jar path\to\cli-*.jar --flavour ua2 --format json publication.pdf
+```
+
 `-Xss4m` increases the Java thread stack size. Without it, some publications can
 trigger `java.lang.StackOverflowError` during RelaxNG validation on smaller JREs.
 
@@ -229,12 +242,16 @@ Add `-Xss4m` (or `-Xss8m`) before `-jar`, as shown above. The GUI already does t
 
 ### Checker download fails
 
-Check your network and GitHub availability, then use
-**Tools → Download / reinstall checkers…**, or download zips manually from the
-[eBraille Checker releases](https://github.com/daisy/ebraille-checker/releases)
-and [EPUBCheck releases](https://github.com/w3c/epubcheck/releases) pages and
-extract the jars into the application data `checker/` or `epubcheck/` folders
-listed above.
+Check your network and download-site availability, then use
+**Tools → Download / reinstall checkers…**, or install tools manually:
+
+- eBraille Checker / EPUBCheck: download release zips from
+  [eBraille Checker releases](https://github.com/daisy/ebraille-checker/releases)
+  and [EPUBCheck releases](https://github.com/w3c/epubcheck/releases) and extract
+  into the application data `checker/` or `epubcheck/` folders listed above
+- veraPDF: download the greenfield installer from
+  [software.verapdf.org/rel](https://software.verapdf.org/rel/) and install into
+  the application data `verapdf/` folder (the app expects `bin/cli-*.jar`)
 
 ### Extension case (`.eBRL` vs `.ebrl`)
 
@@ -248,8 +265,8 @@ ebraille-checker-gui/
   app/
     main.py            # wxPython UI
     checker.py         # Run jar, parse JSON results
-    publication.py     # Classify .ebrl / .epub / exploded folders
-    updater.py         # GitHub release download / update
+    publication.py     # Classify .ebrl / .epub / .pdf / exploded folders
+    updater.py         # Tool download / update (GitHub + veraPDF installer)
     java_util.py       # Locate Java (bundled or PATH)
     models.py          # Verdict and issue models
     i18n.py            # UI translations
@@ -258,10 +275,11 @@ ebraille-checker-gui/
     subprocess_util.py # Quiet subprocess helpers (Windows)
   run.py               # Launcher (incl. SSL cert setup when frozen)
   scripts/
-    package.py               # PyInstaller + bundled JRE, checker, EPUBCheck
+    package.py               # PyInstaller + bundled JRE, checker, EPUBCheck, veraPDF
     jre_bundle.py            # Download Temurin JRE into runtime/
     checker_bundle.py        # Download eBraille Checker into checker/
     epubcheck_bundle.py      # Download EPUBCheck into epubcheck/
+    verapdf_bundle.py        # Download/install veraPDF into verapdf/
     build_installer.ps1      # Windows: package + Inno Setup compile
     build_macos.sh           # macOS: package .app + zip
     build_macos_dmg.sh       # macOS: drag-to-Applications .dmg
@@ -287,7 +305,8 @@ ebraille-checker-gui/
 ## Packaging
 
 Build a standalone app on each target OS (Windows or macOS). The script bundles
-**Eclipse Temurin JRE 17**, **eBraille Checker**, and **EPUBCheck** by default.
+**Eclipse Temurin JRE 17**, **eBraille Checker**, **EPUBCheck**, and **veraPDF**
+by default.
 
 ```bash
 uv sync --extra dev
@@ -300,6 +319,7 @@ Options:
 uv run python scripts/package.py --no-bundle-java       # smaller build; needs system Java
 uv run python scripts/package.py --no-bundle-checker    # eBraille Checker on first run
 uv run python scripts/package.py --no-bundle-epubcheck  # EPUBCheck on first run
+uv run python scripts/package.py --no-bundle-verapdf    # veraPDF on first PDF check
 uv run python scripts/package.py --onefile              # not recommended with bundles
 ```
 
@@ -316,6 +336,9 @@ dist/eBrailleChecker/
   epubcheck/            # bundled EPUBCheck
     bundled_version.txt
     …/epubcheck.jar
+  verapdf/              # bundled veraPDF CLI
+    bundled_version.txt
+    bin/cli-*.jar
   … (PyInstaller support files)
 ```
 
@@ -326,7 +349,7 @@ do not ship only the `.exe`.
 On macOS, prefer the **signed and notarized `.dmg`** (below). You can still
 distribute the `.app` zip from `scripts/build_macos.sh` if needed.
 
-When a newer eBraille Checker or EPUBCheck is released, **Tools → Check for
+When a newer eBraille Checker, EPUBCheck, or veraPDF is released, **Tools → Check for
 updates…** compares against the versions in use (bundled or previously updated).
 Accepting an update downloads the new release(s) into application data; the
 bundled copies in the install folder are not modified.
@@ -357,8 +380,8 @@ Output: `installer/Output/eBrailleCheckerGUI-<version>-setup.exe`
 The installer:
 
 - Ships the full onedir tree (GUI + Temurin JRE 17 + eBraille Checker +
-  EPUBCheck) — no system Java (`build_installer.ps1` refuses to compile if
-  `runtime/`, `checker/`, or `epubcheck/` is missing from `dist/`)
+  EPUBCheck, veraPDF) — no system Java (`build_installer.ps1` refuses to compile if
+  `runtime/`, `checker/`, `epubcheck/`, or `verapdf/` is missing from `dist/`)
 - Supports per-user install (default) or Program Files with elevation
 - Adds `.ebrl` / `.epub` shell integration (optional task, on by default):
   **Open with** → eBraille Checker GUI, and context menu **Validate with
@@ -433,7 +456,7 @@ file that way launches the GUI and starts a check automatically.
 
 ## Test data
 
-Place your own `.ebrl` / `.epub` files or exploded folders under `testdata/` for
+Place your own `.ebrl` / `.epub` / `.pdf` files or exploded folders under `testdata/` for
 local testing. Sample publications are **not** included in the repository. See
 [`testdata/README.md`](testdata/README.md) for folder detection notes.
 
@@ -444,6 +467,7 @@ local testing. Sample publications are **not** included in the repository. See
   [DAISY Consortium](https://daisy.org/), based on EPUBCheck.
 - EPUB conformance checking is performed by
   [EPUBCheck](https://github.com/w3c/epubcheck) (W3C / DAISY).
+- PDF/UA checking is performed by [veraPDF](https://verapdf.org/).
 - Learn about the [eBraille standard](https://daisy.org/activities/standards/ebraille/)
   and the [eBraille specification](https://daisy.org/s/ebraille/).
 - This GUI is a separate front-end project and is not an official DAISY release.
@@ -452,7 +476,8 @@ local testing. Sample publications are **not** included in the repository. See
 
 This project (the GUI) is released under the [MIT License](LICENSE).
 
-The eBraille Checker and EPUBCheck jars downloaded at runtime remain under their
-own licenses; see the
-[eBraille Checker](https://github.com/daisy/ebraille-checker) and
-[EPUBCheck](https://github.com/w3c/epubcheck) repositories.
+The eBraille Checker, EPUBCheck, and veraPDF tools downloaded at runtime remain
+under their own licenses; see the
+[eBraille Checker](https://github.com/daisy/ebraille-checker),
+[EPUBCheck](https://github.com/w3c/epubcheck), and
+[veraPDF](https://verapdf.org/) projects.
