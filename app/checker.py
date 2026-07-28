@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tempfile
 from datetime import datetime
@@ -87,22 +88,11 @@ def build_command(
     return cmd
 
 
-def _location_from_message(msg: dict) -> str:
-    locations = msg.get("locations") or msg.get("Locations") or []
-    if not locations and "path" in msg:
-        return str(msg.get("path") or "")
-    if not locations:
-        # Flat EPUBCheck-style fields
-        path = msg.get("file") or msg.get("File") or ""
-        line = msg.get("line") or msg.get("Line")
-        column = msg.get("column") or msg.get("Column")
-        if path and line not in (None, -1) and column not in (None, -1):
-            return f"{path} ({line},{column})"
-        return str(path) if path else ""
-
-    loc = locations[0]
+def _location_from_loc_object(loc) -> str:
     if isinstance(loc, str):
         return loc
+    if not isinstance(loc, dict):
+        return ""
     path = loc.get("path") or loc.get("file") or ""
     if not path:
         url = loc.get("url")
@@ -117,6 +107,41 @@ def _location_from_message(msg: dict) -> str:
     return str(path) if path else ""
 
 
+def _location_from_message(msg: dict) -> str:
+    locations = msg.get("locations") or msg.get("Locations") or []
+    if not locations and "path" in msg:
+        return str(msg.get("path") or "")
+    if not locations:
+        # Flat EPUBCheck-style fields
+        path = msg.get("file") or msg.get("File") or ""
+        line = msg.get("line") or msg.get("Line")
+        column = msg.get("column") or msg.get("Column")
+        if path and line not in (None, -1) and column not in (None, -1):
+            return f"{path} ({line},{column})"
+        return str(path) if path else ""
+
+    return _location_from_loc_object(locations[0])
+
+
+def _message_occurrence_count(msg: dict) -> int:
+    """How many times this grouped JSON message occurred.
+
+    Stock EPUBCheck JSON deduplicates by ID+text and lists up to 25
+    ``locations``, with ``additionalLocations`` for the remainder.
+    """
+    locations = msg.get("locations") or msg.get("Locations") or []
+    listed = len(locations) if isinstance(locations, list) else 0
+    extra = msg.get("additionalLocations")
+    if extra is None:
+        extra = msg.get("additional_locations") or 0
+    try:
+        extra_n = int(extra)
+    except (TypeError, ValueError):
+        extra_n = 0
+    total = listed + max(extra_n, 0)
+    return total if total > 0 else 1
+
+
 def _issues_from_json(data: dict) -> list[Issue]:
     issues: list[Issue] = []
     messages = data.get("messages") or data.get("Messages") or []
@@ -126,18 +151,61 @@ def _issues_from_json(data: dict) -> list[Issue]:
         severity = Severity.from_string(
             msg.get("severity") or msg.get("Severity") or msg.get("type")
         )
+        # Jackson may serialize Severity enums as objects in some builds
+        if severity == Severity.UNKNOWN and isinstance(
+            msg.get("severity") or msg.get("Severity"), dict
+        ):
+            sev_obj = msg.get("severity") or msg.get("Severity")
+            severity = Severity.from_string(
+                sev_obj.get("name") or sev_obj.get("value") or str(sev_obj)
+            )
         code = str(msg.get("ID") or msg.get("id") or msg.get("code") or "")
         message = str(
             msg.get("message") or msg.get("Message") or msg.get("text") or ""
         ).strip()
-        issues.append(
-            Issue(
-                severity=severity,
-                code=code,
-                message=message,
-                location=_location_from_message(msg),
+
+        locations = msg.get("locations") or msg.get("Locations") or []
+        if isinstance(locations, list) and locations:
+            for loc in locations:
+                loc_text = _location_from_loc_object(loc)
+                issues.append(
+                    Issue(
+                        severity=severity,
+                        code=code,
+                        message=message,
+                        location=loc_text,
+                    )
+                )
+            try:
+                extra = int(
+                    msg.get("additionalLocations")
+                    or msg.get("additional_locations")
+                    or 0
+                )
+            except (TypeError, ValueError):
+                extra = 0
+            if extra > 0:
+                issues.append(
+                    Issue(
+                        severity=severity,
+                        code=code,
+                        message=(
+                            f"{message} (+{extra} additional location"
+                            f"{'s' if extra != 1 else ''})"
+                        ),
+                        location="",
+                    )
+                )
+        else:
+            issues.append(
+                Issue(
+                    severity=severity,
+                    code=code,
+                    message=message,
+                    location=_location_from_message(msg),
+                )
             )
-        )
+
     issues.sort(
         key=lambda i: (
             SEVERITY_ORDER.get(i.severity, 99),
@@ -150,6 +218,71 @@ def _issues_from_json(data: dict) -> list[Issue]:
 
 
 def _counts_from_json(data: dict, issues: list[Issue]) -> dict[str, int]:
+    """Derive severity totals from the JSON report.
+
+    Prefer summing occurrence counts from each grouped ``messages`` entry
+    (locations + additionalLocations). Do **not** trust ``checker.nError``
+    etc. alone — those count unique message groups, not total hits, so they
+    under-report compared with EPUBCheck's console ``Messages:`` footer.
+    """
+    messages = data.get("messages") or data.get("Messages") or []
+    if isinstance(messages, list) and messages:
+        counts = {
+            "fatals": 0,
+            "errors": 0,
+            "warnings": 0,
+            "infos": 0,
+            "usages": 0,
+        }
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            severity = Severity.from_string(
+                msg.get("severity") or msg.get("Severity") or msg.get("type")
+            )
+            if severity == Severity.UNKNOWN and isinstance(
+                msg.get("severity") or msg.get("Severity"), dict
+            ):
+                sev_obj = msg.get("severity") or msg.get("Severity")
+                severity = Severity.from_string(
+                    sev_obj.get("name") or sev_obj.get("value") or str(sev_obj)
+                )
+            n = _message_occurrence_count(msg)
+            if severity == Severity.FATAL:
+                counts["fatals"] += n
+            elif severity == Severity.ERROR:
+                counts["errors"] += n
+            elif severity == Severity.WARNING:
+                counts["warnings"] += n
+            elif severity == Severity.INFO:
+                counts["infos"] += n
+            elif severity == Severity.USAGE:
+                counts["usages"] += n
+        if any(counts.values()):
+            return counts
+
+    # Fall back to counting expanded issues, then checker metadata.
+    counts = {
+        "fatals": 0,
+        "errors": 0,
+        "warnings": 0,
+        "infos": 0,
+        "usages": 0,
+    }
+    for issue in issues:
+        if issue.severity == Severity.FATAL:
+            counts["fatals"] += 1
+        elif issue.severity == Severity.ERROR:
+            counts["errors"] += 1
+        elif issue.severity == Severity.WARNING:
+            counts["warnings"] += 1
+        elif issue.severity == Severity.INFO:
+            counts["infos"] += 1
+        elif issue.severity == Severity.USAGE:
+            counts["usages"] += 1
+    if any(counts.values()):
+        return counts
+
     def pick(block: dict, *keys: str) -> int | None:
         for key in keys:
             if key in block and block[key] is not None:
@@ -178,26 +311,19 @@ def _counts_from_json(data: dict, issues: list[Issue]) -> dict[str, int]:
                 "infos": mapped["infos"] or 0,
                 "usages": mapped["usages"] or 0,
             }
-
-    counts = {
-        "fatals": 0,
-        "errors": 0,
-        "warnings": 0,
-        "infos": 0,
-        "usages": 0,
-    }
-    for issue in issues:
-        if issue.severity == Severity.FATAL:
-            counts["fatals"] += 1
-        elif issue.severity == Severity.ERROR:
-            counts["errors"] += 1
-        elif issue.severity == Severity.WARNING:
-            counts["warnings"] += 1
-        elif issue.severity == Severity.INFO:
-            counts["infos"] += 1
-        elif issue.severity == Severity.USAGE:
-            counts["usages"] += 1
     return counts
+
+
+def _merge_counts_preferring_higher(
+    primary: dict[str, int], secondary: dict[str, int] | None
+) -> dict[str, int]:
+    """Keep the larger total per severity (console footer vs JSON)."""
+    if not secondary:
+        return primary
+    return {
+        key: max(primary.get(key, 0), secondary.get(key, 0))
+        for key in ("fatals", "errors", "warnings", "infos", "usages")
+    }
 
 
 def _verdict_from_counts(counts: dict[str, int], exit_code: int) -> Verdict:
@@ -212,6 +338,30 @@ def _verdict_from_counts(counts: dict[str, int], exit_code: int) -> Verdict:
     if exit_code not in (0, None):
         return Verdict.FAILED
     return Verdict.PASSED
+
+
+_MESSAGES_SUMMARY_RE = re.compile(
+    r"Messages:\s*"
+    r"(?P<fatals>\d+)\s+fatal(?:s)?\s*/\s*"
+    r"(?P<errors>\d+)\s+error(?:s)?\s*/\s*"
+    r"(?P<warnings>\d+)\s+warning(?:s)?\s*/\s*"
+    r"(?P<infos>\d+)\s+info(?:s)?",
+    re.IGNORECASE,
+)
+
+
+def _counts_from_messages_summary(text: str) -> dict[str, int] | None:
+    """Parse EPUBCheck's short ``Messages: N fatal / …`` footer line."""
+    match = _MESSAGES_SUMMARY_RE.search(text or "")
+    if match is None:
+        return None
+    return {
+        "fatals": int(match.group("fatals")),
+        "errors": int(match.group("errors")),
+        "warnings": int(match.group("warnings")),
+        "infos": int(match.group("infos")),
+        "usages": 0,
+    }
 
 
 def _extract_json_object(text: str) -> dict | None:
@@ -275,6 +425,59 @@ def parse_checker_output(stdout: str, stderr: str, exit_code: int) -> CheckResul
         raw_log=combined,
         exit_code=exit_code,
     )
+
+
+def _console_is_summary_only(raw_log: str) -> bool:
+    """True when EPUBCheck only printed the short Messages/completed footer."""
+    text = raw_log.strip()
+    if not text:
+        return True
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if len(lines) > 4:
+        return False
+    joined = "\n".join(lines).lower()
+    return "messages:" in joined and "epubcheck completed" in joined
+
+
+def _format_issues_log(issues: list[Issue]) -> str:
+    if not issues:
+        return ""
+    return "\n".join(issue.summary_line() for issue in issues)
+
+
+def _compose_raw_log(
+    console_log: str,
+    *,
+    data: dict | None = None,
+    issues: list[Issue] | None = None,
+) -> str:
+    """Build the Full log pane text.
+
+    With ``--json <file>``, stock EPUBCheck often prints only a one-line
+    Messages summary on the console; details live in the JSON report.
+    Prefer a human-readable issue list, and keep the console text when useful.
+    """
+    console = (console_log or "").strip()
+    issue_text = _format_issues_log(issues or [])
+    parts: list[str] = []
+
+    if console and not _console_is_summary_only(console):
+        parts.append(console)
+    elif console:
+        parts.append(console)
+
+    if issue_text:
+        if parts:
+            parts.append("")
+            parts.append("--- Issues ---")
+        parts.append(issue_text)
+    elif data is not None and (not console or _console_is_summary_only(console)):
+        if parts:
+            parts.append("")
+            parts.append("--- JSON report ---")
+        parts.append(json.dumps(data, indent=2))
+
+    return "\n".join(parts).strip()
 
 
 def run_check(
@@ -425,6 +628,11 @@ def run_check(
         if isinstance(data, dict):
             issues = _issues_from_json(data)
             counts = _counts_from_json(data, issues)
+            # Console footer counts every occurrence; checker.nError counts
+            # unique message groups — prefer the higher totals.
+            counts = _merge_counts_preferring_higher(
+                counts, _counts_from_messages_summary(raw_log)
+            )
             verdict = _verdict_from_counts(counts, proc.returncode)
             return _stamp_result(
                 CheckResult(
@@ -435,7 +643,7 @@ def run_check(
                     infos=counts["infos"],
                     usages=counts["usages"],
                     issues=issues,
-                    raw_log=raw_log or json.dumps(data, indent=2),
+                    raw_log=_compose_raw_log(raw_log, data=data, issues=issues),
                     exit_code=proc.returncode,
                     command=cmd,
                 ),
@@ -444,7 +652,48 @@ def run_check(
                 checked_at=checked_at,
             )
 
+        # No JSON file: try stdout/stderr JSON, then the Messages: summary line.
         result = parse_checker_output(stdout, stderr, proc.returncode)
+        if not (
+            result.verdict == Verdict.ERROR
+            and result.error_message
+            and "Could not parse" in result.error_message
+        ):
+            result.command = cmd
+            return _stamp_result(
+                result, target=target, tool=tool, checked_at=checked_at
+            )
+
+        summary = _counts_from_messages_summary(raw_log)
+        if summary is not None:
+            verdict = _verdict_from_counts(summary, proc.returncode)
+            note = (
+                "Structured issue list unavailable; counts taken from "
+                "the checker summary."
+            )
+            log = raw_log.strip()
+            if log:
+                log = f"{log}\n\n{note}"
+            else:
+                log = note
+            return _stamp_result(
+                CheckResult(
+                    verdict=verdict,
+                    fatals=summary["fatals"],
+                    errors=summary["errors"],
+                    warnings=summary["warnings"],
+                    infos=summary["infos"],
+                    usages=summary["usages"],
+                    issues=[],
+                    raw_log=log,
+                    exit_code=proc.returncode,
+                    command=cmd,
+                ),
+                target=target,
+                tool=tool,
+                checked_at=checked_at,
+            )
+
         result.command = cmd
         return _stamp_result(
             result, target=target, tool=tool, checked_at=checked_at

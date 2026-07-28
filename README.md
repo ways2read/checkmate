@@ -27,7 +27,8 @@ support on Windows, macOS, and Linux.
   red) reinforce the text; issues listed by severity
 - Filter issues (all / errors / warnings / info)
 - Optional full checker log for advanced diagnosis
-- Copy summary or save a text report; **Clear results** returns to the launch state
+- Copy summary; view or save text / HTML reports (**Report** menu); **Clear
+  results** returns to the launch state
 - UI languages: English, Français, Español, Deutsch, Português (remembered;
   first run follows the OS language when supported)
 - Downloads eBraille Checker and EPUBCheck on first run when not bundled
@@ -101,7 +102,7 @@ python -m app
 3. Use **Show full log** only when you need the raw checker output.
 4. **Tools → Re-check publication** (`F5`) re-runs the current path after you
    fix issues.
-5. **Edit → Clear results** (`Ctrl+Shift+N`) clears the path, verdict, issues,
+5. **Report → Clear results** (`Ctrl+Shift+N`) clears the path, verdict, issues,
    and log back to the launch state.
 6. **Tools → Check for updates…** offers to download newer eBraille Checker
    and/or EPUBCheck releases when they exist.
@@ -117,7 +118,7 @@ versions and Java information.
 | `Ctrl+O` | Select file |
 | `Ctrl+Shift+O` | Select folder |
 | `F5` | Re-check current publication |
-| `Ctrl+S` | Save report |
+| `Ctrl+S` | Save HTML report |
 | `Ctrl+Shift+C` | Copy summary |
 | `Ctrl+Shift+N` | Clear results |
 | `Ctrl+L` | Show/hide full log |
@@ -394,7 +395,7 @@ One-shot release (package → sign → DMG → notarize → staple):
 chmod +x scripts/build_macos_release.sh
 EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh
 # optional explicit version:
-EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh 0.2.1
+EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh 0.2.2
 ```
 
 Outputs (arch suffix is `-AppleSilicon` or `-Intel`):
@@ -406,8 +407,8 @@ Outputs (arch suffix is `-AppleSilicon` or `-Intel`):
 Step by step:
 
 ```bash
-./scripts/build_macos.sh 0.2.1          # .app + zip
-./scripts/build_macos_dmg.sh 0.2.1      # drag-install .dmg (unsigned)
+./scripts/build_macos.sh 0.2.2          # .app + zip
+./scripts/build_macos_dmg.sh 0.2.2      # drag-install .dmg (unsigned)
 ```
 
 App icon: `scripts/make_icns.py` builds `installer/eBrailleChecker.icns` from

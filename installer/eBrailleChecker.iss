@@ -16,7 +16,7 @@
 
 #define MyAppName "eBraille Checker"
 #define MyAppFullName "eBraille Checker GUI"
-#define MyAppVersion "0.2.1"
+#define MyAppVersion "0.2.2"
 #define MyAppPublisher "ways2read"
 #define MyAppURL "https://github.com/ways2read/ebraille-checker-gui"
 #define MyAppExeName "eBrailleChecker.exe"

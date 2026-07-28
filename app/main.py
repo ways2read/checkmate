@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 import threading
+import webbrowser
 from pathlib import Path
 
 import wx
@@ -35,7 +38,10 @@ from .paths import (
     is_frozen,
 )
 from .publication import is_checkable_path
+from .report_export import format_text_report, report_title, save_report
 from .updater import (
+    EBRAILLE_TOOL,
+    EPUBCHECK_TOOL,
     ReleaseInfo,
     ToolUpdateInfo,
     check_for_updates,
@@ -549,13 +555,15 @@ class MainFrame(wx.Frame):
         self.filter_choice.SetName(_("Issue filter"))
         self.copy_btn = wx.Button(panel, label=_("&Copy summary"))
         self.copy_btn.SetToolTip(_("Copy the result summary (Ctrl+Shift+C)"))
-        self.save_btn = wx.Button(panel, label=_("&Save report…"))
-        self.save_btn.SetToolTip(_("Save the report to a file (Ctrl+S)"))
+        self.report_btn = wx.Button(panel, label=_("&Report…"))
+        self.report_btn.SetToolTip(
+            _("View, save, copy, clear, or toggle the full log")
+        )
         filter_row.Add(self.filter_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         filter_row.Add(self.filter_choice, 0, wx.RIGHT, 12)
         filter_row.AddStretchSpacer(1)
         filter_row.Add(self.copy_btn, 0, wx.RIGHT, 4)
-        filter_row.Add(self.save_btn, 0)
+        filter_row.Add(self.report_btn, 0)
 
         self.issues_list = IssuesList(panel, name=_("Issues list"))
         self.issues_list.Bind(wx.EVT_SET_FOCUS, self.on_issues_list_focus)
@@ -570,10 +578,10 @@ class MainFrame(wx.Frame):
         )
         root.Add(issues_sizer, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
-        # --- Full log (collapsible via toggle) ---
+        # --- Full log (collapsible via button) ---
         log_header = wx.BoxSizer(wx.HORIZONTAL)
-        self.log_toggle = wx.ToggleButton(panel, label=_("Show full &log"))
-        self.log_toggle.SetName(_("Show or hide full log"))
+        self.log_toggle = wx.Button(panel, label=_("Show full &log"))
+        self.log_toggle.SetName(_("Show full log"))
         self.log_toggle.SetToolTip(
             _("Show or hide the full checker log (Ctrl+L)")
         )
@@ -612,29 +620,40 @@ class MainFrame(wx.Frame):
             wx.ID_ANY, _("Select f&older…\tCtrl+Shift+O")
         )
         file_menu.AppendSeparator()
-        self.menu_save = file_menu.Append(
-            wx.ID_SAVEAS, _("&Save report…\tCtrl+S")
-        )
-        file_menu.AppendSeparator()
         self.menu_exit = file_menu.Append(wx.ID_EXIT, _("E&xit\tEsc"))
         menubar.Append(file_menu, _("&File"))
 
-        edit_menu = wx.Menu()
-        self.menu_copy = edit_menu.Append(
+        report_menu = wx.Menu()
+        self.menu_view_text = report_menu.Append(
+            wx.ID_ANY, _("View &text report")
+        )
+        self.menu_save_text = report_menu.Append(
+            wx.ID_ANY, _("Save &text report…")
+        )
+        report_menu.AppendSeparator()
+        self.menu_view_html = report_menu.Append(
+            wx.ID_ANY, _("View &HTML report in browser")
+        )
+        self.menu_save_html = report_menu.Append(
+            wx.ID_SAVEAS, _("Save &HTML report…\tCtrl+S")
+        )
+        report_menu.AppendSeparator()
+        self.menu_copy = report_menu.Append(
             wx.ID_COPY, _("&Copy summary\tCtrl+Shift+C")
         )
-        edit_menu.AppendSeparator()
-        self.menu_clear = edit_menu.Append(
+        self.menu_clear = report_menu.Append(
             wx.ID_CLEAR, _("C&lear results\tCtrl+Shift+N")
         )
-        menubar.Append(edit_menu, _("&Edit"))
+        report_menu.AppendSeparator()
+        self.menu_toggle_log = report_menu.Append(
+            wx.ID_ANY, _("Show/hide full &log\tCtrl+L")
+        )
+        self._report_menu_index = menubar.GetMenuCount()
+        menubar.Append(report_menu, _("&Report"))
 
         tools_menu = wx.Menu()
         self.menu_check = tools_menu.Append(
             wx.ID_ANY, _("&Re-check publication\tF5")
-        )
-        self.menu_toggle_log = tools_menu.Append(
-            wx.ID_ANY, _("Show/hide full &log\tCtrl+L")
         )
         tools_menu.AppendSeparator()
         self.menu_update = tools_menu.Append(
@@ -665,14 +684,40 @@ class MainFrame(wx.Frame):
         menubar.Append(help_menu, _("&Help"))
         self.SetMenuBar(menubar)
         self._bind_menus()
+        self._update_report_actions_enabled()
+
+    def _update_report_actions_enabled(self) -> None:
+        """Enable Report menu / button only when a check result exists.
+
+        Uses both per-item Enable and EnableTop so the top-level Report menu
+        greys out correctly on Windows and macOS.
+        """
+        enabled = self._last_result is not None
+        for item in (
+            self.menu_view_text,
+            self.menu_save_text,
+            self.menu_view_html,
+            self.menu_save_html,
+            self.menu_copy,
+            self.menu_clear,
+            self.menu_toggle_log,
+        ):
+            item.Enable(enabled)
+        self.report_btn.Enable(enabled)
+        menubar = self.GetMenuBar()
+        if menubar is None:
+            return
+        idx = getattr(self, "_report_menu_index", -1)
+        if 0 <= idx < menubar.GetMenuCount():
+            menubar.EnableTop(idx, enabled)
 
     def _bind(self) -> None:
         self.select_file_btn.Bind(wx.EVT_BUTTON, self.on_browse_file)
         self.select_folder_btn.Bind(wx.EVT_BUTTON, self.on_browse_folder)
         self.copy_btn.Bind(wx.EVT_BUTTON, self.on_copy_summary)
-        self.save_btn.Bind(wx.EVT_BUTTON, self.on_save_report)
+        self.report_btn.Bind(wx.EVT_BUTTON, self.on_report_button)
         self.filter_choice.Bind(wx.EVT_CHOICE, self.on_filter_changed)
-        self.log_toggle.Bind(wx.EVT_TOGGLEBUTTON, self.on_toggle_log)
+        self.log_toggle.Bind(wx.EVT_BUTTON, self.on_toggle_log)
         self.path_ctrl.Bind(wx.EVT_TEXT_ENTER, self.on_check)
         self._bind_menus()
 
@@ -685,7 +730,10 @@ class MainFrame(wx.Frame):
     def _bind_menus(self) -> None:
         self.Bind(wx.EVT_MENU, self.on_browse_file, self.menu_open_file)
         self.Bind(wx.EVT_MENU, self.on_browse_folder, self.menu_open_folder)
-        self.Bind(wx.EVT_MENU, self.on_save_report, self.menu_save)
+        self.Bind(wx.EVT_MENU, self.on_view_text_report, self.menu_view_text)
+        self.Bind(wx.EVT_MENU, self.on_save_text_report, self.menu_save_text)
+        self.Bind(wx.EVT_MENU, self.on_view_html_report, self.menu_view_html)
+        self.Bind(wx.EVT_MENU, self.on_save_html_report, self.menu_save_html)
         self.Bind(wx.EVT_MENU, self.on_copy_summary, self.menu_copy)
         self.Bind(wx.EVT_MENU, self.on_clear_results, self.menu_clear)
         self.Bind(wx.EVT_MENU, self.on_check, self.menu_check)
@@ -738,8 +786,10 @@ class MainFrame(wx.Frame):
             self.filter_choice.SetSelection(filter_sel)
         self.copy_btn.SetLabel(_("&Copy summary"))
         self.copy_btn.SetToolTip(_("Copy the result summary (Ctrl+Shift+C)"))
-        self.save_btn.SetLabel(_("&Save report…"))
-        self.save_btn.SetToolTip(_("Save the report to a file (Ctrl+S)"))
+        self.report_btn.SetLabel(_("&Report…"))
+        self.report_btn.SetToolTip(
+            _("View, save, copy, clear, or toggle the full log")
+        )
         self.issues_list.SetName(_("Issues list"))
         self.issues_list.SetColumnTitles(
             (_("Severity"), _("Code"), _("Location"), _("Message"))
@@ -748,7 +798,9 @@ class MainFrame(wx.Frame):
         self.log_toggle.SetLabel(
             _("Hide full &log") if show_log else _("Show full &log")
         )
-        self.log_toggle.SetName(_("Show or hide full log"))
+        self.log_toggle.SetName(
+            _("Hide full log") if show_log else _("Show full log")
+        )
         self.log_toggle.SetToolTip(
             _("Show or hide the full checker log (Ctrl+L)")
         )
@@ -871,6 +923,7 @@ class MainFrame(wx.Frame):
         self.filter_choice.SetSelection(0)
         self.log_ctrl.ChangeValue("")
         self._set_log_visible(False)
+        self._update_report_actions_enabled()
         self._update_status_bar()
         self._focus_select_button()
 
@@ -993,6 +1046,7 @@ class MainFrame(wx.Frame):
         )
         self.log_ctrl.SetValue(result.raw_log or result.error_message or "")
         self._populate_issues()
+        self._update_report_actions_enabled()
         self._update_status_bar()
         self._announce_result_pane()
 
@@ -1000,17 +1054,7 @@ class MainFrame(wx.Frame):
         result = self._last_result
         if result is None:
             return ""
-        lines: list[str] = []
-        meta = result.report_meta_lines()
-        if meta:
-            lines.extend(meta)
-            lines.append("")
-        lines.append(result.headline)
-        if result.issues:
-            lines.append("")
-            for issue in result.issues:
-                lines.append(issue.summary_line())
-        return "\n".join(lines).strip() + "\n"
+        return format_text_report(result, include_full_log=False)
 
     # --- Events ---
 
@@ -1106,18 +1150,19 @@ class MainFrame(wx.Frame):
         # Tabbing into the list often lands on the header first; move to row 0.
         wx.CallAfter(self.issues_list.EnsureRowFocus)
 
-    def on_toggle_log(self, event: wx.CommandEvent) -> None:
-        show = bool(event.IsChecked()) if hasattr(event, "IsChecked") else self.log_toggle.GetValue()
-        self._set_log_visible(show)
+    def on_toggle_log(self, _event: wx.CommandEvent) -> None:
+        self._set_log_visible(not self.log_ctrl.IsShown())
 
     def on_menu_toggle_log(self, _event: wx.CommandEvent) -> None:
         self._set_log_visible(not self.log_ctrl.IsShown())
 
     def _set_log_visible(self, show: bool) -> None:
         self.log_ctrl.Show(show)
-        self.log_toggle.SetValue(show)
         self.log_toggle.SetLabel(
             _("Hide full &log") if show else _("Show full &log")
+        )
+        self.log_toggle.SetName(
+            _("Hide full log") if show else _("Show full log")
         )
         if show:
             self._log_sizer_item.SetProportion(1)
@@ -1156,31 +1201,148 @@ class MainFrame(wx.Frame):
             return
         self._clear_to_launch_state()
 
-    def on_save_report(self, _event: wx.CommandEvent) -> None:
+    def on_report_button(self, _event: wx.CommandEvent) -> None:
+        menu = wx.Menu()
+        view_text = menu.Append(wx.ID_ANY, _("View &text report"))
+        save_text = menu.Append(wx.ID_ANY, _("Save &text report…"))
+        menu.AppendSeparator()
+        view_html = menu.Append(wx.ID_ANY, _("View &HTML report in browser"))
+        save_html = menu.Append(wx.ID_ANY, _("Save &HTML report…"))
+        menu.AppendSeparator()
+        copy_item = menu.Append(wx.ID_ANY, _("&Copy summary"))
+        clear_item = menu.Append(wx.ID_ANY, _("C&lear results"))
+        menu.AppendSeparator()
+        log_item = menu.Append(wx.ID_ANY, _("Show/hide full &log"))
+        menu.Bind(wx.EVT_MENU, self.on_view_text_report, view_text)
+        menu.Bind(wx.EVT_MENU, self.on_save_text_report, save_text)
+        menu.Bind(wx.EVT_MENU, self.on_view_html_report, view_html)
+        menu.Bind(wx.EVT_MENU, self.on_save_html_report, save_html)
+        menu.Bind(wx.EVT_MENU, self.on_copy_summary, copy_item)
+        menu.Bind(wx.EVT_MENU, self.on_clear_results, clear_item)
+        menu.Bind(wx.EVT_MENU, self.on_menu_toggle_log, log_item)
+        self.PopupMenu(menu)
+        menu.Destroy()
+
+    def _require_result(self, empty_title: str) -> CheckResult | None:
         if self._last_result is None:
             wx.MessageBox(
                 _("Run a check first."),
-                _("Nothing to save"),
+                empty_title,
                 wx.OK | wx.ICON_INFORMATION,
                 self,
             )
+            return None
+        return self._last_result
+
+    def _report_default_stem(self, result: CheckResult) -> str:
+        name = (result.tool_name or "").strip().lower()
+        if name == EPUBCHECK_TOOL.display_name.lower() or "epubcheck" in name:
+            return "epubcheck-report"
+        if name == EBRAILLE_TOOL.display_name.lower() or "ebraille" in name:
+            return "ebraille-checker-report"
+        return "check-report"
+
+    def on_view_text_report(self, _event: wx.CommandEvent) -> None:
+        result = self._require_result(_("Nothing to view"))
+        if result is None:
             return
+        body = format_text_report(result, include_full_log=True)
+        title = report_title(result)
+        dlg = wx.Dialog(
+            self,
+            title=title,
+            style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX,
+        )
+        dlg.SetSize((720, 560))
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        text = wx.TextCtrl(
+            dlg,
+            value=body,
+            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP | wx.BORDER_SUNKEN,
+            name=title,
+        )
+        mono = wx.Font(
+            9, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL
+        )
+        text.SetFont(mono)
+        sizer.Add(text, 1, wx.EXPAND | wx.ALL, 8)
+        buttons = dlg.CreateStdDialogButtonSizer(wx.CLOSE)
+        if buttons is not None:
+            sizer.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        dlg.SetSizer(sizer)
+        dlg.CentreOnParent()
+        text.SetFocus()
+        dlg.ShowModal()
+        dlg.Destroy()
+
+    def on_save_text_report(self, _event: wx.CommandEvent) -> None:
+        result = self._require_result(_("Nothing to save"))
+        if result is None:
+            return
+        stem = self._report_default_stem(result)
         with wx.FileDialog(
             self,
-            _("Save report"),
-            defaultFile="ebraille-check-report.txt",
+            _("Save text report"),
+            defaultFile=f"{stem}.txt",
+            wildcard=_("Text files (*.txt)|*.txt|All files (*.*)|*.*"),
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        ) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            path = Path(dlg.GetPath())
+            if not path.suffix:
+                path = path.with_suffix(".txt")
+            save_report(path, result, fmt="text", include_full_log=True)
+            self.SetStatusText(_("Report saved to {path}", path=path))
+            wx.CallLater(4000, self._update_status_bar)
+
+    def on_view_html_report(self, _event: wx.CommandEvent) -> None:
+        result = self._require_result(_("Nothing to view"))
+        if result is None:
+            return
+        try:
+            fd, name = tempfile.mkstemp(
+                prefix="ebraille-report-",
+                suffix=".html",
+                text=True,
+            )
+            os.close(fd)
+            path = Path(name)
+            save_report(path, result, fmt="html", include_full_log=True)
+            webbrowser.open(path.as_uri())
+            self.SetStatusText(_("Opened HTML report in browser."))
+            wx.CallLater(4000, self._update_status_bar)
+        except OSError as exc:
+            wx.MessageBox(
+                _("Could not open HTML report:\n{error}", error=exc),
+                _("Error"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+
+    def on_save_html_report(self, _event: wx.CommandEvent) -> None:
+        result = self._require_result(_("Nothing to save"))
+        if result is None:
+            return
+        stem = self._report_default_stem(result)
+        with wx.FileDialog(
+            self,
+            _("Save HTML report"),
+            defaultFile=f"{stem}.html",
             wildcard=_(
-                "Text files (*.txt)|*.txt|All files (*.*)|*.*"
+                "HTML files (*.html)|*.html;*.htm|All files (*.*)|*.*"
             ),
             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
         ) as dlg:
             if dlg.ShowModal() != wx.ID_OK:
                 return
             path = Path(dlg.GetPath())
-            body = self._summary_text()
-            if self._last_result.raw_log:
-                body += "\n\n" + _("--- Full log ---") + "\n" + self._last_result.raw_log
-            path.write_text(body, encoding="utf-8")
+            suffix = path.suffix.lower()
+            if suffix not in {".html", ".htm"}:
+                path = path.with_suffix(".html")
+            save_report(path, result, fmt="html", include_full_log=True)
+            self.SetStatusText(_("Report saved to {path}", path=path))
+            wx.CallLater(4000, self._update_status_bar)
 
     def on_check_updates(self, _event: wx.CommandEvent) -> None:
         if self._busy:
