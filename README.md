@@ -20,11 +20,11 @@ support on Windows, macOS, and Linux.
 - Open a packaged `.ebrl`, `.epub`, or `.pdf` file, or an exploded publication
   folder (**Select file…** / **Select folder…**, or drag and drop) — checking
   starts automatically with the matching engine
-- On Windows, right-click an `.ebrl` or `.epub` → **Validate with eBraille
-  Checker**, or **Open with** → eBraille Checker (does not change the
+- On Windows, right-click an `.ebrl`, `.epub`, or `.pdf` → **Validate with
+  eBraille Checker**, or **Open with** → eBraille Checker (does not change the
   double-click default)
-- On macOS packaged builds, Finder **Open With** for `.ebrl` / `.epub` (does not
-  take over double-click by default)
+- On macOS packaged builds, Finder **Open With** for `.ebrl` / `.epub` / `.pdf`
+  (does not take over double-click by default)
 - Result-first UI: multi-line verdict with counts; colour cues (green / orange /
   red) reinforce the text; issues listed by severity
 - Filter issues (all / errors / warnings / info)
@@ -99,8 +99,8 @@ python -m app
 
 1. **Select file…** or **Select folder…**, or **drag and drop** a publication
    onto the window — checking starts automatically. On Windows you can also
-   right-click an `.ebrl` or `.epub` → **Validate with eBraille Checker**, or
-   **Open with** → eBraille Checker. On macOS, use Finder **Open With** for a
+   right-click an `.ebrl`, `.epub`, or `.pdf` → **Validate with eBraille Checker**,
+   or **Open with** → eBraille Checker. On macOS, use Finder **Open With** for a
    packaged `.app`.
 2. Read the **Result** summary (focus moves there when a check finishes), then
    review **Issues** (filterable).
@@ -383,10 +383,10 @@ The installer:
   EPUBCheck, veraPDF) — no system Java (`build_installer.ps1` refuses to compile if
   `runtime/`, `checker/`, `epubcheck/`, or `verapdf/` is missing from `dist/`)
 - Supports per-user install (default) or Program Files with elevation
-- Adds `.ebrl` / `.epub` shell integration (optional task, on by default):
+- Adds `.ebrl` / `.epub` / `.pdf` shell integration (optional task, on by default):
   **Open with** → eBraille Checker GUI, and context menu **Validate with
-  eBraille Checker** — does not change the double-click default for either
-  extension (`.epub` readers stay as the default opener)
+  eBraille Checker** — does not change the double-click default for any
+  extension (EPUB/PDF readers stay as the default opener)
 - Offers an optional desktop shortcut and launch-on-finish
 - On uninstall, optionally removes `%LOCALAPPDATA%\eBrailleCheckerGUI\`
   (settings and checker/EPUBCheck updates)
@@ -449,8 +449,8 @@ Useful environment variables:
 | `EBC_SKIP_APP_SIGN=1` | Skip codesign (local smoke builds) |
 | `EBC_SKIP_APPLICATION_BUILD=1` | Re-sign / notarize an existing `dist/eBrailleChecker_App/` |
 
-`scripts/package.py` registers `.ebrl` and `.epub` document types in the `.app`
-`Info.plist` with rank **Alternate**, so the app appears under Finder
+`scripts/package.py` registers `.ebrl`, `.epub`, and `.pdf` document types in the
+`.app` `Info.plist` with rank **Alternate**, so the app appears under Finder
 **Open With** without becoming the default double-click handler. Opening a
 file that way launches the GUI and starts a check automatically.
 

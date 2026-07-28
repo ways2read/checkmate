@@ -69,7 +69,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "fileassoc"; Description: "Add .ebrl/.epub Open with… and ""Validate with eBraille Checker"" context menu"; GroupDescription: "File associations:"; Flags: checkedonce
+Name: "fileassoc"; Description: "Add .ebrl/.epub/.pdf Open with… and ""Validate with eBraille Checker"" context menu"; GroupDescription: "File associations:"; Flags: checkedonce
 
 [Files]
 ; Entire PyInstaller onedir tree (exe + _internal + runtime + checker + epubcheck + verapdf)
@@ -81,14 +81,14 @@ Source: "eBrailleChecker.ico"; DestDir: "{app}"; Flags: ignoreversion
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
   IconFilename: "{app}\eBrailleChecker.ico"; \
-  Comment: "Check eBraille and EPUB publications"
+  Comment: "Check eBraille, EPUB, and PDF publications"
 Name: "{group}\{cm:UninstallProgram,{#MyAppFullName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
   IconFilename: "{app}\eBrailleChecker.ico"; \
-  Comment: "Check eBraille and EPUB publications"; Tasks: desktopicon
+  Comment: "Check eBraille, EPUB, and PDF publications"; Tasks: desktopicon
 
 [Registry]
-; Do not set Software\Classes\.ebrl / .epub (default) — that would steal double-click.
+; Do not set Software\Classes\.ebrl / .epub / .pdf (default) — that would steal double-click.
 ; Clear .ebrl default only if an older installer of this app claimed it.
 Root: HKA; Subkey: "Software\Classes\.ebrl"; ValueType: string; ValueName: ""; \
   Flags: deletevalue; Tasks: fileassoc
@@ -146,12 +146,41 @@ Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.epub\shell\eBraille
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.epub\shell\eBrailleValidate\command"; \
   ValueType: string; ValueName: ""; \
   ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc
+; --- .pdf: Open with… (do NOT clear Classes\.pdf default — other apps own it) ---
+Root: HKA; Subkey: "Software\Classes\eBrailleChecker.pdf"; \
+  ValueType: string; ValueName: ""; ValueData: "PDF Document"; \
+  Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\eBrailleChecker.pdf"; \
+  ValueType: string; ValueName: "FriendlyTypeName"; ValueData: "PDF Document"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\eBrailleChecker.pdf\DefaultIcon"; \
+  ValueType: string; ValueName: ""; ValueData: "{app}\eBrailleChecker.ico,0"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\eBrailleChecker.pdf\shell\open"; \
+  ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#MyAppFullName}"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\eBrailleChecker.pdf\shell\open\command"; \
+  ValueType: string; ValueName: ""; \
+  ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.pdf\OpenWithProgids"; \
+  ValueType: string; ValueName: "eBrailleChecker.pdf"; ValueData: ""; \
+  Flags: uninsdeletevalue; Tasks: fileassoc
+; --- .pdf: context menu (same app; routes to veraPDF PDF/UA) ---
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\eBrailleValidate"; \
+  ValueType: string; ValueName: ""; ValueData: "Validate with eBraille Checker"; \
+  Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\eBrailleValidate\command"; \
+  ValueType: string; ValueName: ""; \
+  ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc
 ; Also list under Applications\…\SupportedTypes for Open with… discovery
 Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; \
   ValueType: string; ValueName: ".ebrl"; ValueData: ""; \
   Flags: uninsdeletevalue; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; \
   ValueType: string; ValueName: ".epub"; ValueData: ""; \
+  Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; \
+  ValueType: string; ValueName: ".pdf"; ValueData: ""; \
   Flags: uninsdeletevalue; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}"; \
   ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#MyAppFullName}"; \
@@ -190,7 +219,7 @@ begin
     if DirExists(AppDataDir) then
     begin
       if MsgBox(
-           'Also remove saved settings and any downloaded checker/EPUBCheck updates?' + #13#10 + #13#10 +
+           'Also remove saved settings and any downloaded checker/EPUBCheck/veraPDF updates?' + #13#10 + #13#10 +
            AppDataDir,
            mbConfirmation, MB_YESNO) = IDYES then
       begin

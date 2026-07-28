@@ -123,7 +123,7 @@ def _save_info_plist(info_plist: Path, info: dict) -> None:
 
 
 def _patch_macos_document_types(app_bundle: Path) -> None:
-    """Declare .ebrl/.epub for Finder Open With (Alternate — not the default)."""
+    """Declare .ebrl/.epub/.pdf for Finder Open With (Alternate — not the default)."""
     loaded = _load_info_plist(app_bundle)
     if loaded is None:
         return
@@ -144,6 +144,13 @@ def _patch_macos_document_types(app_bundle: Path) -> None:
             "LSItemContentTypes": ["org.idpf.epub-container"],
             "CFBundleTypeExtensions": ["epub"],
         },
+        {
+            "CFBundleTypeName": "PDF Document",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["com.adobe.pdf"],
+            "CFBundleTypeExtensions": ["pdf"],
+        },
     ]
     info["UTExportedTypeDeclarations"] = [
         {
@@ -159,7 +166,7 @@ def _patch_macos_document_types(app_bundle: Path) -> None:
     info["NSAppleScriptEnabled"] = True
 
     _save_info_plist(info_plist, info)
-    print(f"Registered .ebrl/.epub document types in {info_plist}")
+    print(f"Registered .ebrl/.epub/.pdf document types in {info_plist}")
 
 
 def _patch_macos_bundle_version(app_bundle: Path, version: str) -> None:
@@ -265,7 +272,7 @@ def build(
         and not onefile
     ):
         print()
-        print("Registering .ebrl/.epub document types in Info.plist…")
+        print("Registering .ebrl/.epub/.pdf document types in Info.plist…")
         _patch_macos_document_types(output)
         _patch_macos_bundle_version(output, _project_version())
 
