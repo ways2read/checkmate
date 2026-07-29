@@ -21,9 +21,9 @@ support on Windows, macOS, and Linux.
   folder (**Select file…** / **Select folder…**, or drag and drop) — checking
   starts automatically with the matching engine
 - For `.epub` files, EPUBCheck always runs; if the [Ace by DAISY](https://daisy.github.io/ace/)
-  CLI (`ace`) is on your `PATH`, Ace runs next and results are merged into one
-  list (tagged by source). If Ace is not installed, EPUBCheck-only behavior is
-  unchanged
+  CLI is installed (`ace-puppeteer` preferred, or `ace`), Ace runs next and
+  results are merged into one list (tagged by source). If Ace is not found,
+  EPUBCheck-only behavior is unchanged
 - On Windows, right-click an `.ebrl`, `.epub`, or `.pdf` → **Validate with
   eBraille Checker**, or **Open with** → eBraille Checker (does not change the
   double-click default)
@@ -332,8 +332,13 @@ by default. **PyMuPDF** is included in the Python app bundle (via PyInstaller
 PDF first-page previews — no separate macOS packaging step is required beyond
 `scripts/package.py` / `scripts/build_macos.sh`.
 
-Ace by DAISY is **not** bundled. Packaged and source builds use the `ace` CLI
-from the system `PATH` when present (same on Windows and macOS).
+Ace by DAISY is **not** bundled. Packaged and source builds look for
+`ace-puppeteer` (preferred) or `ace` on `PATH`, and also check common npm /
+Homebrew install locations (`~/.npm-global/bin`, `/usr/local/bin`,
+`/opt/homebrew/bin`, …) so a Finder-launched macOS `.app` can still find a
+user install. The default Electron `ace` CLI can fail when
+`ELECTRON_RUN_AS_NODE` is set (e.g. under some Electron hosts); the app clears
+that variable and prefers the Puppeteer runner.
 
 ```bash
 uv sync --extra dev

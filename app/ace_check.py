@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -18,15 +20,90 @@ ACE_DISPLAY_NAME = "Ace"
 _ACE_PATH_CACHE: Path | None | bool = False  # False = unset
 _ACE_VERSION_CACHE: str | None | bool = False
 
+# Prefer the Puppeteer CLI: GUI/.app launches often inherit ELECTRON_RUN_AS_NODE
+# (e.g. from Electron hosts), which breaks Ace's default Electron runner.
+_ACE_CLI_NAMES = (
+    "ace-puppeteer",
+    "ace-puppeteer.cmd",
+    "ace",
+    "ace.cmd",
+    "ace.exe",
+)
+
+
+def _extra_tool_dirs() -> list[Path]:
+    """Directories where npm / Homebrew often install CLIs (missing from GUI PATH)."""
+    home = Path.home()
+    dirs: list[Path] = [
+        home / ".npm-global" / "bin",
+        home / ".local" / "bin",
+        home / "n" / "bin",
+        Path("/opt/homebrew/bin"),
+        Path("/usr/local/bin"),
+    ]
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            dirs.append(Path(appdata) / "npm")
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            dirs.append(Path(local) / "Programs" / "nodejs")
+    # Keep only existing dirs, preserve order, drop duplicates.
+    seen: set[str] = set()
+    out: list[Path] = []
+    for d in dirs:
+        try:
+            key = str(d.resolve())
+        except OSError:
+            key = str(d)
+        if key in seen or not d.is_dir():
+            continue
+        seen.add(key)
+        out.append(d)
+    return out
+
+
+def _path_with_tool_dirs() -> str:
+    """PATH for locating / running Ace, including common install locations."""
+    parts: list[str] = []
+    seen: set[str] = set()
+    for raw in [*(str(d) for d in _extra_tool_dirs()), os.environ.get("PATH", "")]:
+        for part in raw.split(os.pathsep):
+            part = part.strip()
+            if not part or part in seen:
+                continue
+            seen.add(part)
+            parts.append(part)
+    return os.pathsep.join(parts)
+
+
+def _ace_run_env() -> dict[str, str]:
+    """Environment for Ace subprocesses.
+
+    - Extends PATH so ``#!/usr/bin/env node`` and npm-global bins work from a
+      Finder-launched .app (GUI apps get a minimal PATH).
+    - Clears ``ELECTRON_RUN_AS_NODE`` so the Electron Ace runner is not forced
+      into Node mode (common when the GUI itself was started from Electron).
+    """
+    env = os.environ.copy()
+    env.pop("ELECTRON_RUN_AS_NODE", None)
+    env["PATH"] = _path_with_tool_dirs()
+    return env
+
 
 def find_ace() -> Path | None:
-    """Return the Ace CLI executable if it is on PATH."""
+    """Return the Ace CLI executable if available.
+
+    Prefers ``ace-puppeteer`` when present. Searches PATH plus common npm /
+    Homebrew install directories so packaged macOS apps can find a user install.
+    """
     global _ACE_PATH_CACHE
     if _ACE_PATH_CACHE is not False:
         return _ACE_PATH_CACHE if isinstance(_ACE_PATH_CACHE, Path) else None
 
-    for name in ("ace", "ace.cmd", "ace.exe"):
-        found = shutil.which(name)
+    search_path = _path_with_tool_dirs()
+    for name in _ACE_CLI_NAMES:
+        found = shutil.which(name, path=search_path)
         if found:
             path = Path(found)
             _ACE_PATH_CACHE = path
@@ -52,6 +129,7 @@ def probe_ace() -> str | None:
             text=True,
             check=False,
             timeout=30,
+            env=_ace_run_env(),
             **hidden_run_kwargs(),
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -263,6 +341,7 @@ def run_ace_check(
                 text=True,
                 check=False,
                 timeout=600,
+                env=_ace_run_env(),
                 **hidden_run_kwargs(),
             )
         except subprocess.TimeoutExpired:
