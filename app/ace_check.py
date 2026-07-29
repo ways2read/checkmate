@@ -48,6 +48,16 @@ def _extra_tool_dirs() -> list[Path]:
         local = os.environ.get("LOCALAPPDATA")
         if local:
             dirs.append(Path(local) / "Programs" / "nodejs")
+        # Official Windows installer defaults to Program Files (needed so
+        # %APPDATA%\npm\ace*.cmd can resolve ``node`` when GUI PATH is thin).
+        for root in (
+            os.environ.get("ProgramFiles"),
+            os.environ.get("ProgramFiles(x86)"),
+            r"C:\Program Files",
+            r"C:\Program Files (x86)",
+        ):
+            if root:
+                dirs.append(Path(root) / "nodejs")
     # Keep only existing dirs, preserve order, drop duplicates.
     seen: set[str] = set()
     out: list[Path] = []
@@ -77,6 +87,13 @@ def _path_with_tool_dirs() -> str:
     return os.pathsep.join(parts)
 
 
+# Ace's puppeteer runner uses ACE_TIMEOUT_INITIAL as puppeteer.launch() timeout
+# (default 5000). Cold Chromium starts on Windows often exceed 5s (AV scan, first
+# extract), which surfaces as "Timed out … waiting for the WS endpoint URL".
+_ACE_TIMEOUT_INITIAL_MS = "60000"
+_ACE_TIMEOUT_EXTENSION_MS = "480000"
+
+
 def _ace_run_env() -> dict[str, str]:
     """Environment for Ace subprocesses.
 
@@ -84,10 +101,13 @@ def _ace_run_env() -> dict[str, str]:
       Finder-launched .app (GUI apps get a minimal PATH).
     - Clears ``ELECTRON_RUN_AS_NODE`` so the Electron Ace runner is not forced
       into Node mode (common when the GUI itself was started from Electron).
+    - Raises Ace Chromium launch / page timeouts when unset (see module constants).
     """
     env = os.environ.copy()
     env.pop("ELECTRON_RUN_AS_NODE", None)
     env["PATH"] = _path_with_tool_dirs()
+    env.setdefault("ACE_TIMEOUT_INITIAL", _ACE_TIMEOUT_INITIAL_MS)
+    env.setdefault("ACE_TIMEOUT_EXTENSION", _ACE_TIMEOUT_EXTENSION_MS)
     return env
 
 
@@ -142,11 +162,11 @@ def probe_ace() -> str | None:
         line = line.strip()
         if line:
             version = line
-    if not version or proc.returncode not in (0, None):
-        # Some wrappers still print the version on stdout with 0.
-        if not version:
-            _ACE_VERSION_CACHE = None
-            return None
+    # Require success: failed runs often print batch/node errors on stderr,
+    # and the last line must not be treated as a version string.
+    if proc.returncode not in (0, None) or not version:
+        _ACE_VERSION_CACHE = None
+        return None
     _ACE_VERSION_CACHE = version
     return version
 
@@ -286,6 +306,29 @@ def _strip_ansi(text: str) -> str:
 
 def _parse_error_message(stdout: str, stderr: str) -> str:
     combined = _strip_ansi("\n".join(p for p in (stdout, stderr) if p))
+    lower_all = combined.lower()
+    # npm Ace wrappers call ``node``; thin GUI PATHs often miss Program Files.
+    if (
+        "'node' is not recognized" in lower_all
+        or '"node" is not recognized' in lower_all
+        or "node: command not found" in lower_all
+        or "node: not found" in lower_all
+    ):
+        return (
+            "Ace could not produce a report: Node.js was not found on PATH "
+            "(required by the Ace CLI)."
+        )
+    if "waiting for the ws endpoint url" in lower_all:
+        return (
+            "Ace processing error: Chromium took too long to start "
+            "(WS endpoint timeout). Try again; if it persists, reinstall Ace's "
+            "browser with: npx puppeteer browsers install chrome"
+        )
+    if "could not find chrome" in lower_all:
+        return (
+            "Ace processing error: Chromium for Puppeteer is not installed. "
+            "Run: npx puppeteer browsers install chrome"
+        )
     # Prefer Ace's "Ace processing error: …" / "Failed to parse EPUB" lines.
     for line in reversed(combined.splitlines()):
         stripped = line.strip()
