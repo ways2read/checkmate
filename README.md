@@ -265,6 +265,18 @@ Check your network and download-site availability, then use
 The checker may report that a packaged eBraille file must use the lowercase
 extension `.ebrl`. Rename the file if needed.
 
+### macOS DMG says “newer version already installed”
+
+The drag-to-Applications DMG is not a wizard installer — Finder refuses to
+replace the app when the copy in `/Applications` has a higher `CFBundleVersion`
+build number than the one in the disk image (common when reinstalling the same
+marketing version from an older DMG).
+
+Remove the existing app first (`Applications` → move `eBrailleChecker.app` to
+Trash → empty Trash), then drag the new app from the DMG onto Applications
+again. Each release build from `scripts/build_macos.sh` increments
+`build_counter.txt` so newer DMGs upgrade cleanly.
+
 ## Project layout
 
 ```text
@@ -464,6 +476,13 @@ Useful environment variables:
 | `EBC_SKIP_NOTARY=1` | Build and sign only (no notarization) |
 | `EBC_SKIP_APP_SIGN=1` | Skip codesign (local smoke builds) |
 | `EBC_SKIP_APPLICATION_BUILD=1` | Re-sign / notarize an existing `dist/eBrailleChecker_App/` |
+
+**Upgrading / reinstalling:** macOS compares `CFBundleVersion` (an integer build
+number from `build_counter.txt`, bumped on each `build_macos.sh` run) when you
+drag the app onto Applications. If Finder says a newer version is already
+installed, remove `eBrailleChecker.app` from Applications first (Trash → empty
+Trash), then drag again. The DMG also includes `Install eBraille Checker.txt`
+with these steps.
 
 `scripts/package.py` registers `.ebrl`, `.epub`, and `.pdf` document types in the
 `.app` `Info.plist` with rank **Alternate**, so the app appears under Finder

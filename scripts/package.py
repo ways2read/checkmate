@@ -27,6 +27,7 @@ APP_NAME = "eBrailleChecker"
 ENTRY = ROOT / "run.py"
 APP_ICON_ICO = ROOT / "installer" / "eBrailleChecker.ico"
 APP_ICON_ICNS = ROOT / "installer" / "eBrailleChecker.icns"
+BUILD_COUNTER_FILE = ROOT / "build_counter.txt"
 
 
 def _app_icon() -> Path | None:
@@ -169,15 +170,30 @@ def _patch_macos_document_types(app_bundle: Path) -> None:
     print(f"Registered .ebrl/.epub/.pdf document types in {info_plist}")
 
 
-def _patch_macos_bundle_version(app_bundle: Path, version: str) -> None:
+def _read_build_counter() -> int:
+    if not BUILD_COUNTER_FILE.is_file():
+        return 0
+    text = BUILD_COUNTER_FILE.read_text(encoding="utf-8").strip()
+    return int(text) if text.isdigit() else 0
+
+
+def _patch_macos_bundle_version(
+    app_bundle: Path, short_version: str, build_number: int | None
+) -> None:
     loaded = _load_info_plist(app_bundle)
     if loaded is None:
         return
     info_plist, info = loaded
-    info["CFBundleShortVersionString"] = version
-    info["CFBundleVersion"] = version
+    info["CFBundleShortVersionString"] = short_version
+    if build_number is not None:
+        info["CFBundleVersion"] = str(build_number)
     _save_info_plist(info_plist, info)
-    print(f"Set bundle version {version} in {info_plist}")
+    if build_number is not None:
+        print(
+            f"Set bundle version {short_version} (build {build_number}) in {info_plist}"
+        )
+    else:
+        print(f"Set bundle short version {short_version} in {info_plist}")
 
 
 def build(
@@ -187,6 +203,7 @@ def build(
     bundle_checker: bool,
     bundle_epubcheck: bool,
     bundle_verapdf: bool,
+    build_number: int | None = None,
 ) -> Path:
     _ensure_pyinstaller()
 
@@ -278,7 +295,11 @@ def build(
         print()
         print("Registering .ebrl/.epub/.pdf document types in Info.plist…")
         _patch_macos_document_types(output)
-        _patch_macos_bundle_version(output, _project_version())
+        short_version = _project_version()
+        bundle_build = build_number
+        if bundle_build is None and BUILD_COUNTER_FILE.is_file():
+            bundle_build = _read_build_counter() or None
+        _patch_macos_bundle_version(output, short_version, bundle_build)
 
     if bundle_java:
         if onefile:
@@ -402,6 +423,15 @@ def main() -> None:
         action="store_true",
         help="Skip bundling veraPDF (downloaded on first PDF check).",
     )
+    parser.add_argument(
+        "--build-number",
+        type=int,
+        metavar="N",
+        help=(
+            "macOS CFBundleVersion build number (monotonic integer). "
+            "build_macos.sh sets this from build_counter.txt."
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -412,6 +442,7 @@ def main() -> None:
             bundle_checker=not args.no_bundle_checker,
             bundle_epubcheck=not args.no_bundle_epubcheck,
             bundle_verapdf=not args.no_bundle_verapdf,
+            build_number=args.build_number,
         )
     except subprocess.CalledProcessError as exc:
         print(f"\nPyInstaller failed with exit code {exc.returncode}.", file=sys.stderr)

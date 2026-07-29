@@ -94,6 +94,11 @@ fi
 /bin/cp -R "$APP_BUNDLE" "$MOUNT_PT/"
 /bin/ln -sf /Applications "$MOUNT_PT/Applications"
 
+README_SRC="${EBC_DMG_README:-$REPO_ROOT/packaging/macos/dmg_README.txt}"
+if [[ -f "$README_SRC" ]]; then
+  /bin/cp "$README_SRC" "$MOUNT_PT/Install eBraille Checker.txt"
+fi
+
 if [[ -f "$REPO_ROOT/installer/eBrailleChecker.icns" ]]; then
   /bin/cp "$REPO_ROOT/installer/eBrailleChecker.icns" "$MOUNT_PT/.VolumeIcon.icns"
   /usr/bin/SetFile -a C "$MOUNT_PT" 2>/dev/null || true
