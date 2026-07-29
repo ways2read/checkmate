@@ -6,6 +6,7 @@ import html
 from pathlib import Path
 
 from . import __version__
+from .cover_image import CoverImage, extract_cover_image
 from .i18n import _, get_language
 from .models import CheckResult, Severity, Verdict
 from .updater import EBRAILLE_TOOL, EPUBCHECK_TOOL, VERAPDF_TOOL
@@ -15,12 +16,16 @@ def report_title(result: CheckResult) -> str:
     """Human title for text/HTML reports based on which checker ran."""
     name = (result.tool_name or "").strip()
     key = name.lower()
+    if "epubcheck" in key and "ace" in key:
+        return _("EPUBCheck + Ace report")
     if key == EPUBCHECK_TOOL.display_name.lower() or "epubcheck" in key:
         return _("EPUBCheck report")
     if key == EBRAILLE_TOOL.display_name.lower() or "ebraille" in key:
         return _("eBraille Checker report")
     if key == VERAPDF_TOOL.display_name.lower() or "verapdf" in key:
         return _("veraPDF report")
+    if key == "ace" or key.startswith("ace "):
+        return _("Ace report")
     return _("Check report")
 
 
@@ -63,10 +68,17 @@ def _severity_class(severity: Severity) -> str:
     }.get(severity, "unknown")
 
 
-def format_html_report(result: CheckResult, *, include_full_log: bool = True) -> str:
+def format_html_report(
+    result: CheckResult,
+    *,
+    include_full_log: bool = True,
+    cover: CoverImage | None = None,
+) -> str:
     """Build a self-contained HTML report with a results table."""
     esc = html.escape
     title = report_title(result)
+    if cover is None and result.target_path:
+        cover = extract_cover_image(result.target_path)
     meta_rows = []
     if result.target_path:
         meta_rows.append(
@@ -97,15 +109,27 @@ def format_html_report(result: CheckResult, *, include_full_log: bool = True) ->
         for label, value in meta_rows
     )
 
+    if cover is not None:
+        caption = _("First page") if cover.alt == "First page" else _("Cover")
+        cover_html = (
+            f'<figure class="cover">'
+            f'<img src="{cover.data_uri()}" alt="{esc(caption)}" />'
+            f"<figcaption>{esc(caption)}</figcaption>"
+            f"</figure>"
+        )
+    else:
+        cover_html = ""
+
     issue_rows = []
     for issue in result.issues:
         sev = _severity_class(issue.severity)
         issue_rows.append(
             "<tr>"
-            f'<td><span class="sev sev-{sev}">{esc(issue.severity.label)}</span></td>'
-            f"<td><code>{esc(issue.code)}</code></td>"
-            f"<td>{esc(issue.location)}</td>"
-            f"<td>{esc(issue.message)}</td>"
+            f'<td class="col-sev"><span class="sev sev-{sev}">{esc(issue.severity.label)}</span></td>'
+            f'<td class="col-source">{esc(issue.source or "—")}</td>'
+            f'<td class="col-code"><code>{esc(issue.code)}</code></td>'
+            f'<td class="col-loc">{esc(issue.location)}</td>'
+            f'<td class="col-msg">{esc(issue.message)}</td>'
             "</tr>"
         )
     if issue_rows:
@@ -114,10 +138,18 @@ def format_html_report(result: CheckResult, *, include_full_log: bool = True) ->
     <section aria-labelledby="issues-heading">
       <h2 id="issues-heading">{esc(_("Issues"))}</h2>
       <div class="table-wrap">
-        <table>
+        <table class="issues">
+          <colgroup>
+            <col class="col-sev" />
+            <col class="col-source" />
+            <col class="col-code" />
+            <col class="col-loc" />
+            <col class="col-msg" />
+          </colgroup>
           <thead>
             <tr>
               <th scope="col">{esc(_("Severity"))}</th>
+              <th scope="col">{esc(_("Source"))}</th>
               <th scope="col">{esc(_("Code"))}</th>
               <th scope="col">{esc(_("Location"))}</th>
               <th scope="col">{esc(_("Message"))}</th>
@@ -181,7 +213,7 @@ def format_html_report(result: CheckResult, *, include_full_log: bool = True) ->
       line-height: 1.45;
     }}
     main {{
-      max-width: 1100px;
+      max-width: 1280px;
       margin: 0 auto;
       padding: 1.5rem;
     }}
@@ -194,6 +226,46 @@ def format_html_report(result: CheckResult, *, include_full_log: bool = True) ->
       font-size: 1.15rem;
       margin: 1.75rem 0 0.75rem;
       font-weight: 650;
+    }}
+    .summary {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.25rem 1.5rem;
+      align-items: flex-start;
+      margin-top: 1rem;
+      margin-bottom: 0.25rem;
+    }}
+    .summary-main {{
+      flex: 1 1 18rem;
+      min-width: 0;
+    }}
+    .summary-main .meta {{
+      margin-top: 0;
+    }}
+    .cover {{
+      flex: 0 0 auto;
+      margin: 0;
+      max-width: 11rem;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 0.4rem;
+      padding: 0.4rem;
+      box-shadow: 0 1px 2px rgb(28 25 23 / 6%);
+    }}
+    .cover img {{
+      display: block;
+      width: 100%;
+      height: auto;
+      max-height: 16rem;
+      object-fit: contain;
+      border-radius: 0.2rem;
+      background: #f5f5f4;
+    }}
+    .cover figcaption {{
+      margin-top: 0.35rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.8rem;
     }}
     .verdict {{
       padding: 0.9rem 1rem;
@@ -239,12 +311,20 @@ def format_html_report(result: CheckResult, *, include_full_log: bool = True) ->
       border-collapse: collapse;
       font-size: 0.95rem;
     }}
+    table.issues {{
+      table-layout: fixed;
+      min-width: 40rem;
+    }}
+    table.issues col.col-sev {{ width: 6.5rem; }}
+    table.issues col.col-source {{ width: 6.5rem; }}
+    table.issues col.col-code {{ width: 9rem; }}
+    table.issues col.col-loc {{ width: 22%; }}
+    table.issues col.col-msg {{ width: auto; }}
     thead th {{
       text-align: left;
       padding: 0.65rem 0.75rem;
       background: #f5f5f4;
       border-bottom: 1px solid var(--line);
-      white-space: nowrap;
     }}
     tbody td {{
       padding: 0.55rem 0.75rem;
@@ -253,9 +333,19 @@ def format_html_report(result: CheckResult, *, include_full_log: bool = True) ->
     }}
     tbody tr:last-child td {{ border-bottom: 0; }}
     tbody tr:nth-child(even) {{ background: #fafaf9; }}
+    table.issues td.col-loc,
+    table.issues td.col-msg {{
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }}
+    table.issues td.col-msg {{
+      min-width: 12rem;
+    }}
     code {{
       font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
       font-size: 0.9em;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }}
     .sev {{
       display: inline-block;
@@ -284,17 +374,33 @@ def format_html_report(result: CheckResult, *, include_full_log: bool = True) ->
       color: var(--muted);
       font-size: 0.85rem;
     }}
+    @media (max-width: 720px) {{
+      main {{ padding: 1rem; }}
+      .cover {{
+        max-width: 8.5rem;
+        margin-inline: auto;
+      }}
+      table.issues col.col-sev {{ width: 5.5rem; }}
+      table.issues col.col-source {{ width: 5rem; }}
+      table.issues col.col-code {{ width: 7rem; }}
+      table.issues col.col-loc {{ width: 28%; }}
+    }}
   </style>
 </head>
 <body>
   <main>
     <h1>{esc(title)}</h1>
     <p class="verdict {vclass}" role="status">{headline_lines}</p>
-    <table class="meta">
-      <tbody>
+    <div class="summary">
+      <div class="summary-main">
+        <table class="meta">
+          <tbody>
 {meta_html}
-      </tbody>
-    </table>
+          </tbody>
+        </table>
+      </div>
+{cover_html}
+    </div>
 {issues_section}
 {log_section}
     <footer>{esc(_("Generated by eBraille Checker GUI"))}</footer>

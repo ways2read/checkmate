@@ -1,6 +1,6 @@
 [project]
 name = "ebraille-checker-gui"
-version = "0.3.0"
+version = "0.4.0"
 description = "Accessible cross-platform GUI for the DAISY eBraille Checker and W3C EPUBCheck"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -11,6 +11,7 @@ dependencies = [
     "wxPython>=4.2.0",
     "requests>=2.31.0",
     "packaging>=23.0",
+    "pymupdf>=1.24.0",
 ]
 
 [project.optional-dependencies]

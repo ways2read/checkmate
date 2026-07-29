@@ -237,6 +237,10 @@ def build(
         "packaging",
         "--hidden-import",
         "packaging.version",
+        "--hidden-import",
+        "fitz",
+        "--collect-all",
+        "pymupdf",
         "--collect-submodules",
         "app",
     ]

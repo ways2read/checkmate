@@ -16,6 +16,7 @@ What this installer includes:
   • Bundled eBraille Checker
   • Bundled EPUBCheck
   • Bundled veraPDF
+  • PyMuPDF (for PDF first-page previews in HTML reports)
 
 No separate Java installation is required.
 

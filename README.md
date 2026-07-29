@@ -20,6 +20,10 @@ support on Windows, macOS, and Linux.
 - Open a packaged `.ebrl`, `.epub`, or `.pdf` file, or an exploded publication
   folder (**Select file…** / **Select folder…**, or drag and drop) — checking
   starts automatically with the matching engine
+- For `.epub` files, EPUBCheck always runs; if the [Ace by DAISY](https://daisy.github.io/ace/)
+  CLI (`ace`) is on your `PATH`, Ace runs next and results are merged into one
+  list (tagged by source). If Ace is not installed, EPUBCheck-only behavior is
+  unchanged
 - On Windows, right-click an `.ebrl`, `.epub`, or `.pdf` → **Validate with
   eBraille Checker**, or **Open with** → eBraille Checker (does not change the
   double-click default)
@@ -27,10 +31,13 @@ support on Windows, macOS, and Linux.
   (does not take over double-click by default)
 - Result-first UI: multi-line verdict with counts; colour cues (green / orange /
   red) reinforce the text; issues listed by severity
-- Filter issues (all / errors / warnings / info)
+- Filter issues (all / errors / warnings / info); optional **Show one example
+  of each warning/error** to collapse repeated codes with counts
 - Optional full checker log for advanced diagnosis
-- Copy summary; view or save text / HTML reports (**Report** menu); **Clear
-  results** returns to the launch state
+- Copy summary; view or save text / HTML reports (**Report** menu) — HTML
+  reports embed an EPUB/eBraille cover image when present, or the first page
+  of a PDF; **Clear results** returns to the launch state
+- Status bar shows installed checker versions, and Ace / Pipeline when detected
 - UI languages: English, Français, Español, Deutsch, Português (remembered;
   first run follows the OS language when supported)
 - Downloads eBraille Checker and EPUBCheck on first run when not bundled;
@@ -265,10 +272,12 @@ ebraille-checker-gui/
   app/
     main.py            # wxPython UI
     checker.py         # Run jar, parse JSON results
+    cover_image.py     # EPUB cover / PDF first-page for HTML reports
     publication.py     # Classify .ebrl / .epub / .pdf / exploded folders
     updater.py         # Tool download / update (GitHub + veraPDF installer)
     java_util.py       # Locate Java (bundled or PATH)
     models.py          # Verdict and issue models
+    report_export.py   # Text / HTML report export
     i18n.py            # UI translations
     settings.py        # Persisted preferences
     paths.py           # App data and bundle locations
@@ -306,7 +315,13 @@ ebraille-checker-gui/
 
 Build a standalone app on each target OS (Windows or macOS). The script bundles
 **Eclipse Temurin JRE 17**, **eBraille Checker**, **EPUBCheck**, and **veraPDF**
-by default.
+by default. **PyMuPDF** is included in the Python app bundle (via PyInstaller
+`--collect-all pymupdf`) on **both Windows and macOS** so HTML reports can show
+PDF first-page previews — no separate macOS packaging step is required beyond
+`scripts/package.py` / `scripts/build_macos.sh`.
+
+Ace by DAISY is **not** bundled. Packaged and source builds use the `ace` CLI
+from the system `PATH` when present (same on Windows and macOS).
 
 ```bash
 uv sync --extra dev
@@ -410,7 +425,8 @@ hardened-runtime library loading for PyInstaller **and** the JVM entitlements
 (`allow-jit`, `allow-unsigned-executable-memory`) required for the bundled
 Temurin JRE. Signing without them makes `runtime/bin/java` crash (`SIGTRAP`),
 and the GUI reports Java as missing. `scripts/build_macos_release.sh` applies
-this plist automatically.
+this plist automatically. PyMuPDF native libraries collected into the app
+bundle are signed with the rest of `Contents/` by the same release script.
 
 One-shot release (package → sign → DMG → notarize → staple):
 
@@ -468,6 +484,10 @@ local testing. Sample publications are **not** included in the repository. See
 - EPUB conformance checking is performed by
   [EPUBCheck](https://github.com/w3c/epubcheck) (W3C / DAISY).
 - PDF/UA checking is performed by [veraPDF](https://verapdf.org/).
+- When the [Ace by DAISY](https://daisy.github.io/ace/) CLI is installed, EPUB
+  accessibility checks are merged with EPUBCheck results.
+- PDF first-page previews in HTML reports use
+  [PyMuPDF](https://pymupdf.readthedocs.io/) (`fitz`).
 - Learn about the [eBraille standard](https://daisy.org/activities/standards/ebraille/)
   and the [eBraille specification](https://daisy.org/s/ebraille/).
 - This GUI is a separate front-end project and is not an official DAISY release.

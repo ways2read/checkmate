@@ -1025,6 +1025,8 @@ def run_check(
     if kind == PublicationKind.PDF:
         # Prefer PDF/UA-2; some files trigger an internal veraPDF NPE on UA-2,
         # so fall back to PDF/UA-1 (still accessibility) when that happens.
+        if progress:
+            progress(f"Checking with {tool.display_name}…")
         try:
             _cmd, result = _run_verapdf_once(
                 java=java, jar=jar, target=target, flavour="ua2"
@@ -1080,6 +1082,9 @@ def run_check(
         return _stamp_result(
             result, target=target, tool=tool, checked_at=checked_at
         )
+
+    if progress:
+        progress(f"Checking with {tool.display_name}…")
 
     with tempfile.TemporaryDirectory(prefix="ebraille-gui-") as tmp:
         json_path = Path(tmp) / "report.json"
@@ -1147,7 +1152,7 @@ def run_check(
                 counts, _counts_from_messages_summary(raw_log)
             )
             verdict = _verdict_from_counts(counts, proc.returncode)
-            return _stamp_result(
+            epub_result = _stamp_result(
                 CheckResult(
                     verdict=verdict,
                     fatals=counts["fatals"],
@@ -1164,6 +1169,9 @@ def run_check(
                 tool=tool,
                 checked_at=checked_at,
             )
+            return _with_optional_ace(
+                epub_result, target=target, kind=kind, progress=progress
+            )
 
         # No JSON file: try stdout/stderr JSON, then the Messages: summary line.
         result = parse_checker_output(stdout, stderr, proc.returncode)
@@ -1173,8 +1181,11 @@ def run_check(
             and "Could not parse" in result.error_message
         ):
             result.command = cmd
-            return _stamp_result(
+            epub_result = _stamp_result(
                 result, target=target, tool=tool, checked_at=checked_at
+            )
+            return _with_optional_ace(
+                epub_result, target=target, kind=kind, progress=progress
             )
 
         summary = _counts_from_messages_summary(raw_log)
@@ -1189,7 +1200,7 @@ def run_check(
                 log = f"{log}\n\n{note}"
             else:
                 log = note
-            return _stamp_result(
+            epub_result = _stamp_result(
                 CheckResult(
                     verdict=verdict,
                     fatals=summary["fatals"],
@@ -1206,10 +1217,16 @@ def run_check(
                 tool=tool,
                 checked_at=checked_at,
             )
+            return _with_optional_ace(
+                epub_result, target=target, kind=kind, progress=progress
+            )
 
         result.command = cmd
-        return _stamp_result(
+        epub_result = _stamp_result(
             result, target=target, tool=tool, checked_at=checked_at
+        )
+        return _with_optional_ace(
+            epub_result, target=target, kind=kind, progress=progress
         )
 
 
@@ -1227,8 +1244,179 @@ def _tool_status_part(tool: ToolSpec, *, bundled: bool) -> str:
     return _("{name} not installed", name=tool.display_name)
 
 
+def _verdict_rank(verdict: Verdict) -> int:
+    return {
+        Verdict.ERROR: 0,
+        Verdict.FAILED: 1,
+        Verdict.PASSED_WITH_WARNINGS: 2,
+        Verdict.PASSED: 3,
+    }.get(verdict, 0)
+
+
+def _counts_from_issues_list(issues: list[Issue]) -> dict[str, int]:
+    counts = {
+        "fatals": 0,
+        "errors": 0,
+        "warnings": 0,
+        "infos": 0,
+        "usages": 0,
+    }
+    for issue in issues:
+        if issue.severity == Severity.FATAL:
+            counts["fatals"] += 1
+        elif issue.severity == Severity.ERROR:
+            counts["errors"] += 1
+        elif issue.severity == Severity.WARNING:
+            counts["warnings"] += 1
+        elif issue.severity == Severity.INFO:
+            counts["infos"] += 1
+        elif issue.severity == Severity.USAGE:
+            counts["usages"] += 1
+    return counts
+
+
+def _merge_epubcheck_and_ace(
+    epub_result: CheckResult,
+    ace_result: CheckResult,
+) -> CheckResult:
+    """Combine EPUBCheck + Ace into one CheckResult (worst verdict wins)."""
+    from .ace_check import ACE_DISPLAY_NAME
+
+    epub_issues = [
+        Issue(
+            severity=issue.severity,
+            code=issue.code,
+            message=issue.message,
+            location=issue.location,
+            source=issue.source or EPUBCHECK_TOOL.display_name,
+        )
+        for issue in epub_result.issues
+    ]
+    ace_issues = [
+        Issue(
+            severity=issue.severity,
+            code=issue.code,
+            message=issue.message,
+            location=issue.location,
+            source=issue.source or ACE_DISPLAY_NAME,
+        )
+        for issue in ace_result.issues
+    ]
+    # Ace ERROR with only error_message — ensure a visible issue.
+    if (
+        ace_result.verdict == Verdict.ERROR
+        and ace_result.error_message
+        and not ace_issues
+    ):
+        ace_issues.append(
+            Issue(
+                severity=Severity.ERROR,
+                code="ace-error",
+                message=ace_result.error_message,
+                source=ACE_DISPLAY_NAME,
+            )
+        )
+
+    issues = epub_issues + ace_issues
+    counts = _counts_from_issues_list(issues)
+
+    # Ace infra/parse ERROR while EPUBCheck completed should not make the
+    # combined headline "Could not complete check" — surface as Failed.
+    ace_verdict = ace_result.verdict
+    if ace_verdict == Verdict.ERROR and epub_result.verdict != Verdict.ERROR:
+        ace_verdict = Verdict.FAILED
+
+    if _verdict_rank(epub_result.verdict) <= _verdict_rank(ace_verdict):
+        verdict = epub_result.verdict
+    else:
+        verdict = ace_verdict
+    if counts["fatals"] or counts["errors"]:
+        if verdict != Verdict.ERROR:
+            verdict = Verdict.FAILED
+    elif counts["warnings"] and verdict == Verdict.PASSED:
+        verdict = Verdict.PASSED_WITH_WARNINGS
+
+    log_parts: list[str] = []
+    if epub_result.raw_log.strip():
+        log_parts.append("--- EPUBCheck ---")
+        log_parts.append(epub_result.raw_log.strip())
+    if ace_result.raw_log.strip():
+        if log_parts:
+            log_parts.append("")
+        log_parts.append("--- Ace ---")
+        log_parts.append(ace_result.raw_log.strip())
+    elif ace_result.error_message:
+        if log_parts:
+            log_parts.append("")
+        log_parts.append("--- Ace ---")
+        log_parts.append(ace_result.error_message)
+
+    extra_meta = list(epub_result.extra_meta)
+    epub_ver = (epub_result.tool_version or "").strip()
+    ace_ver = (ace_result.tool_version or "").strip()
+    if epub_ver:
+        extra_meta.append(("EPUBCheck version", epub_ver))
+    if ace_ver:
+        extra_meta.append(("Ace version", ace_ver))
+
+    # Keep tool_version empty so "Checker: EPUBCheck + Ace v5.3.0 + Ace …"
+    # does not look like two Ace products. Versions live in extra_meta.
+    return CheckResult(
+        verdict=verdict,
+        fatals=counts["fatals"],
+        errors=counts["errors"],
+        warnings=counts["warnings"],
+        infos=counts["infos"],
+        usages=counts["usages"],
+        issues=issues,
+        raw_log="\n".join(log_parts).strip(),
+        exit_code=epub_result.exit_code,
+        command=epub_result.command,
+        error_message="",
+        tool_name="EPUBCheck + Ace",
+        tool_version="",
+        checked_at=epub_result.checked_at,
+        target_path=epub_result.target_path,
+        extra_meta=extra_meta,
+    )
+
+
+def _with_optional_ace(
+    epub_result: CheckResult,
+    *,
+    target: Path,
+    kind: PublicationKind,
+    progress=None,
+) -> CheckResult:
+    """After EPUBCheck, optionally run Ace and merge (EPUB only)."""
+    if kind != PublicationKind.EPUB:
+        return epub_result
+    # Skip Ace when EPUBCheck never really started (infra already surfaced).
+    if (
+        epub_result.verdict == Verdict.ERROR
+        and not epub_result.issues
+        and epub_result.error_message
+        and (
+            "Java" in epub_result.error_message
+            or "install" in epub_result.error_message.lower()
+            or "timed out" in epub_result.error_message.lower()
+            or "Failed to start Java" in epub_result.error_message
+        )
+    ):
+        return epub_result
+
+    from .ace_check import run_ace_check
+
+    ace_result = run_ace_check(target, progress=progress)
+    if ace_result is None:
+        return epub_result
+    return _merge_epubcheck_and_ace(epub_result, ace_result)
+
+
 def checker_status_text() -> str:
     from .i18n import _
+    from .ace_check import probe_ace
+    from .pipeline_client import probe_pipeline_for_status
 
     java = cached_java()
     parts = [
@@ -1236,6 +1424,15 @@ def checker_status_text() -> str:
         _tool_status_part(EPUBCHECK_TOOL, bundled=epubcheck_uses_bundled_copy()),
         _tool_status_part(VERAPDF_TOOL, bundled=verapdf_uses_bundled_copy()),
     ]
+    ace_version = probe_ace()
+    if ace_version:
+        parts.append(_("Ace {version}", version=ace_version))
+    pipeline = probe_pipeline_for_status()
+    if pipeline is not None:
+        if pipeline.version:
+            parts.append(_("Pipeline {version}", version=pipeline.version))
+        else:
+            parts.append(_("Pipeline"))
     if java:
         parts.append(java.label)
     else:

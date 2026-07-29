@@ -20,9 +20,14 @@ DEFAULT_BASE_URLS = (
     "http://localhost:8181/ws",
 )
 PROBE_TIMEOUT = 1.5
+STATUS_PROBE_TIMEOUT = 0.4
+STATUS_PROBE_CACHE_TTL = 30.0
 REQUEST_TIMEOUT = 30
 POLL_INTERVAL = 0.5
 JOB_TIMEOUT = 600
+
+_PIPELINE_STATUS_CACHE: PipelineStatus | None | bool = False
+_PIPELINE_STATUS_CACHED_AT = 0.0
 
 
 @dataclass(frozen=True)
@@ -123,6 +128,7 @@ def probe_pipeline(
     Secret-feature rules: must be alive, localfs enabled, and authentication
     disabled (Pipeline desktop local mode).
     """
+    global _PIPELINE_STATUS_CACHE, _PIPELINE_STATUS_CACHED_AT
     urls = [base_url.rstrip("/")] if base_url else candidate_base_urls()
     for url in urls:
         try:
@@ -136,12 +142,38 @@ def probe_pipeline(
             continue
         if status.authentication or not status.localfs:
             continue
+        _PIPELINE_STATUS_CACHE = status
+        _PIPELINE_STATUS_CACHED_AT = time.monotonic()
         return status
     return None
 
 
 def pipeline_usable() -> bool:
     return probe_pipeline() is not None
+
+
+def clear_pipeline_status_cache() -> None:
+    """Reset the status-bar Pipeline probe cache."""
+    global _PIPELINE_STATUS_CACHE, _PIPELINE_STATUS_CACHED_AT
+    _PIPELINE_STATUS_CACHE = False
+    _PIPELINE_STATUS_CACHED_AT = 0.0
+
+
+def probe_pipeline_for_status() -> PipelineStatus | None:
+    """Cached, short-timeout probe for the status bar (Ace-style optional tool)."""
+    global _PIPELINE_STATUS_CACHE, _PIPELINE_STATUS_CACHED_AT
+    now = time.monotonic()
+    if _PIPELINE_STATUS_CACHE is not False:
+        if now - _PIPELINE_STATUS_CACHED_AT < STATUS_PROBE_CACHE_TTL:
+            return (
+                _PIPELINE_STATUS_CACHE
+                if isinstance(_PIPELINE_STATUS_CACHE, PipelineStatus)
+                else None
+            )
+    status = probe_pipeline(timeout=STATUS_PROBE_TIMEOUT)
+    _PIPELINE_STATUS_CACHE = status
+    _PIPELINE_STATUS_CACHED_AT = now
+    return status
 
 
 def _file_uri(path: Path) -> str:

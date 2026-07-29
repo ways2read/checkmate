@@ -40,6 +40,7 @@ from .paths import (
 )
 from .publication import is_checkable_path
 from .report_export import format_text_report, report_title, save_report
+from .settings import read_settings, update_settings
 from .updater import (
     EBRAILLE_TOOL,
     EPUBCHECK_TOOL,
@@ -121,12 +122,27 @@ def filter_choices() -> tuple[str, ...]:
     )
 
 
+def _unique_code_rows(issues: list[Issue]) -> list[tuple[Issue, int]]:
+    """Keep first instance of each (source, code), with occurrence counts."""
+    groups: dict[tuple[str, str], list] = {}
+    order: list[tuple[str, str]] = []
+    for issue in issues:
+        key = (issue.source or "", issue.code or "")
+        if key not in groups:
+            groups[key] = [issue, 1]
+            order.append(key)
+        else:
+            groups[key][1] += 1
+    return [(groups[key][0], int(groups[key][1])) for key in order]
+
+
 def _issue_column_specs() -> tuple[tuple[str, int], ...]:
     return (
         (_("Severity"), 90),
+        (_("Source"), 90),
         (_("Code"), 100),
-        (_("Location"), 280),
-        (_("Message"), 320),
+        (_("Location"), 260),
+        (_("Message"), 300),
     )
 
 
@@ -173,17 +189,23 @@ class IssuesList:
         return int(self.ctrl.GetItemCount())  # type: ignore[attr-defined]
 
     def AppendRow(
-        self, severity: str, code: str, location: str, message: str
+        self,
+        severity: str,
+        source: str,
+        code: str,
+        location: str,
+        message: str,
     ) -> None:
         if self._dataview:
             assert isinstance(self.ctrl, dv.DataViewListCtrl)
-            self.ctrl.AppendItem([severity, code, location, message])
+            self.ctrl.AppendItem([severity, source, code, location, message])
             return
         assert isinstance(self.ctrl, wx.ListCtrl)
         idx = self.ctrl.InsertItem(self.ctrl.GetItemCount(), severity)
-        self.ctrl.SetItem(idx, 1, code)
-        self.ctrl.SetItem(idx, 2, location)
-        self.ctrl.SetItem(idx, 3, message)
+        self.ctrl.SetItem(idx, 1, source)
+        self.ctrl.SetItem(idx, 2, code)
+        self.ctrl.SetItem(idx, 3, location)
+        self.ctrl.SetItem(idx, 4, message)
 
     def SetColumnTitles(self, titles: tuple[str, ...]) -> None:
         for idx, title in enumerate(titles):
@@ -221,7 +243,9 @@ class IssuesList:
 class IssueDetailDialog(wx.Dialog):
     """Full issue text in a keyboard-navigable, read-only view."""
 
-    def __init__(self, parent: wx.Window, issue: Issue) -> None:
+    def __init__(
+        self, parent: wx.Window, issue: Issue, *, count: int = 1
+    ) -> None:
         super().__init__(
             parent,
             title=_("Issue details"),
@@ -230,10 +254,15 @@ class IssueDetailDialog(wx.Dialog):
         self.SetSize((640, 420))
         root = wx.BoxSizer(wx.VERTICAL)
 
-        body = "\n".join(
+        lines = [
+            _("Severity: {value}", value=issue.severity.label),
+            _("Source: {value}", value=issue.source or "—"),
+            _("Code: {value}", value=issue.code or "—"),
+        ]
+        if count > 1:
+            lines.append(_("Occurrences: {n}", n=count))
+        lines.extend(
             [
-                _("Severity: {value}", value=issue.severity.label),
-                _("Code: {value}", value=issue.code or "—"),
                 "",
                 _("Location"),
                 issue.location or _("(none)"),
@@ -242,6 +271,7 @@ class IssueDetailDialog(wx.Dialog):
                 issue.message or _("(none)"),
             ]
         )
+        body = "\n".join(lines)
         text = wx.TextCtrl(
             self,
             value=body,
@@ -392,6 +422,7 @@ class MainFrame(wx.Frame):
         )
         self._last_result: CheckResult | None = None
         self._displayed_issues: list[Issue] = []
+        self._displayed_counts: list[int] = []
         self._busy = False
         self._lang_menu_items: dict[str, wx.MenuItem] = {}
         self._initial_focus_pending = True
@@ -606,6 +637,21 @@ class MainFrame(wx.Frame):
         self.filter_choice = wx.Choice(panel, choices=list(filter_choices()))
         self.filter_choice.SetSelection(0)
         self.filter_choice.SetName(_("Issue filter"))
+        self.unique_codes_cb = wx.CheckBox(
+            panel, label=_("Show one example of each warning/error")
+        )
+        self.unique_codes_cb.SetName(
+            _("Show one example of each warning/error")
+        )
+        self.unique_codes_cb.SetToolTip(
+            _(
+                "List each issue code once, with a count of how many "
+                "times it occurred. Useful when one rule has many instances."
+            )
+        )
+        self.unique_codes_cb.SetValue(
+            bool(read_settings().get("unique_codes", False))
+        )
         self.copy_btn = wx.Button(panel, label=_("&Copy summary"))
         self.copy_btn.SetToolTip(_("Copy the result summary (Ctrl+Shift+C)"))
         self.report_btn = wx.Button(panel, label=_("&Report…"))
@@ -613,7 +659,12 @@ class MainFrame(wx.Frame):
             _("View, save, copy, clear, or toggle the full log")
         )
         filter_row.Add(self.filter_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
-        filter_row.Add(self.filter_choice, 0, wx.RIGHT, 12)
+        filter_row.Add(
+            self.filter_choice, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 12
+        )
+        filter_row.Add(
+            self.unique_codes_cb, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 12
+        )
         filter_row.AddStretchSpacer(1)
         filter_row.Add(self.copy_btn, 0, wx.RIGHT, 4)
         filter_row.Add(self.report_btn, 0)
@@ -785,6 +836,7 @@ class MainFrame(wx.Frame):
         self.copy_btn.Bind(wx.EVT_BUTTON, self.on_copy_summary)
         self.report_btn.Bind(wx.EVT_BUTTON, self.on_report_button)
         self.filter_choice.Bind(wx.EVT_CHOICE, self.on_filter_changed)
+        self.unique_codes_cb.Bind(wx.EVT_CHECKBOX, self.on_unique_codes_changed)
         self.log_toggle.Bind(wx.EVT_BUTTON, self.on_toggle_log)
         self.path_ctrl.Bind(wx.EVT_TEXT_ENTER, self.on_check)
         self._bind_menus()
@@ -852,6 +904,18 @@ class MainFrame(wx.Frame):
         self.filter_choice.Set(list(filter_choices()))
         if 0 <= filter_sel < self.filter_choice.GetCount():
             self.filter_choice.SetSelection(filter_sel)
+        self.unique_codes_cb.SetLabel(
+            _("Show one example of each warning/error")
+        )
+        self.unique_codes_cb.SetName(
+            _("Show one example of each warning/error")
+        )
+        self.unique_codes_cb.SetToolTip(
+            _(
+                "List each issue code once, with a count of how many "
+                "times it occurred. Useful when one rule has many instances."
+            )
+        )
         self.copy_btn.SetLabel(_("&Copy summary"))
         self.copy_btn.SetToolTip(_("Copy the result summary (Ctrl+Shift+C)"))
         self.report_btn.SetLabel(_("&Report…"))
@@ -860,7 +924,7 @@ class MainFrame(wx.Frame):
         )
         self.issues_list.SetName(_("Issues list"))
         self.issues_list.SetColumnTitles(
-            (_("Severity"), _("Code"), _("Location"), _("Message"))
+            (_("Severity"), _("Source"), _("Code"), _("Location"), _("Message"))
         )
         self.issues_hint.SetLabel(
             _("Press Enter or double-click an issue to read the full details.")
@@ -990,6 +1054,7 @@ class MainFrame(wx.Frame):
         """Reset the UI to the same state as a fresh launch."""
         self._last_result = None
         self._displayed_issues = []
+        self._displayed_counts = []
         self.path_ctrl.ChangeValue("")
         self._show_result_text(_("No check run yet."), title=None)
         self.issues_list.DeleteAllItems()
@@ -1083,10 +1148,12 @@ class MainFrame(wx.Frame):
     def _populate_issues(self) -> None:
         self.issues_list.DeleteAllItems()
         self._displayed_issues = []
+        self._displayed_counts = []
         result = self._last_result
         if result is None:
             return
         filter_idx = self.filter_choice.GetSelection()
+        filtered: list[Issue] = []
         for issue in result.issues:
             if filter_idx == 1 and issue.severity not in (
                 Severity.FATAL,
@@ -1100,10 +1167,24 @@ class MainFrame(wx.Frame):
                 Severity.USAGE,
             ):
                 continue
+            filtered.append(issue)
+
+        rows: list[tuple[Issue, int]]
+        if self.unique_codes_cb.GetValue():
+            rows = _unique_code_rows(filtered)
+        else:
+            rows = [(issue, 1) for issue in filtered]
+
+        for issue, count in rows:
             self._displayed_issues.append(issue)
+            self._displayed_counts.append(count)
+            code = issue.code
+            if count > 1:
+                code = _("{code} ×{n}", code=code, n=count)
             self.issues_list.AppendRow(
                 issue.severity.label,
-                issue.code,
+                issue.source or "—",
+                code,
                 issue.location,
                 issue.message,
             )
@@ -1116,11 +1197,24 @@ class MainFrame(wx.Frame):
             return None
         return self._displayed_issues[row]
 
+    def _selected_issue_count(self) -> int:
+        row = self.issues_list.GetSelectedRow()
+        if row < 0 or row >= len(self._displayed_counts):
+            return 1
+        return self._displayed_counts[row]
+
     def _show_issue_details(self, issue: Issue | None = None) -> None:
-        issue = issue if issue is not None else self._selected_issue()
+        if issue is None:
+            issue = self._selected_issue()
+            count = self._selected_issue_count()
+        else:
+            try:
+                count = self._displayed_counts[self._displayed_issues.index(issue)]
+            except ValueError:
+                count = 1
         if issue is None:
             return
-        dlg = IssueDetailDialog(self, issue)
+        dlg = IssueDetailDialog(self, issue, count=count)
         dlg.ShowModal()
         dlg.Destroy()
 
@@ -1247,6 +1341,10 @@ class MainFrame(wx.Frame):
     def on_filter_changed(self, _event: wx.CommandEvent) -> None:
         self._populate_issues()
 
+    def on_unique_codes_changed(self, _event: wx.CommandEvent) -> None:
+        update_settings(unique_codes=bool(self.unique_codes_cb.GetValue()))
+        self._populate_issues()
+
     def on_issues_list_focus(self, event: wx.FocusEvent) -> None:
         event.Skip()
         # Tabbing into the list often lands on the header first; move to row 0.
@@ -1338,12 +1436,16 @@ class MainFrame(wx.Frame):
 
     def _report_default_stem(self, result: CheckResult) -> str:
         name = (result.tool_name or "").strip().lower()
+        if "epubcheck" in name and "ace" in name:
+            return "epubcheck-ace-report"
         if name == EPUBCHECK_TOOL.display_name.lower() or "epubcheck" in name:
             return "epubcheck-report"
         if name == EBRAILLE_TOOL.display_name.lower() or "ebraille" in name:
             return "ebraille-checker-report"
         if name == VERAPDF_TOOL.display_name.lower() or "verapdf" in name:
             return "verapdf-report"
+        if name == "ace" or name.startswith("ace "):
+            return "ace-report"
         return "check-report"
 
     def on_view_text_report(self, _event: wx.CommandEvent) -> None:

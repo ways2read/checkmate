@@ -71,9 +71,14 @@ class Issue:
     code: str
     message: str
     location: str = ""
+    # Checker that produced this issue (e.g. "EPUBCheck", "Ace") when merged.
+    source: str = ""
 
     def summary_line(self) -> str:
-        parts = [self.severity.label, self.code]
+        parts = [self.severity.label]
+        if self.source:
+            parts.append(self.source)
+        parts.append(self.code)
         if self.location:
             parts.append(self.location)
         head = "  ".join(p for p in parts if p)
