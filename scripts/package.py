@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a standalone eBraille Checker GUI binary with PyInstaller.
+"""Build a standalone CheckMate binary with PyInstaller.
 
 Usage (from the project root):
 
@@ -23,10 +23,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_NAME = "eBrailleChecker"
+APP_NAME = "CheckMate"
 ENTRY = ROOT / "run.py"
-APP_ICON_ICO = ROOT / "installer" / "eBrailleChecker.ico"
-APP_ICON_ICNS = ROOT / "installer" / "eBrailleChecker.icns"
+APP_ICON_ICO = ROOT / "installer" / "CheckMate.ico"
+APP_ICON_ICNS = ROOT / "installer" / "CheckMate.icns"
 BUILD_COUNTER_FILE = ROOT / "build_counter.txt"
 
 
@@ -39,7 +39,7 @@ def _app_icon() -> Path | None:
 
 
 def _project_version() -> str:
-    init = ROOT / "app" / "__init__.py"
+    init = ROOT / "checkmate" / "__init__.py"
     if init.is_file():
         for line in init.read_text(encoding="utf-8").splitlines():
             if line.startswith("__version__"):
@@ -107,6 +107,15 @@ def _verapdf_dir_for_output(output: Path) -> Path:
     if output.is_dir():
         return output / "verapdf"
     return output.parent / "verapdf"
+
+
+def _ace_dir_for_output(output: Path) -> Path:
+    output = output.resolve()
+    if sys.platform == "darwin" and output.suffix == ".app":
+        return output / "Contents" / "ace"
+    if output.is_dir():
+        return output / "ace"
+    return output.parent / "ace"
 
 
 def _load_info_plist(app_bundle: Path) -> tuple[Path, dict] | None:
@@ -203,6 +212,7 @@ def build(
     bundle_checker: bool,
     bundle_epubcheck: bool,
     bundle_verapdf: bool,
+    bundle_ace: bool,
     build_number: int | None = None,
 ) -> Path:
     _ensure_pyinstaller()
@@ -259,7 +269,7 @@ def build(
         "--collect-all",
         "pymupdf",
         "--collect-submodules",
-        "app",
+        "checkmate",
     ]
 
     icon = _app_icon()
@@ -386,12 +396,33 @@ def build(
                 check=True,
             )
 
+    if bundle_ace:
+        if onefile:
+            print(
+                "Warning: --onefile with bundled Ace is not supported; "
+                "use onedir (default).",
+                file=sys.stderr,
+            )
+        else:
+            ace_dir = _ace_dir_for_output(output)
+            print()
+            print(f"Bundling Ace (Node + Chromium) into {ace_dir}…")
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "ace_bundle.py"),
+                    str(ace_dir),
+                ],
+                cwd=ROOT,
+                check=True,
+            )
+
     return output
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Package eBraille Checker GUI with PyInstaller."
+        description="Package CheckMate with PyInstaller."
     )
     parser.add_argument(
         "--onefile",
@@ -424,6 +455,14 @@ def main() -> None:
         help="Skip bundling veraPDF (downloaded on first PDF check).",
     )
     parser.add_argument(
+        "--no-bundle-ace",
+        action="store_true",
+        help=(
+            "Skip bundling Ace by DAISY (users need a PATH install of "
+            "@daisy/ace for accessibility checks)."
+        ),
+    )
+    parser.add_argument(
         "--build-number",
         type=int,
         metavar="N",
@@ -442,6 +481,7 @@ def main() -> None:
             bundle_checker=not args.no_bundle_checker,
             bundle_epubcheck=not args.no_bundle_epubcheck,
             bundle_verapdf=not args.no_bundle_verapdf,
+            bundle_ace=not args.no_bundle_ace,
             build_number=args.build_number,
         )
     except subprocess.CalledProcessError as exc:
@@ -490,6 +530,16 @@ def main() -> None:
         print(
             "Bundled veraPDF is included (verapdf/). "
             "Updates install to application data when a newer release exists."
+        )
+    if args.no_bundle_ace:
+        print(
+            "Note: Ace was not bundled. EPUB accessibility checks need a "
+            "user install of @daisy/ace on PATH."
+        )
+    else:
+        print(
+            "Bundled Ace is included (ace/) with its own Node runtime and "
+            "Chromium. No user install of Node or Ace is required."
         )
 
 

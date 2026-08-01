@@ -179,7 +179,7 @@ def fetch_latest_verapdf_release(timeout: float = 30.0) -> ReleaseInfo:
     """Resolve the newest greenfield installer from software.verapdf.org/rel/."""
     headers = {
         "Accept": "text/html,application/xhtml+xml",
-        "User-Agent": "eBrailleCheckerGUI",
+        "User-Agent": "CheckMate",
     }
     listing = requests.get(VERAPDF_DOWNLOAD_PAGE, headers=headers, timeout=timeout)
     listing.raise_for_status()
@@ -239,7 +239,7 @@ def fetch_latest_release(
         tool.releases_api,
         headers={
             "Accept": "application/vnd.github+json",
-            "User-Agent": "eBrailleCheckerGUI",
+            "User-Agent": "CheckMate",
         },
         timeout=timeout,
     )
@@ -299,7 +299,7 @@ def _clear_directory(root: Path, *, keep_names: frozenset[str] = frozenset()) ->
 def _download_release_zip(release: ReleaseInfo, timeout: float = 120.0) -> bytes:
     response = requests.get(
         release.zip_url,
-        headers={"User-Agent": "eBrailleCheckerGUI"},
+        headers={"User-Agent": "CheckMate"},
         timeout=timeout,
         stream=True,
     )
@@ -345,9 +345,9 @@ def _verapdf_auto_install_xml(install_dir: Path) -> str:
 
 
 def _resolve_java_for_installer() -> str:
-    from .java_util import detect_java
+    from .java_util import cached_java, detect_java
 
-    java = detect_java()
+    java = cached_java() or detect_java()
     if java is None:
         raise RuntimeError(
             "Java is required to install veraPDF. Install a JRE or use a "

@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.updater import bundle_checker_release, fetch_latest_release
+from checkmate.updater import bundle_checker_release, fetch_latest_release
 
 
 def bundle_target_for_output(output: Path) -> Path:

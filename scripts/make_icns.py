@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build installer/eBrailleChecker.icns for macOS (iconutil).
+"""Build installer/CheckMate.icns for macOS (iconutil).
 
 Defaults to the Windows .ico master so Dock / Finder match the flatter
 installer icon. Use --from-png for installer/icon.png instead.
@@ -19,8 +19,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC_PNG = ROOT / "installer" / "icon.png"
-SRC_ICO = ROOT / "installer" / "eBrailleChecker.ico"
-OUT = ROOT / "installer" / "eBrailleChecker.icns"
+SRC_ICO = ROOT / "installer" / "CheckMate.ico"
+OUT = ROOT / "installer" / "CheckMate.icns"
 
 # (pixel size, iconset filename) — standard iconutil set only
 SIZES: list[tuple[int, str]] = [
@@ -50,8 +50,8 @@ def main() -> int:
         print("This script is for macOS (iconutil).", file=sys.stderr)
         return 0
 
-    tmp = Path(tempfile.mkdtemp(prefix="ebraille-iconset-"))
-    iconset = tmp / "eBrailleChecker.iconset"
+    tmp = Path(tempfile.mkdtemp(prefix="checkmate-iconset-"))
+    iconset = tmp / "CheckMate.iconset"
     try:
         iconset.mkdir()
         master = tmp / "master.png"

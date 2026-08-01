@@ -70,6 +70,11 @@ def _stamp_result(
         # Prefer a version already taken from the tool's own report JSON.
         if not result.tool_version:
             result.tool_version = read_effective_version(tool) or ""
+        # Tag issues so the Source column / filter can name the checker
+        # (e.g. veraPDF, eBraille Checker) even for single-tool runs.
+        for issue in result.issues:
+            if not issue.source:
+                issue.source = tool.display_name
     return result
 
 
@@ -970,7 +975,10 @@ def run_check(
             checked_at=checked_at,
         )
 
-    java = detect_java()
+    # Reuse the session's detection result; a fresh probe (and on Windows a
+    # Program Files scan) only happens when no working Java was found before,
+    # so a JRE installed mid-session is still picked up.
+    java = cached_java() or detect_java()
     if java is None:
         if has_bundled_java():
             message = (
@@ -1319,6 +1327,12 @@ def _merge_epubcheck_and_ace(
 
     issues = epub_issues + ace_issues
     counts = _counts_from_issues_list(issues)
+    # Per-tool share of the totals, on the same (issue-count) basis so the
+    # breakdown always adds up to the combined counts.
+    source_counts = [
+        (EPUBCHECK_TOOL.display_name, _counts_from_issues_list(epub_issues)),
+        (ACE_DISPLAY_NAME, _counts_from_issues_list(ace_issues)),
+    ]
 
     # Ace infra/parse ERROR while EPUBCheck completed should not make the
     # combined headline "Could not complete check" — surface as Failed.
@@ -1378,6 +1392,7 @@ def _merge_epubcheck_and_ace(
         checked_at=epub_result.checked_at,
         target_path=epub_result.target_path,
         extra_meta=extra_meta,
+        source_counts=source_counts,
     )
 
 
@@ -1415,7 +1430,7 @@ def _with_optional_ace(
 
 def checker_status_text() -> str:
     from .i18n import _
-    from .ace_check import probe_ace
+    from .ace_check import ace_uses_bundled_copy, probe_ace
     from .pipeline_client import probe_pipeline_for_status
 
     java = cached_java()
@@ -1426,7 +1441,10 @@ def checker_status_text() -> str:
     ]
     ace_version = probe_ace()
     if ace_version:
-        parts.append(_("Ace {version}", version=ace_version))
+        if ace_uses_bundled_copy():
+            parts.append(_("Ace {version} (bundled)", version=ace_version))
+        else:
+            parts.append(_("Ace {version}", version=ace_version))
     pipeline = probe_pipeline_for_status()
     if pipeline is not None:
         if pipeline.version:

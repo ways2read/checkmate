@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Build a drag-to-Applications disk image for eBraille Checker GUI.
-# Prerequisites: dist/eBrailleChecker_App/eBrailleChecker.app
+# Build a drag-to-Applications disk image for CheckMate.
+# Prerequisites: dist/CheckMate_App/CheckMate.app
 #   (run ./scripts/build_macos.sh first, or the release script).
 #
 # Background: packaging/macos/dmg_background.png (660×400).
 # Icon centres (logical points): app ≈ (165, 195), Applications ≈ (495, 195).
 #
 # Usage:  ./scripts/build_macos_dmg.sh [marketing-version]
-# Output: dist/eBrailleCheckerGUI-macos-<version>-<arch>.dmg
+# Output: dist/CheckMate-macos-<version>-<arch>.dmg
 
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -29,7 +29,7 @@ if [[ -z "$MARKETING_VER" ]]; then
 fi
 MARKETING_VER="${MARKETING_VER:-dev}"
 
-APP_BUNDLE="$REPO_ROOT/dist/eBrailleChecker_App/eBrailleChecker.app"
+APP_BUNDLE="$REPO_ROOT/dist/CheckMate_App/CheckMate.app"
 if [[ ! -d "$APP_BUNDLE" ]]; then
   echo "ERROR: $APP_BUNDLE not found. Run ./scripts/build_macos.sh first."
   exit 1
@@ -49,9 +49,9 @@ APP_Y=195
 APPS_X=495
 APPS_Y=195
 
-DMG_RW="$REPO_ROOT/dist/eBrailleCheckerGUI-macos-${MARKETING_VER}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.rw.dmg"
-DMG_OUT="$REPO_ROOT/dist/eBrailleCheckerGUI-macos-${MARKETING_VER}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.dmg"
-VOL_LABEL="eBraille Checker"
+DMG_RW="$REPO_ROOT/dist/CheckMate-macos-${MARKETING_VER}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.rw.dmg"
+DMG_OUT="$REPO_ROOT/dist/CheckMate-macos-${MARKETING_VER}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.dmg"
+VOL_LABEL="CheckMate"
 MOUNT_PT=""
 
 APP_SZ="$(/usr/bin/du -sm "$APP_BUNDLE" | /usr/bin/awk '{print $1}')"
@@ -96,11 +96,11 @@ fi
 
 README_SRC="${EBC_DMG_README:-$REPO_ROOT/packaging/macos/dmg_README.txt}"
 if [[ -f "$README_SRC" ]]; then
-  /bin/cp "$README_SRC" "$MOUNT_PT/Install eBraille Checker.txt"
+  /bin/cp "$README_SRC" "$MOUNT_PT/Install CheckMate.txt"
 fi
 
-if [[ -f "$REPO_ROOT/installer/eBrailleChecker.icns" ]]; then
-  /bin/cp "$REPO_ROOT/installer/eBrailleChecker.icns" "$MOUNT_PT/.VolumeIcon.icns"
+if [[ -f "$REPO_ROOT/installer/CheckMate.icns" ]]; then
+  /bin/cp "$REPO_ROOT/installer/CheckMate.icns" "$MOUNT_PT/.VolumeIcon.icns"
   /usr/bin/SetFile -a C "$MOUNT_PT" 2>/dev/null || true
 fi
 
@@ -138,7 +138,7 @@ on run argv
       set background picture of icon view options of win to (POSIX file bgPath as alias)
       set arrangement of icon view options of win to not arranged
       set icon size of icon view options of win to 96
-      set position of item "eBrailleChecker.app" of win to {appX, appY}
+      set position of item "CheckMate.app" of win to {appX, appY}
       set position of item "Applications" of win to {appsX, appsY}
       update without registering applications
       delay 0.5
@@ -175,4 +175,4 @@ fi
 
 echo ""
 echo "Created: $DMG_OUT"
-echo "Open the .dmg and drag eBrailleChecker.app onto Applications."
+echo "Open the .dmg and drag CheckMate.app onto Applications."

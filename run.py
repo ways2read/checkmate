@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch eBraille Checker GUI."""
+"""Launch CheckMate."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import os
 
 import certifi
 
-from app.main import run_app
+from checkmate.main import run_app
 
 
 def _configure_tls_ca_bundle() -> None:

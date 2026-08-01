@@ -40,11 +40,11 @@ or add ISCC.exe to your PATH.
 "@
 }
 
-$distRoot = Join-Path $Root "dist\eBrailleChecker"
-$distExe = Join-Path $distRoot "eBrailleChecker.exe"
+$distRoot = Join-Path $Root "dist\CheckMate"
+$distExe = Join-Path $distRoot "CheckMate.exe"
 if (-not $SkipPackage) {
     Write-Host "==> Packaging app with PyInstaller…" -ForegroundColor Cyan
-    Write-Host "    (bundles Temurin JRE, eBraille Checker, EPUBCheck, and veraPDF)" -ForegroundColor DarkGray
+    Write-Host "    (bundles Temurin JRE, eBraille Checker, EPUBCheck, veraPDF, and Ace)" -ForegroundColor DarkGray
     $pkgArgs = @("run", "python", "scripts/package.py")
     if (-not $NoClean) { $pkgArgs += "--clean" }
     & uv @pkgArgs
@@ -59,25 +59,26 @@ $requiredDirs = @(
     @{ Path = (Join-Path $distRoot "runtime");   Label = "bundled Temurin JRE (runtime/)" },
     @{ Path = (Join-Path $distRoot "checker");   Label = "bundled eBraille Checker (checker/)" },
     @{ Path = (Join-Path $distRoot "epubcheck"); Label = "bundled EPUBCheck (epubcheck/)" },
-    @{ Path = (Join-Path $distRoot "verapdf");   Label = "bundled veraPDF (verapdf/)" }
+    @{ Path = (Join-Path $distRoot "verapdf");   Label = "bundled veraPDF (verapdf/)" },
+    @{ Path = (Join-Path $distRoot "ace");       Label = "bundled Ace by DAISY (ace/)" }
 )
 foreach ($req in $requiredDirs) {
     if (-not (Test-Path $req.Path -PathType Container)) {
         Write-Error @"
-Missing $($req.Label) under dist\eBrailleChecker\.
-Re-run packaging without --no-bundle-java / --no-bundle-checker / --no-bundle-epubcheck / --no-bundle-verapdf:
+Missing $($req.Label) under dist\CheckMate\.
+Re-run packaging without --no-bundle-* flags:
   uv run python scripts/package.py --clean
 "@
     }
 }
-Write-Host "==> Bundled components present: runtime/, checker/, epubcheck/, verapdf/" -ForegroundColor DarkGray
+Write-Host "==> Bundled components present: runtime/, checker/, epubcheck/, verapdf/, ace/" -ForegroundColor DarkGray
 
 Write-Host "==> Compiling Inno Setup installer…" -ForegroundColor Cyan
-$iss = Join-Path $Root "installer\eBrailleChecker.iss"
+$iss = Join-Path $Root "installer\CheckMate.iss"
 $outputDir = Join-Path $Root "installer\Output"
 # Compile to %TEMP% first — antivirus often locks Setup.exe while ISCC
 # updates its icon resources in a watched project Output folder.
-$tempOut = Join-Path $env:TEMP ("ebraille-iss-out-" + [guid]::NewGuid().ToString("N"))
+$tempOut = Join-Path $env:TEMP ("checkmate-iss-out-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $tempOut | Out-Null
 try {
     & $iscc "/O$tempOut" $iss
@@ -90,7 +91,7 @@ finally {
     Remove-Item $tempOut -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-$setup = Get-ChildItem $outputDir -Filter "eBrailleCheckerGUI-*-setup.exe" |
+$setup = Get-ChildItem $outputDir -Filter "CheckMate-*-setup.exe" |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
 

@@ -1,12 +1,12 @@
 [project]
-name = "ebraille-checker-gui"
-version = "0.4.1"
-description = "Accessible cross-platform GUI for the DAISY eBraille Checker and W3C EPUBCheck"
+name = "checkmate"
+version = "0.6.0"
+description = "CheckMate — accessible cross-platform GUI for the DAISY eBraille Checker, W3C EPUBCheck, and veraPDF"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "ways2read" }]
-keywords = ["ebraille", "epub", "epubcheck", "accessibility", "validation", "daisy"]
+keywords = ["ebraille", "epub", "epubcheck", "accessibility", "validation", "daisy", "checkmate"]
 dependencies = [
     "wxPython>=4.2.0",
     "requests>=2.31.0",
@@ -25,11 +25,11 @@ Issues = "https://github.com/ways2read/ebraille-checker-gui/issues"
 Upstream = "https://github.com/daisy/ebraille-checker"
 
 [project.scripts]
-ebraille-checker-gui = "app.main:run_app"
+checkmate = "checkmate.main:run_app"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+include = ["checkmate*"]

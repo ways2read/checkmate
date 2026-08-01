@@ -122,51 +122,56 @@ def _system_candidate_paths() -> list[str]:
     return found
 
 
-def _candidate_paths() -> list[tuple[str, str]]:
-    """Return (path, source) pairs in priority order."""
-    ordered: list[tuple[str, str]] = []
-    for path in _bundled_java_paths():
-        ordered.append((path, "bundled"))
-    for path in _system_candidate_paths():
-        ordered.append((path, "system"))
-
-    seen: set[str] = set()
-    unique: list[tuple[str, str]] = []
-    for path, source in ordered:
-        key = os.path.normcase(os.path.abspath(path))
-        if key not in seen:
-            seen.add(key)
-            unique.append((path, source))
-    return unique
-
-
 _UNSET = object()
 _java_cache: JavaInfo | None | object = _UNSET
 
 
-def detect_java() -> JavaInfo | None:
-    global _java_cache
-    for path, source in _candidate_paths():
-        try:
-            proc = subprocess.run(
-                [path, "-version"],
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=10,
-                **hidden_run_kwargs(),
-            )
-            text = (proc.stderr or proc.stdout or "").strip()
-            # Require success: a crashing JVM (e.g. hardened-runtime SIGTRAP) can
-            # still leave empty/partial stderr while returncode is non-zero.
-            if proc.returncode == 0 and text:
-                info = JavaInfo(path=path, version_text=text, source=source)
-                _java_cache = info
-                return info
-        except (OSError, subprocess.SubprocessError):
-            continue
-    _java_cache = None
+def _probe_java(path: str, source: str) -> JavaInfo | None:
+    try:
+        proc = subprocess.run(
+            [path, "-version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+            **hidden_run_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = (proc.stderr or proc.stdout or "").strip()
+    # Require success: a crashing JVM (e.g. hardened-runtime SIGTRAP) can
+    # still leave empty/partial stderr while returncode is non-zero.
+    if proc.returncode == 0 and text:
+        return JavaInfo(path=path, version_text=text, source=source)
     return None
+
+
+def detect_java() -> JavaInfo | None:
+    """Find a working JVM, preferring the bundled runtime.
+
+    The (slow) system-wide search — which recursively scans Program Files on
+    Windows — only runs when no bundled candidate works, so packaged builds
+    skip it entirely.
+    """
+    global _java_cache
+    seen: set[str] = set()
+
+    def probe_all(paths: list[str], source: str) -> JavaInfo | None:
+        for path in paths:
+            key = os.path.normcase(os.path.abspath(path))
+            if key in seen:
+                continue
+            seen.add(key)
+            info = _probe_java(path, source)
+            if info is not None:
+                return info
+        return None
+
+    info = probe_all(_bundled_java_paths(), "bundled") or probe_all(
+        _system_candidate_paths(), "system"
+    )
+    _java_cache = info
+    return info
 
 
 def cached_java() -> JavaInfo | None:

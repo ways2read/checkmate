@@ -25,10 +25,12 @@ installer/Output/
 #   checker/   = bundled or locally fetched eBraille Checker
 #   epubcheck/ = bundled or locally fetched W3C EPUBCheck
 #   verapdf/   = bundled or locally fetched veraPDF CLI
+#   ace/       = bundled Ace by DAISY (Node + Chromium)
 runtime/
 checker/
 epubcheck/
 verapdf/
+ace/
 
 # Local IDE / OS
 .idea/

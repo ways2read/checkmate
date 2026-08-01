@@ -71,7 +71,7 @@ class Issue:
     code: str
     message: str
     location: str = ""
-    # Checker that produced this issue (e.g. "EPUBCheck", "Ace") when merged.
+    # Checker that produced this issue (e.g. "EPUBCheck", "Ace", "veraPDF").
     source: str = ""
 
     def summary_line(self) -> str:
@@ -104,6 +104,9 @@ class CheckResult:
     target_path: str = ""
     # Optional checker-specific summary rows (label, value), e.g. veraPDF profile.
     extra_meta: list[tuple[str, str]] = field(default_factory=list)
+    # Per-tool severity totals for merged runs (e.g. EPUBCheck + Ace):
+    # (source name, counts dict with fatals/errors/warnings/infos/usages).
+    source_counts: list[tuple[str, dict[str, int]]] = field(default_factory=list)
 
     @property
     def headline(self) -> str:
@@ -114,6 +117,17 @@ class CheckResult:
     def result_display(self) -> str:
         """Multi-line text for the result pane (Up/Down line navigation)."""
         return "\n".join(self.result_lines)
+
+    @staticmethod
+    def _severity_parts(fatals: int, errors: int, warnings: int) -> list[str]:
+        parts: list[str] = []
+        if fatals:
+            parts.append(ngettext("{n} fatal", "{n} fatals", fatals))
+        if errors:
+            parts.append(ngettext("{n} error", "{n} errors", errors))
+        if warnings:
+            parts.append(ngettext("{n} warning", "{n} warnings", warnings))
+        return parts
 
     @property
     def result_lines(self) -> list[str]:
@@ -126,13 +140,7 @@ class CheckResult:
                 return [self.verdict.label, msg]
             return [self.verdict.label]
 
-        parts: list[str] = []
-        if self.fatals:
-            parts.append(ngettext("{n} fatal", "{n} fatals", self.fatals))
-        if self.errors:
-            parts.append(ngettext("{n} error", "{n} errors", self.errors))
-        if self.warnings:
-            parts.append(ngettext("{n} warning", "{n} warnings", self.warnings))
+        parts = self._severity_parts(self.fatals, self.errors, self.warnings)
 
         label = self.verdict.label
         if not parts:
@@ -142,6 +150,18 @@ class CheckResult:
                 lines = [label, _("no errors or warnings")]
         else:
             lines = [label, ", ".join(parts)]
+
+        # Merged runs (EPUBCheck + Ace): show each tool's share of the totals.
+        for source, counts in self.source_counts:
+            sub = self._severity_parts(
+                counts.get("fatals", 0),
+                counts.get("errors", 0),
+                counts.get("warnings", 0),
+            )
+            if sub:
+                lines.append(f"{source}: " + ", ".join(sub))
+            else:
+                lines.append(f"{source}: " + _("no errors or warnings"))
 
         # Surface a short profile line in the result pane when present.
         for meta_label, meta_value in self.extra_meta:

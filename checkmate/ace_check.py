@@ -13,11 +13,13 @@ from datetime import datetime
 from pathlib import Path
 
 from .models import CheckResult, Issue, Severity, Verdict
+from .paths import bundled_ace_dir
 from .subprocess_util import hidden_run_kwargs
 
 ACE_DISPLAY_NAME = "Ace"
 
 _ACE_PATH_CACHE: Path | None | bool = False  # False = unset
+_ACE_CMD_CACHE: list[str] | None | bool = False
 _ACE_VERSION_CACHE: str | None | bool = False
 
 # Prefer the Puppeteer CLI: GUI/.app launches often inherit ELECTRON_RUN_AS_NODE
@@ -94,6 +96,27 @@ _ACE_TIMEOUT_INITIAL_MS = "60000"
 _ACE_TIMEOUT_EXTENSION_MS = "480000"
 
 
+def _bundled_node_exe(root: Path) -> Path | None:
+    for candidate in (root / "node" / "node.exe", root / "node" / "bin" / "node"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _bundled_ace() -> tuple[list[str], Path] | None:
+    """Return (command, bundle_root) for a complete bundled Ace, else None.
+
+    Packaged builds ship ``ace/`` with a portable Node, ``@daisy/ace-cli``
+    (Puppeteer runner), and a pinned Chromium — see scripts/ace_bundle.py.
+    """
+    root = bundled_ace_dir()
+    node = _bundled_node_exe(root)
+    script = root / "node_modules" / "@daisy" / "ace-cli" / "bin" / "ace.js"
+    if node is None or not script.is_file():
+        return None
+    return [str(node), str(script)], root
+
+
 def _ace_run_env() -> dict[str, str]:
     """Environment for Ace subprocesses.
 
@@ -102,17 +125,26 @@ def _ace_run_env() -> dict[str, str]:
     - Clears ``ELECTRON_RUN_AS_NODE`` so the Electron Ace runner is not forced
       into Node mode (common when the GUI itself was started from Electron).
     - Raises Ace Chromium launch / page timeouts when unset (see module constants).
+    - For the bundled Ace, points Puppeteer at the bundled Chromium and puts
+      the bundled Node first on PATH.
     """
     env = os.environ.copy()
     env.pop("ELECTRON_RUN_AS_NODE", None)
-    env["PATH"] = _path_with_tool_dirs()
+    path = _path_with_tool_dirs()
+    bundled = _bundled_ace()
+    if bundled is not None:
+        _cmd, root = bundled
+        env["PUPPETEER_CACHE_DIR"] = str(root / "puppeteer")
+        node_dirs = [str(root / "node"), str(root / "node" / "bin")]
+        path = os.pathsep.join([*node_dirs, path])
+    env["PATH"] = path
     env.setdefault("ACE_TIMEOUT_INITIAL", _ACE_TIMEOUT_INITIAL_MS)
     env.setdefault("ACE_TIMEOUT_EXTENSION", _ACE_TIMEOUT_EXTENSION_MS)
     return env
 
 
 def find_ace() -> Path | None:
-    """Return the Ace CLI executable if available.
+    """Return a user-installed Ace CLI executable from PATH, if any.
 
     Prefers ``ace-puppeteer`` when present. Searches PATH plus common npm /
     Homebrew install directories so packaged macOS apps can find a user install.
@@ -132,19 +164,45 @@ def find_ace() -> Path | None:
     return None
 
 
+def ace_command() -> list[str] | None:
+    """Argv prefix for running Ace, or None when Ace is unavailable.
+
+    Prefers the bundled copy (deterministic Node + Chromium), then a
+    user-installed CLI found on PATH.
+    """
+    global _ACE_CMD_CACHE
+    if _ACE_CMD_CACHE is not False:
+        return list(_ACE_CMD_CACHE) if isinstance(_ACE_CMD_CACHE, list) else None
+
+    bundled = _bundled_ace()
+    if bundled is not None:
+        _ACE_CMD_CACHE = bundled[0]
+        return list(_ACE_CMD_CACHE)
+    ace = find_ace()
+    if ace is not None:
+        _ACE_CMD_CACHE = [str(ace)]
+        return list(_ACE_CMD_CACHE)
+    _ACE_CMD_CACHE = None
+    return None
+
+
+def ace_uses_bundled_copy() -> bool:
+    return _bundled_ace() is not None
+
+
 def probe_ace() -> str | None:
     """Return Ace version string, or None if Ace is not available."""
     global _ACE_VERSION_CACHE
     if _ACE_VERSION_CACHE is not False:
         return _ACE_VERSION_CACHE if isinstance(_ACE_VERSION_CACHE, str) else None
 
-    ace = find_ace()
+    ace = ace_command()
     if ace is None:
         _ACE_VERSION_CACHE = None
         return None
     try:
         proc = subprocess.run(
-            [str(ace), "--version"],
+            [*ace, "--version"],
             capture_output=True,
             text=True,
             check=False,
@@ -172,9 +230,10 @@ def probe_ace() -> str | None:
 
 
 def clear_ace_cache() -> None:
-    """Reset PATH/version caches (tests / after install)."""
-    global _ACE_PATH_CACHE, _ACE_VERSION_CACHE
+    """Reset command/version caches (tests / after install)."""
+    global _ACE_PATH_CACHE, _ACE_CMD_CACHE, _ACE_VERSION_CACHE
     _ACE_PATH_CACHE = False
+    _ACE_CMD_CACHE = False
     _ACE_VERSION_CACHE = False
 
 
@@ -352,11 +411,11 @@ def run_ace_check(
 ) -> CheckResult | None:
     """Run Ace on ``target``.
 
-    Returns ``None`` when Ace is not on PATH (caller should skip silently).
+    Returns ``None`` when Ace is unavailable (caller should skip silently).
     Otherwise returns a CheckResult (pass/fail or tool error).
     """
     target = target.expanduser().resolve()
-    ace = find_ace()
+    ace = ace_command()
     if ace is None:
         return None
 
@@ -371,7 +430,7 @@ def run_ace_check(
         # Do not use --silent: Ace suppresses parse/processing errors that we
         # need for the merged issue list and raw log.
         cmd = [
-            str(ace),
+            *ace,
             "--outdir",
             str(outdir),
             "--force",

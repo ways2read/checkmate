@@ -1,4 +1,4 @@
-"""wxPython main window for eBraille Checker GUI."""
+"""wxPython main window for CheckMate."""
 
 from __future__ import annotations
 
@@ -51,6 +51,7 @@ from .updater import (
     ensure_tools_installed,
     install_release,
 )
+from .warmup import run_startup_warmup
 
 ProgressEvent, EVT_PROGRESS = wx.lib.newevent.NewEvent()
 ResultEvent, EVT_RESULT = wx.lib.newevent.NewEvent()
@@ -110,7 +111,7 @@ def _macos_make_first_responder(window: wx.Window) -> bool:
 
 
 def app_title() -> str:
-    return _("eBraille Checker")
+    return _("CheckMate")
 
 
 def filter_choices() -> tuple[str, ...]:
@@ -120,6 +121,28 @@ def filter_choices() -> tuple[str, ...]:
         _("Warnings only"),
         _("Info / usage"),
     )
+
+
+def source_filter_choices(sources: list[str] | None = None) -> tuple[str, ...]:
+    """Choices for the Source filter: All, then each checker name."""
+    names = list(sources or [])
+    return (_("All checkers"), *names)
+
+
+def _result_source_names(result: CheckResult) -> list[str]:
+    """Checker names present in a result, for the Source filter/column."""
+    if result.source_counts:
+        return [name for name, _ in result.source_counts if name]
+    seen: list[str] = []
+    for issue in result.issues:
+        if issue.source and issue.source not in seen:
+            seen.append(issue.source)
+    if seen:
+        return seen
+    name = (result.tool_name or "").strip()
+    if name and " + " not in name:
+        return [name]
+    return []
 
 
 def _unique_code_rows(issues: list[Issue]) -> list[tuple[Issue, int]]:
@@ -139,7 +162,7 @@ def _unique_code_rows(issues: list[Issue]) -> list[tuple[Issue, int]]:
 def _issue_column_specs() -> tuple[tuple[str, int], ...]:
     return (
         (_("Severity"), 90),
-        (_("Source"), 90),
+        (_("Source"), 120),
         (_("Code"), 100),
         (_("Location"), 260),
         (_("Message"), 300),
@@ -296,12 +319,12 @@ class AboutDialog(wx.Dialog):
     def __init__(self, parent: wx.Window) -> None:
         super().__init__(
             parent,
-            title=_("About eBraille Checker GUI"),
+            title=_("About CheckMate"),
             style=wx.DEFAULT_DIALOG_STYLE,
         )
         root = wx.BoxSizer(wx.VERTICAL)
 
-        title = wx.StaticText(self, label=_("eBraille Checker GUI"))
+        title = wx.StaticText(self, label=_("CheckMate"))
         title_font = title.GetFont()
         title_font.SetPointSize(title_font.GetPointSize() + 2)
         title_font.MakeBold()
@@ -450,7 +473,7 @@ class MainFrame(wx.Frame):
             if is_frozen() and sys.platform == "win32":
                 icon = wx.Icon(sys.executable, wx.BITMAP_TYPE_ICO)
             else:
-                icon_path = application_dir() / "installer" / "eBrailleChecker.ico"
+                icon_path = application_dir() / "installer" / "CheckMate.ico"
                 if not icon_path.is_file():
                     return
                 icon = wx.Icon(str(icon_path), wx.BITMAP_TYPE_ICO)
@@ -491,6 +514,10 @@ class MainFrame(wx.Frame):
             self._set_result_title(title)
         if focus:
             self._announce_result_pane()
+        elif self.result_label.HasFocus():
+            # The text changed under focus (e.g. progress updates): re-select
+            # it so screen readers announce the new message.
+            wx.CallAfter(self._prepare_result_for_review)
 
     def _announce_result_pane(self) -> None:
         """Force a focus leave/enter so screen readers re-announce updated text.
@@ -500,8 +527,15 @@ class MainFrame(wx.Frame):
         elsewhere then returning triggers a fresh focus event.
         """
         if self.result_label.HasFocus():
-            self._focus_select_button()
-            wx.CallAfter(self._return_focus_to_result)
+            if self.select_file_btn.IsEnabled():
+                self._focus_select_button()
+                wx.CallAfter(self._return_focus_to_result)
+            else:
+                # Busy (buttons disabled): can't park focus on a disabled
+                # button, so collapse and re-select instead — screen readers
+                # announce the fresh selection.
+                self.result_label.SetSelection(0, 0)
+                wx.CallAfter(self._prepare_result_for_review)
         else:
             self.result_label.SetFocus()
             wx.CallAfter(self._prepare_result_for_review)
@@ -637,6 +671,19 @@ class MainFrame(wx.Frame):
         self.filter_choice = wx.Choice(panel, choices=list(filter_choices()))
         self.filter_choice.SetSelection(0)
         self.filter_choice.SetName(_("Issue filter"))
+        self.source_label = wx.StaticText(panel, label=_("Source:"))
+        self.source_choice = wx.Choice(
+            panel, choices=list(source_filter_choices())
+        )
+        self.source_choice.SetSelection(0)
+        self.source_choice.SetName(_("Issue source filter"))
+        self.source_choice.SetToolTip(
+            _("Show issues from a specific checker, or all")
+        )
+        # Populated from the last result's checker name(s).
+        self._source_filter_names: list[str] = []
+        self.source_label.Enable(False)
+        self.source_choice.Enable(False)
         self.unique_codes_cb = wx.CheckBox(
             panel, label=_("Show one example of each warning/error")
         )
@@ -656,11 +703,15 @@ class MainFrame(wx.Frame):
         self.copy_btn.SetToolTip(_("Copy the result summary (Ctrl+Shift+C)"))
         self.report_btn = wx.Button(panel, label=_("&Report…"))
         self.report_btn.SetToolTip(
-            _("View, save, copy, clear, or toggle the full log")
+            _("View or save reports, copy the summary, or view the full log")
         )
         filter_row.Add(self.filter_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         filter_row.Add(
             self.filter_choice, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 12
+        )
+        filter_row.Add(self.source_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        filter_row.Add(
+            self.source_choice, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 12
         )
         filter_row.Add(
             self.unique_codes_cb, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 12
@@ -697,30 +748,6 @@ class MainFrame(wx.Frame):
         )
         root.Add(issues_sizer, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
-        # --- Full log (collapsible via button) ---
-        log_header = wx.BoxSizer(wx.HORIZONTAL)
-        self.log_toggle = wx.Button(panel, label=_("Show full &log"))
-        self.log_toggle.SetName(_("Show full log"))
-        self.log_toggle.SetToolTip(
-            _("Show or hide the full checker log (Ctrl+L)")
-        )
-        log_header.Add(self.log_toggle, 0)
-        root.Add(log_header, 0, wx.LEFT | wx.RIGHT, 10)
-
-        self.log_ctrl = wx.TextCtrl(
-            panel,
-            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP | wx.BORDER_SUNKEN,
-            name=_("Full checker log"),
-        )
-        mono = wx.Font(
-            9, wx.FONTFAMILY_TELETYPE, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL
-        )
-        self.log_ctrl.SetFont(mono)
-        self.log_ctrl.Hide()
-        root.Add(self.log_ctrl, 0, wx.EXPAND | wx.ALL, 10)
-        self._log_sizer_item = root.GetItem(root.GetItemCount() - 1)
-        self._log_sizer_item.SetProportion(0)
-
         panel.SetSizer(root)
         self.panel = panel
         self.root_sizer = root
@@ -744,14 +771,14 @@ class MainFrame(wx.Frame):
 
         report_menu = wx.Menu()
         self.menu_view_text = report_menu.Append(
-            wx.ID_ANY, _("View &text report")
+            wx.ID_ANY, _("View &text report\tCtrl+T")
         )
         self.menu_save_text = report_menu.Append(
-            wx.ID_ANY, _("Save &text report…")
+            wx.ID_ANY, _("Save &text report…\tCtrl+Shift+S")
         )
         report_menu.AppendSeparator()
         self.menu_view_html = report_menu.Append(
-            wx.ID_ANY, _("View &HTML report in browser")
+            wx.ID_ANY, _("View &HTML report in browser\tCtrl+H")
         )
         self.menu_save_html = report_menu.Append(
             wx.ID_SAVEAS, _("Save &HTML report…\tCtrl+S")
@@ -764,8 +791,8 @@ class MainFrame(wx.Frame):
             wx.ID_CLEAR, _("C&lear results\tCtrl+Shift+N")
         )
         report_menu.AppendSeparator()
-        self.menu_toggle_log = report_menu.Append(
-            wx.ID_ANY, _("Show/hide full &log\tCtrl+L")
+        self.menu_view_log = report_menu.Append(
+            wx.ID_ANY, _("View full &log\tCtrl+L")
         )
         self._report_menu_index = menubar.GetMenuCount()
         menubar.Append(report_menu, _("&Report"))
@@ -819,7 +846,7 @@ class MainFrame(wx.Frame):
             self.menu_save_html,
             self.menu_copy,
             self.menu_clear,
-            self.menu_toggle_log,
+            self.menu_view_log,
         ):
             item.Enable(enabled)
         self.report_btn.Enable(enabled)
@@ -836,8 +863,8 @@ class MainFrame(wx.Frame):
         self.copy_btn.Bind(wx.EVT_BUTTON, self.on_copy_summary)
         self.report_btn.Bind(wx.EVT_BUTTON, self.on_report_button)
         self.filter_choice.Bind(wx.EVT_CHOICE, self.on_filter_changed)
+        self.source_choice.Bind(wx.EVT_CHOICE, self.on_filter_changed)
         self.unique_codes_cb.Bind(wx.EVT_CHECKBOX, self.on_unique_codes_changed)
-        self.log_toggle.Bind(wx.EVT_BUTTON, self.on_toggle_log)
         self.path_ctrl.Bind(wx.EVT_TEXT_ENTER, self.on_check)
         self._bind_menus()
 
@@ -857,7 +884,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_copy_summary, self.menu_copy)
         self.Bind(wx.EVT_MENU, self.on_clear_results, self.menu_clear)
         self.Bind(wx.EVT_MENU, self.on_check, self.menu_check)
-        self.Bind(wx.EVT_MENU, self.on_menu_toggle_log, self.menu_toggle_log)
+        self.Bind(wx.EVT_MENU, self.on_view_full_log, self.menu_view_log)
         self.Bind(wx.EVT_MENU, self.on_check_updates, self.menu_update)
         self.Bind(wx.EVT_MENU, self.on_reinstall_checker, self.menu_install)
         self.Bind(wx.EVT_MENU, self.on_about, self.menu_about)
@@ -904,6 +931,13 @@ class MainFrame(wx.Frame):
         self.filter_choice.Set(list(filter_choices()))
         if 0 <= filter_sel < self.filter_choice.GetCount():
             self.filter_choice.SetSelection(filter_sel)
+        prev_source = self._selected_source_name()
+        self.source_label.SetLabel(_("Source:"))
+        self.source_choice.SetName(_("Issue source filter"))
+        self.source_choice.SetToolTip(
+            _("Show issues from a specific checker, or all")
+        )
+        self._sync_source_filter_choices(prefer=prev_source)
         self.unique_codes_cb.SetLabel(
             _("Show one example of each warning/error")
         )
@@ -920,7 +954,7 @@ class MainFrame(wx.Frame):
         self.copy_btn.SetToolTip(_("Copy the result summary (Ctrl+Shift+C)"))
         self.report_btn.SetLabel(_("&Report…"))
         self.report_btn.SetToolTip(
-            _("View, save, copy, clear, or toggle the full log")
+            _("View or save reports, copy the summary, or view the full log")
         )
         self.issues_list.SetName(_("Issues list"))
         self.issues_list.SetColumnTitles(
@@ -930,17 +964,6 @@ class MainFrame(wx.Frame):
             _("Press Enter or double-click an issue to read the full details.")
         )
         self.issues_hint.SetName(_("Issues hint"))
-        show_log = self.log_ctrl.IsShown()
-        self.log_toggle.SetLabel(
-            _("Hide full &log") if show_log else _("Show full &log")
-        )
-        self.log_toggle.SetName(
-            _("Hide full log") if show_log else _("Show full log")
-        )
-        self.log_toggle.SetToolTip(
-            _("Show or hide the full checker log (Ctrl+L)")
-        )
-        self.log_ctrl.SetName(_("Full checker log"))
         self._build_menubar()
         if self._last_result is not None:
             self._refresh_result_text()
@@ -963,7 +986,6 @@ class MainFrame(wx.Frame):
             self.panel,
             self.path_ctrl,
             self.issues_list,
-            self.log_ctrl,
             self.result_label,
         ):
             window.SetDropTarget(PublicationDropTarget(self))
@@ -984,6 +1006,9 @@ class MainFrame(wx.Frame):
                     wx.PostEvent(self, ProgressEvent(message=msg))
 
                 ensure_tools_installed(progress=progress)
+                # One-time after install/upgrade: run each tool once so AV
+                # scans (Defender) happen now, not during the first check.
+                run_startup_warmup(progress=progress)
                 wx.PostEvent(self, ProgressEvent(message=_("Ready")))
                 try:
                     updates = check_for_updates()
@@ -1059,8 +1084,11 @@ class MainFrame(wx.Frame):
         self._show_result_text(_("No check run yet."), title=None)
         self.issues_list.DeleteAllItems()
         self.filter_choice.SetSelection(0)
-        self.log_ctrl.ChangeValue("")
-        self._set_log_visible(False)
+        self._source_filter_names = []
+        self.source_choice.Set(list(source_filter_choices()))
+        self.source_choice.SetSelection(0)
+        self.source_label.Enable(False)
+        self.source_choice.Enable(False)
         self._update_report_actions_enabled()
         self._update_status_bar()
         self._focus_select_button()
@@ -1153,6 +1181,9 @@ class MainFrame(wx.Frame):
         if result is None:
             return
         filter_idx = self.filter_choice.GetSelection()
+        source_name = (
+            self._selected_source_name() if self.source_choice.IsEnabled() else None
+        )
         filtered: list[Issue] = []
         for issue in result.issues:
             if filter_idx == 1 and issue.severity not in (
@@ -1166,6 +1197,8 @@ class MainFrame(wx.Frame):
                 Severity.INFO,
                 Severity.USAGE,
             ):
+                continue
+            if source_name and issue.source != source_name:
                 continue
             filtered.append(issue)
 
@@ -1229,6 +1262,38 @@ class MainFrame(wx.Frame):
                 return
         event.Skip()
 
+    def _selected_source_name(self) -> str | None:
+        """Return the selected checker name, or None for All checkers."""
+        idx = self.source_choice.GetSelection()
+        if idx <= 0:
+            return None
+        names = self._source_filter_names
+        if idx > len(names):
+            return None
+        return names[idx - 1]
+
+    def _sync_source_filter_choices(
+        self,
+        *,
+        prefer: str | None = None,
+        reset_to_all: bool = False,
+    ) -> None:
+        """Rebuild Source choices from the last result's checker name(s)."""
+        result = self._last_result
+        sources = _result_source_names(result) if result is not None else []
+        self._source_filter_names = sources
+        self.source_choice.Set(list(source_filter_choices(sources)))
+        has_sources = bool(sources)
+        self.source_label.Enable(has_sources)
+        self.source_choice.Enable(has_sources)
+        if not has_sources or reset_to_all or prefer is None:
+            self.source_choice.SetSelection(0)
+            return
+        try:
+            self.source_choice.SetSelection(sources.index(prefer) + 1)
+        except ValueError:
+            self.source_choice.SetSelection(0)
+
     def _apply_result(self, result: CheckResult) -> None:
         self._last_result = result
         # Update content first (issues list must not steal focus afterward).
@@ -1238,7 +1303,8 @@ class MainFrame(wx.Frame):
             focus=False,
             verdict=result.verdict,
         )
-        self.log_ctrl.SetValue(result.raw_log or result.error_message or "")
+        # Source filter lists the checker(s) that produced this result.
+        self._sync_source_filter_choices(prefer=None, reset_to_all=True)
         self._populate_issues()
         self._update_report_actions_enabled()
         self._update_status_bar()
@@ -1331,7 +1397,9 @@ class MainFrame(wx.Frame):
             elif not self._busy:
                 self._restore_result_display()
             return
-        self._show_result_text(event.message, update_title=False)
+        # While a check runs, move focus into the result pane so each progress
+        # message ("Checking with Ace…", …) is announced by screen readers.
+        self._show_result_text(event.message, update_title=False, focus=self._busy)
 
     def on_result_event(self, event: ResultEvent) -> None:
         self._set_busy(False)
@@ -1349,30 +1417,6 @@ class MainFrame(wx.Frame):
         event.Skip()
         # Tabbing into the list often lands on the header first; move to row 0.
         wx.CallAfter(self.issues_list.EnsureRowFocus)
-
-    def on_toggle_log(self, _event: wx.CommandEvent) -> None:
-        self._set_log_visible(not self.log_ctrl.IsShown())
-
-    def on_menu_toggle_log(self, _event: wx.CommandEvent) -> None:
-        self._set_log_visible(not self.log_ctrl.IsShown())
-
-    def _set_log_visible(self, show: bool) -> None:
-        self.log_ctrl.Show(show)
-        self.log_toggle.SetLabel(
-            _("Hide full &log") if show else _("Show full &log")
-        )
-        self.log_toggle.SetName(
-            _("Hide full log") if show else _("Show full log")
-        )
-        if show:
-            self._log_sizer_item.SetProportion(1)
-            self.log_ctrl.SetMinSize((-1, 160))
-            self.panel.Layout()
-            self.log_ctrl.SetFocus()
-        else:
-            self._log_sizer_item.SetProportion(0)
-            self.log_ctrl.SetMinSize((-1, -1))
-            self.panel.Layout()
 
     def on_copy_summary(self, _event: wx.CommandEvent) -> None:
         text = self._summary_text()
@@ -1403,23 +1447,23 @@ class MainFrame(wx.Frame):
 
     def on_report_button(self, _event: wx.CommandEvent) -> None:
         menu = wx.Menu()
-        view_text = menu.Append(wx.ID_ANY, _("View &text report"))
-        save_text = menu.Append(wx.ID_ANY, _("Save &text report…"))
+        view_text = menu.Append(wx.ID_ANY, _("View &text report\tCtrl+T"))
+        save_text = menu.Append(wx.ID_ANY, _("Save &text report…\tCtrl+Shift+S"))
         menu.AppendSeparator()
-        view_html = menu.Append(wx.ID_ANY, _("View &HTML report in browser"))
-        save_html = menu.Append(wx.ID_ANY, _("Save &HTML report…"))
+        view_html = menu.Append(wx.ID_ANY, _("View &HTML report in browser\tCtrl+H"))
+        save_html = menu.Append(wx.ID_ANY, _("Save &HTML report…\tCtrl+S"))
         menu.AppendSeparator()
-        copy_item = menu.Append(wx.ID_ANY, _("&Copy summary"))
-        clear_item = menu.Append(wx.ID_ANY, _("C&lear results"))
+        copy_item = menu.Append(wx.ID_ANY, _("&Copy summary\tCtrl+Shift+C"))
+        clear_item = menu.Append(wx.ID_ANY, _("C&lear results\tCtrl+Shift+N"))
         menu.AppendSeparator()
-        log_item = menu.Append(wx.ID_ANY, _("Show/hide full &log"))
+        log_item = menu.Append(wx.ID_ANY, _("View full &log\tCtrl+L"))
         menu.Bind(wx.EVT_MENU, self.on_view_text_report, view_text)
         menu.Bind(wx.EVT_MENU, self.on_save_text_report, save_text)
         menu.Bind(wx.EVT_MENU, self.on_view_html_report, view_html)
         menu.Bind(wx.EVT_MENU, self.on_save_html_report, save_html)
         menu.Bind(wx.EVT_MENU, self.on_copy_summary, copy_item)
         menu.Bind(wx.EVT_MENU, self.on_clear_results, clear_item)
-        menu.Bind(wx.EVT_MENU, self.on_menu_toggle_log, log_item)
+        menu.Bind(wx.EVT_MENU, self.on_view_full_log, log_item)
         self.PopupMenu(menu)
         menu.Destroy()
 
@@ -1448,12 +1492,8 @@ class MainFrame(wx.Frame):
             return "ace-report"
         return "check-report"
 
-    def on_view_text_report(self, _event: wx.CommandEvent) -> None:
-        result = self._require_result(_("Nothing to view"))
-        if result is None:
-            return
-        body = format_text_report(result, include_full_log=True)
-        title = report_title(result)
+    def _show_text_dialog(self, title: str, body: str) -> None:
+        """Read-only monospaced text viewer used for reports and the full log."""
         dlg = wx.Dialog(
             self,
             title=title,
@@ -1480,6 +1520,20 @@ class MainFrame(wx.Frame):
         text.SetFocus()
         dlg.ShowModal()
         dlg.Destroy()
+
+    def on_view_text_report(self, _event: wx.CommandEvent) -> None:
+        result = self._require_result(_("Nothing to view"))
+        if result is None:
+            return
+        body = format_text_report(result, include_full_log=True)
+        self._show_text_dialog(report_title(result), body)
+
+    def on_view_full_log(self, _event: wx.CommandEvent) -> None:
+        result = self._require_result(_("Nothing to view"))
+        if result is None:
+            return
+        body = result.raw_log or result.error_message or _("The log is empty.")
+        self._show_text_dialog(_("Full checker log"), body)
 
     def on_save_text_report(self, _event: wx.CommandEvent) -> None:
         result = self._require_result(_("Nothing to save"))

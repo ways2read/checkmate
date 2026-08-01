@@ -20,12 +20,13 @@ support on Windows, macOS, and Linux.
 - Open a packaged `.ebrl`, `.epub`, or `.pdf` file, or an exploded publication
   folder (**Select file…** / **Select folder…**, or drag and drop) — checking
   starts automatically with the matching engine
-- For `.epub` files, EPUBCheck always runs; if the [Ace by DAISY](https://daisy.github.io/ace/)
-  CLI is installed (`ace-puppeteer` preferred, or `ace`), Ace runs next and
-  results are merged into one list (tagged by source). If Ace is not found,
-  EPUBCheck-only behavior is unchanged
+- For `.epub` files, EPUBCheck always runs; [Ace by DAISY](https://daisy.github.io/ace/)
+  runs next and results are merged into one list (tagged by source). Packaged
+  builds bundle Ace (with its own Node runtime and Chromium); otherwise a
+  user-installed CLI is used (`ace-puppeteer` preferred, or `ace`). If Ace is
+  not available, EPUBCheck-only behavior is unchanged
 - On Windows, right-click an `.ebrl`, `.epub`, or `.pdf` → **Validate with
-  eBraille Checker**, or **Open with** → eBraille Checker (does not change the
+  CheckMate**, or **Open with** → CheckMate (does not change the
   double-click default)
 - On macOS packaged builds, Finder **Open With** for `.ebrl` / `.epub` / `.pdf`
   (does not take over double-click by default)
@@ -99,19 +100,22 @@ pip install -r requirements.txt
 uv run python run.py
 # or, with venv activated:
 python run.py
-python -m app
+python -m checkmate
+# or:
+uv run checkmate
 ```
 
 ## Using the app
 
 1. **Select file…** or **Select folder…**, or **drag and drop** a publication
    onto the window — checking starts automatically. On Windows you can also
-   right-click an `.ebrl`, `.epub`, or `.pdf` → **Validate with eBraille Checker**,
-   or **Open with** → eBraille Checker. On macOS, use Finder **Open With** for a
+   right-click an `.ebrl`, `.epub`, or `.pdf` → **Validate with CheckMate**,
+   or **Open with** → CheckMate. On macOS, use Finder **Open With** for a
    packaged `.app`.
 2. Read the **Result** summary (focus moves there when a check finishes), then
    review **Issues** (filterable).
-3. Use **Show full log** only when you need the raw checker output.
+3. Use **Report → View full log** (`Ctrl+L`) only when you need the raw
+   checker output.
 4. **Tools → Re-check publication** (`F5`) re-runs the current path after you
    fix issues.
 5. **Report → Clear results** (`Ctrl+Shift+N`) clears the path, verdict, issues,
@@ -120,7 +124,7 @@ python -m app
    EPUBCheck, and/or veraPDF releases when they exist.
 
 The **title bar** keeps the app name and appends the verdict (for example
-`eBraille Checker — Failed — 3 errors`). The **status bar** shows tool
+`CheckMate — Failed — 3 errors`). The **status bar** shows tool
 versions and Java information.
 
 ### Keyboard shortcuts
@@ -130,10 +134,13 @@ versions and Java information.
 | `Ctrl+O` | Select file |
 | `Ctrl+Shift+O` | Select folder |
 | `F5` | Re-check current publication |
+| `Ctrl+T` | View text report |
+| `Ctrl+Shift+S` | Save text report |
+| `Ctrl+H` | View HTML report in browser |
 | `Ctrl+S` | Save HTML report |
 | `Ctrl+Shift+C` | Copy summary |
 | `Ctrl+Shift+N` | Clear results |
-| `Ctrl+L` | Show/hide full log |
+| `Ctrl+L` | View full log |
 | `Esc` | Exit |
 | Enter (in path field) | Check the path currently shown |
 | Alt+letter | Button / menu mnemonics (underlined letters) |
@@ -151,9 +158,9 @@ uses the newest available copy in this order:
 
 | OS | Application data |
 |---|---|
-| Windows | `%LOCALAPPDATA%\eBrailleCheckerGUI\` |
-| macOS | `~/Library/Application Support/eBrailleCheckerGUI/` |
-| Linux | `~/.local/share/eBrailleCheckerGUI/` |
+| Windows | `%LOCALAPPDATA%\CheckMate\` |
+| macOS | `~/Library/Application Support/CheckMate/` |
+| Linux | `~/.local/share/CheckMate/` |
 
 Under that folder:
 
@@ -222,7 +229,7 @@ trigger `java.lang.StackOverflowError` during RelaxNG validation on smaller JREs
 
 ### “Java was not found”
 
-**Packaged build (Windows):** use the full `dist/eBrailleChecker/` folder (or the
+**Packaged build (Windows):** use the full `dist/CheckMate/` folder (or the
 Inno Setup installer). It must contain a `runtime/` directory next to the
 executable. Do not copy only the `.exe` without the rest of the folder.
 
@@ -272,7 +279,7 @@ replace the app when the copy in `/Applications` has a higher `CFBundleVersion`
 build number than the one in the disk image (common when reinstalling the same
 marketing version from an older DMG).
 
-Remove the existing app first (`Applications` → move `eBrailleChecker.app` to
+Remove the existing app first (`Applications` → move `CheckMate.app` to
 Trash → empty Trash), then drag the new app from the DMG onto Applications
 again. Each release build from `scripts/build_macos.sh` increments
 `build_counter.txt` so newer DMGs upgrade cleanly.
@@ -281,7 +288,7 @@ again. Each release build from `scripts/build_macos.sh` increments
 
 ```text
 ebraille-checker-gui/
-  app/
+  checkmate/
     main.py            # wxPython UI
     checker.py         # Run jar, parse JSON results
     cover_image.py     # EPUB cover / PDF first-page for HTML reports
@@ -308,9 +315,9 @@ ebraille-checker-gui/
     make_icns.py             # Build .icns (defaults to .ico master)
     macos_release_arch_suffix.inc.sh
   installer/
-    eBrailleChecker.iss   # Inno Setup script (Windows installer)
-    eBrailleChecker.ico   # App / setup icon (Windows; also Mac .icns master)
-    eBrailleChecker.icns  # App / volume icon (macOS)
+    CheckMate.iss         # Inno Setup script (Windows installer)
+    CheckMate.ico         # App / setup icon (Windows; also Mac .icns master)
+    CheckMate.icns        # App / volume icon (macOS)
     icon.png              # Alternate flat artwork (--from-png)
     welcome.txt           # Setup wizard intro text
   packaging/macos/
@@ -326,14 +333,19 @@ ebraille-checker-gui/
 ## Packaging
 
 Build a standalone app on each target OS (Windows or macOS). The script bundles
-**Eclipse Temurin JRE 17**, **eBraille Checker**, **EPUBCheck**, and **veraPDF**
-by default. **PyMuPDF** is included in the Python app bundle (via PyInstaller
+**Eclipse Temurin JRE 17**, **eBraille Checker**, **EPUBCheck**, **veraPDF**,
+and **Ace by DAISY** by default. **PyMuPDF** is included in the Python app bundle (via PyInstaller
 `--collect-all pymupdf`) on **both Windows and macOS** so HTML reports can show
 PDF first-page previews — no separate macOS packaging step is required beyond
 `scripts/package.py` / `scripts/build_macos.sh`.
 
-Ace by DAISY is **not** bundled. Packaged and source builds look for
-`ace-puppeteer` (preferred) or `ace` on `PATH`, and also check common npm /
+Ace by DAISY is bundled as a self-contained `ace/` directory
+(`scripts/ace_bundle.py`): a portable Node.js LTS runtime, `@daisy/ace-cli`
+(the Puppeteer runner — same CLI, no Electron), and a pinned Chrome for
+Testing in a private Puppeteer cache. The build machine does not need Node —
+the downloaded portable Node's own npm performs the install. At run time the
+bundled copy is preferred; without it, builds fall back to a user install of
+`ace-puppeteer` (preferred) or `ace` on `PATH`, also checking common npm /
 Homebrew install locations (`~/.npm-global/bin`, `/usr/local/bin`,
 `/opt/homebrew/bin`, …) so a Finder-launched macOS `.app` can still find a
 user install. The default Electron `ace` CLI can fail when
@@ -352,14 +364,15 @@ uv run python scripts/package.py --no-bundle-java       # smaller build; needs s
 uv run python scripts/package.py --no-bundle-checker    # eBraille Checker on first run
 uv run python scripts/package.py --no-bundle-epubcheck  # EPUBCheck on first run
 uv run python scripts/package.py --no-bundle-verapdf    # veraPDF on first PDF check
+uv run python scripts/package.py --no-bundle-ace        # needs user install of @daisy/ace
 uv run python scripts/package.py --onefile              # not recommended with bundles
 ```
 
 Output layout (Windows example):
 
 ```text
-dist/eBrailleChecker/
-  eBrailleChecker.exe
+dist/CheckMate/
+  CheckMate.exe
   runtime/              # bundled Temurin JRE
     bin/java.exe
   checker/              # bundled eBraille Checker
@@ -371,11 +384,16 @@ dist/eBrailleChecker/
   verapdf/              # bundled veraPDF CLI
     bundled_version.txt
     bin/cli-*.jar
+  ace/                  # bundled Ace by DAISY
+    bundled_version.txt
+    node/node.exe       # portable Node.js runtime
+    node_modules/@daisy/ace-cli/bin/ace.js
+    puppeteer/          # pinned Chrome for Testing
   … (PyInstaller support files)
 ```
 
 On Windows, prefer the **Inno Setup** installer (below) for end users. You can
-still zip and distribute the entire `dist/eBrailleChecker/` folder if needed —
+still zip and distribute the entire `dist/CheckMate/` folder if needed —
 do not ship only the `.exe`.
 
 On macOS, prefer the **signed and notarized `.dmg`** (below). You can still
@@ -389,8 +407,8 @@ bundled copies in the install folder are not modified.
 ### Windows installer (Inno Setup)
 
 Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php). Keep
-`MyAppVersion` in `installer/eBrailleChecker.iss` in sync with
-`pyproject.toml` / `app/__init__.py`.
+`MyAppVersion` in `installer/CheckMate.iss` in sync with
+`pyproject.toml` / `checkmate/__init__.py`.
 
 One-shot (packages the app, then compiles the setup):
 
@@ -404,10 +422,10 @@ Or step by step:
 uv sync --extra dev
 uv run python scripts/package.py --clean
 # Then compile with Inno Setup Compiler, or:
-iscc installer\eBrailleChecker.iss
+iscc installer\CheckMate.iss
 ```
 
-Output: `installer/Output/eBrailleCheckerGUI-<version>-setup.exe`
+Output: `installer/Output/CheckMate-<version>-setup.exe`
 
 The installer:
 
@@ -416,11 +434,11 @@ The installer:
   `runtime/`, `checker/`, `epubcheck/`, or `verapdf/` is missing from `dist/`)
 - Supports per-user install (default) or Program Files with elevation
 - Adds `.ebrl` / `.epub` / `.pdf` shell integration (optional task, on by default):
-  **Open with** → eBraille Checker GUI, and context menu **Validate with
-  eBraille Checker** — does not change the double-click default for any
+  **Open with** → CheckMate, and context menu **Validate with
+  CheckMate** — does not change the double-click default for any
   extension (EPUB/PDF readers stay as the default opener)
 - Offers an optional desktop shortcut and launch-on-finish
-- On uninstall, optionally removes `%LOCALAPPDATA%\eBrailleCheckerGUI\`
+- On uninstall, optionally removes `%LOCALAPPDATA%\CheckMate\`
   (settings and checker/EPUBCheck updates)
 
 ### macOS disk image + notarization
@@ -456,9 +474,9 @@ EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh 0.2.2
 
 Outputs (arch suffix is `-AppleSilicon` or `-Intel`):
 
-- `dist/eBrailleChecker_App/eBrailleChecker.app`
-- `dist/eBrailleCheckerGUI-macOS-<version>-<arch>.zip`
-- `dist/eBrailleCheckerGUI-macos-<version>-<arch>.dmg` (signed + notarized when credentials are set)
+- `dist/CheckMate_App/CheckMate.app`
+- `dist/CheckMate-macOS-<version>-<arch>.zip`
+- `dist/CheckMate-macos-<version>-<arch>.dmg` (signed + notarized when credentials are set)
 
 Step by step:
 
@@ -467,7 +485,7 @@ Step by step:
 ./scripts/build_macos_dmg.sh 0.2.2      # drag-install .dmg (unsigned)
 ```
 
-App icon: `scripts/make_icns.py` builds `installer/eBrailleChecker.icns` from
+App icon: `scripts/make_icns.py` builds `installer/CheckMate.icns` from
 the Windows `.ico` by default (flatter master). Use `--from-png` for
 `installer/icon.png` instead.
 
@@ -480,13 +498,13 @@ Useful environment variables:
 | `EBC_APP_SIGN_IDENTITY` | Override Developer ID Application identity |
 | `EBC_SKIP_NOTARY=1` | Build and sign only (no notarization) |
 | `EBC_SKIP_APP_SIGN=1` | Skip codesign (local smoke builds) |
-| `EBC_SKIP_APPLICATION_BUILD=1` | Re-sign / notarize an existing `dist/eBrailleChecker_App/` |
+| `EBC_SKIP_APPLICATION_BUILD=1` | Re-sign / notarize an existing `dist/CheckMate_App/` |
 
 **Upgrading / reinstalling:** macOS compares `CFBundleVersion` (an integer build
 number from `build_counter.txt`, bumped on each `build_macos.sh` run) when you
 drag the app onto Applications. If Finder says a newer version is already
-installed, remove `eBrailleChecker.app` from Applications first (Trash → empty
-Trash), then drag again. The DMG also includes `Install eBraille Checker.txt`
+installed, remove `CheckMate.app` from Applications first (Trash → empty
+Trash), then drag again. The DMG also includes `Install CheckMate.txt`
 with these steps.
 
 `scripts/package.py` registers `.ebrl`, `.epub`, and `.pdf` document types in the
@@ -514,11 +532,11 @@ local testing. Sample publications are **not** included in the repository. See
   [PyMuPDF](https://pymupdf.readthedocs.io/) (`fitz`).
 - Learn about the [eBraille standard](https://daisy.org/activities/standards/ebraille/)
   and the [eBraille specification](https://daisy.org/s/ebraille/).
-- This GUI is a separate front-end project and is not an official DAISY release.
+- CheckMate is a separate front-end project and is not an official DAISY release.
 
 ## License
 
-This project (the GUI) is released under the [MIT License](LICENSE).
+This project (CheckMate) is released under the [MIT License](LICENSE).
 
 The eBraille Checker, EPUBCheck, and veraPDF tools downloaded at runtime remain
 under their own licenses; see the

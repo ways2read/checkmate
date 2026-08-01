@@ -7,7 +7,7 @@ import re
 import sys
 from pathlib import Path
 
-APP_NAME = "eBrailleCheckerGUI"
+APP_NAME = "CheckMate"
 
 CHECKER_REPO = "daisy/ebraille-checker"
 CHECKER_RELEASES_API = (
@@ -39,6 +39,7 @@ BUNDLED_JAVA_DIRNAME = "runtime"
 BUNDLED_CHECKER_DIRNAME = "checker"
 BUNDLED_EPUBCHECK_DIRNAME = "epubcheck"
 BUNDLED_VERAPDF_DIRNAME = "verapdf"
+BUNDLED_ACE_DIRNAME = "ace"
 BUNDLED_VERSION_FILE = "bundled_version.txt"
 BUNDLED_CHECKER_VERSION_FILE = BUNDLED_VERSION_FILE
 
@@ -71,6 +72,10 @@ def bundled_epubcheck_dir() -> Path:
 
 def bundled_verapdf_dir() -> Path:
     return application_dir() / BUNDLED_VERAPDF_DIRNAME
+
+
+def bundled_ace_dir() -> Path:
+    return application_dir() / BUNDLED_ACE_DIRNAME
 
 
 def app_data_dir() -> Path:

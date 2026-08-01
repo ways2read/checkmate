@@ -11,7 +11,7 @@
 #   EBC_APP_SIGN_IDENTITY     — Developer ID Application (name or SHA-1)
 #   EBC_CODESIGN_KEYCHAIN     — keychain for codesign (default: login.keychain-db)
 #   EBC_ENTITLEMENTS          — entitlements plist path
-#   EBC_SKIP_APPLICATION_BUILD=1 — use existing dist/eBrailleChecker_App/
+#   EBC_SKIP_APPLICATION_BUILD=1 — use existing dist/CheckMate_App/
 #   EBC_SKIP_APP_SIGN=1       — skip app codesign
 #   EBC_SKIP_DMG_SIGN=1       — skip DMG codesign
 #   EBC_SKIP_DMG_LAYOUT=1     — skip Finder layout in build_macos_dmg.sh
@@ -31,8 +31,8 @@ cd "$REPO_ROOT"
 
 SIGN_KEYCHAIN="${EBC_CODESIGN_KEYCHAIN:-$HOME/Library/Keychains/login.keychain-db}"
 ENTITLEMENTS="${EBC_ENTITLEMENTS:-$REPO_ROOT/packaging/macos/entitlements.plist}"
-APP_DIR="$REPO_ROOT/dist/eBrailleChecker_App"
-APP_BUNDLE="$APP_DIR/eBrailleChecker.app"
+APP_DIR="$REPO_ROOT/dist/CheckMate_App"
+APP_BUNDLE="$APP_DIR/CheckMate.app"
 APP_ID=""
 
 read_project_version() {
@@ -52,7 +52,7 @@ VERSION="${VERSION:-dev}"
 # shellcheck source=macos_release_arch_suffix.inc.sh
 source "$REPO_ROOT/scripts/macos_release_arch_suffix.inc.sh"
 
-ARCHIVE_NAME="eBrailleCheckerGUI-macOS-${VERSION}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.zip"
+ARCHIVE_NAME="CheckMate-macOS-${VERSION}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.zip"
 ZIP_PATH="$REPO_ROOT/dist/$ARCHIVE_NAME"
 
 pick_app_identity() {
@@ -196,10 +196,10 @@ else
   codesign --verify --verbose=2 "$APP_BUNDLE"
   echo "Refreshing dist zip so it contains the signed app…"
   # Prefer version from build_macos naming; rebuild zip name if SETUP_VER differs
-  ARCHIVE_NAME="eBrailleCheckerGUI-macOS-${SETUP_VER}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.zip"
+  ARCHIVE_NAME="CheckMate-macOS-${SETUP_VER}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.zip"
   ZIP_PATH="$REPO_ROOT/dist/$ARCHIVE_NAME"
   rm -f "$ZIP_PATH"
-  (cd dist && zip -qr "$ARCHIVE_NAME" eBrailleChecker_App)
+  (cd dist && zip -qr "$ARCHIVE_NAME" CheckMate_App)
   echo "Updated: $ZIP_PATH"
 fi
 
@@ -207,7 +207,7 @@ echo "=== 3/5 Disk image (.dmg) ==="
 chmod +x "$REPO_ROOT/scripts/build_macos_dmg.sh"
 "$REPO_ROOT/scripts/build_macos_dmg.sh" "$SETUP_VER"
 
-DMG="$REPO_ROOT/dist/eBrailleCheckerGUI-macos-${SETUP_VER}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.dmg"
+DMG="$REPO_ROOT/dist/CheckMate-macos-${SETUP_VER}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.dmg"
 if [[ ! -f "$DMG" ]]; then
   echo "WARNING: Expected dmg not found at $DMG"
 else

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Build eBraille Checker GUI for macOS: PyInstaller .app, stage folder, zip.
+# Build CheckMate for macOS: PyInstaller .app, stage folder, zip.
 #
 # Usage: ./scripts/build_macos.sh [version]
 # Example: ./scripts/build_macos.sh 0.1.0
 #
 # Output:
-#   dist/eBrailleChecker_App/eBrailleChecker.app
-#   dist/eBrailleCheckerGUI-macOS-<version>-<arch>.zip
+#   dist/CheckMate_App/CheckMate.app
+#   dist/CheckMate-macOS-<version>-<arch>.zip
 #
 # Each run increments build_counter.txt and stamps CFBundleVersion so a new DMG
 # can replace an older build of the same marketing version in /Applications.
@@ -35,17 +35,17 @@ VERSION="${VERSION:-dev}"
 
 BUILD_NUMBER="$(next_build_number)"
 
-APP_NAME="eBrailleChecker"
-APP_DIR="dist/eBrailleChecker_App"
-ARCHIVE_NAME="eBrailleCheckerGUI-macOS-${VERSION}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.zip"
+APP_NAME="CheckMate"
+APP_DIR="dist/CheckMate_App"
+ARCHIVE_NAME="CheckMate-macOS-${VERSION}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.zip"
 
-echo "Building eBraille Checker GUI for macOS"
+echo "Building CheckMate for macOS"
 echo "  version: $VERSION"
 echo "  build:   $BUILD_NUMBER"
 echo "  arch suffix: '${EBC_MACOS_RELEASE_ARCH_SUFFIX}'"
 
-if [[ ! -f "installer/eBrailleChecker.icns" ]]; then
-  echo "==> Creating installer/eBrailleChecker.icns…"
+if [[ ! -f "installer/CheckMate.icns" ]]; then
+  echo "==> Creating installer/CheckMate.icns…"
   uv run python scripts/make_icns.py
 fi
 
@@ -66,5 +66,5 @@ echo "App folder: $APP_DIR/${APP_NAME}.app"
 echo "  CFBundleShortVersionString=$VERSION  CFBundleVersion=$BUILD_NUMBER"
 
 rm -f "dist/$ARCHIVE_NAME"
-(cd dist && zip -qr "$ARCHIVE_NAME" eBrailleChecker_App)
+(cd dist && zip -qr "$ARCHIVE_NAME" CheckMate_App)
 echo "Created: dist/$ARCHIVE_NAME"

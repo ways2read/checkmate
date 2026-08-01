@@ -1,4 +1,4 @@
-"""python -m app"""
+"""python -m checkmate"""
 
 from .main import run_app
 
