@@ -1,4 +1,4 @@
-# eBraille Checker GUI
+# CheckMate
 
 An accessible, cross-platform desktop front-end for the
 [DAISY eBraille Checker](https://github.com/daisy/ebraille-checker),
