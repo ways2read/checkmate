@@ -1,11 +1,11 @@
 Welcome to the CheckMate Setup Wizard.
 
 This application is an accessible desktop front-end for the DAISY eBraille
-Checker, W3C EPUBCheck, and veraPDF. It lets you open an .ebrl, .epub, or .pdf
-publication (or an exploded eBraille/EPUB folder) and see a clear Passed /
-Passed with warnings / Failed result. .ebrl files are checked with eBraille
-Checker; .epub files with EPUBCheck; .pdf files with veraPDF (PDF/UA).
-Exploded folders are detected automatically.
+Checker, W3C EPUBCheck, Ace by DAISY, and veraPDF. It lets you open an .ebrl,
+.epub, or .pdf publication (or an exploded eBraille/EPUB folder) and see a
+clear Passed / Passed with warnings / Failed result. .ebrl files are checked
+with eBraille Checker; .epub files with EPUBCheck and Ace; .pdf files with
+veraPDF (PDF/UA). Exploded folders are detected automatically.
 
 On Windows you can right-click an .ebrl, .epub, or .pdf file and choose
 "Validate with CheckMate", or use Open with → CheckMate.
@@ -15,9 +15,10 @@ What this installer includes:
   • Bundled Eclipse Temurin Java Runtime (JRE 17)
   • Bundled eBraille Checker
   • Bundled EPUBCheck
+  • Bundled Ace by DAISY (with Node.js and Chromium)
   • Bundled veraPDF
   • PyMuPDF (for PDF first-page previews in HTML reports)
 
-No separate Java installation is required.
+No separate Java, Node.js, or Ace installation is required.
 
 Click Next to continue.

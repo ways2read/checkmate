@@ -19,7 +19,7 @@
 #define MyAppFullName "CheckMate"
 #define MyAppVersion "0.6.0"
 #define MyAppPublisher "ways2read"
-#define MyAppURL "https://github.com/ways2read/ebraille-checker-gui"
+#define MyAppURL "https://github.com/ways2read/checkmate"
 #define MyAppExeName "CheckMate.exe"
 ; Keep in sync with application data folder name (checkmate/paths.py)
 #define MyAppDataName "CheckMate"

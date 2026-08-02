@@ -78,16 +78,16 @@ Jars are fetched from
 With [uv](https://docs.astral.sh/uv/) (recommended):
 
 ```bash
-git clone https://github.com/ways2read/ebraille-checker-gui.git
-cd ebraille-checker-gui
+git clone https://github.com/ways2read/checkmate.git
+cd checkmate
 uv sync
 ```
 
 With pip:
 
 ```bash
-git clone https://github.com/ways2read/ebraille-checker-gui.git
-cd ebraille-checker-gui
+git clone https://github.com/ways2read/checkmate.git
+cd checkmate
 python -m venv .venv
 .venv\Scripts\activate          # Windows
 # source .venv/bin/activate     # macOS / Linux
@@ -287,7 +287,7 @@ again. Each release build from `scripts/build_macos.sh` increments
 ## Project layout
 
 ```text
-ebraille-checker-gui/
+checkmate/
   checkmate/
     main.py            # wxPython UI
     checker.py         # Run jar, parse JSON results

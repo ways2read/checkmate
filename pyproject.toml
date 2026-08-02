@@ -20,8 +20,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ways2read/ebraille-checker-gui"
-Issues = "https://github.com/ways2read/ebraille-checker-gui/issues"
+Homepage = "https://github.com/ways2read/checkmate"
+Issues = "https://github.com/ways2read/checkmate/issues"
 Upstream = "https://github.com/daisy/ebraille-checker"
 
 [project.scripts]

@@ -124,9 +124,9 @@ def filter_choices() -> tuple[str, ...]:
 
 
 def source_filter_choices(sources: list[str] | None = None) -> tuple[str, ...]:
-    """Choices for the Source filter: All, then each checker name."""
+    """Choices for the Source filter: combined run, then each checker name."""
     names = list(sources or [])
-    return (_("All checkers"), *names)
+    return (_("EPUBCheck + Ace"), *names)
 
 
 def _result_source_names(result: CheckResult) -> list[str]:
@@ -682,13 +682,14 @@ class MainFrame(wx.Frame):
         )
         # Populated from the last result's checker name(s).
         self._source_filter_names: list[str] = []
-        self.source_label.Enable(False)
-        self.source_choice.Enable(False)
+        # Only shown for multi-checker runs (EPUBCheck + Ace).
+        self.source_label.Hide()
+        self.source_choice.Hide()
         self.unique_codes_cb = wx.CheckBox(
-            panel, label=_("Show one example of each warning/error")
+            panel, label=_("Show one example of each issue")
         )
         self.unique_codes_cb.SetName(
-            _("Show one example of each warning/error")
+            _("Show one example of each issue")
         )
         self.unique_codes_cb.SetToolTip(
             _(
@@ -705,6 +706,7 @@ class MainFrame(wx.Frame):
         self.report_btn.SetToolTip(
             _("View or save reports, copy the summary, or view the full log")
         )
+        self.filter_row = filter_row
         filter_row.Add(self.filter_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         filter_row.Add(
             self.filter_choice, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 12
@@ -713,6 +715,8 @@ class MainFrame(wx.Frame):
         filter_row.Add(
             self.source_choice, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 12
         )
+        filter_row.Show(self.source_label, False)
+        filter_row.Show(self.source_choice, False)
         filter_row.Add(
             self.unique_codes_cb, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 12
         )
@@ -939,10 +943,10 @@ class MainFrame(wx.Frame):
         )
         self._sync_source_filter_choices(prefer=prev_source)
         self.unique_codes_cb.SetLabel(
-            _("Show one example of each warning/error")
+            _("Show one example of each issue")
         )
         self.unique_codes_cb.SetName(
-            _("Show one example of each warning/error")
+            _("Show one example of each issue")
         )
         self.unique_codes_cb.SetToolTip(
             _(
@@ -1087,8 +1091,7 @@ class MainFrame(wx.Frame):
         self._source_filter_names = []
         self.source_choice.Set(list(source_filter_choices()))
         self.source_choice.SetSelection(0)
-        self.source_label.Enable(False)
-        self.source_choice.Enable(False)
+        self._set_source_filter_visible(False)
         self._update_report_actions_enabled()
         self._update_status_bar()
         self._focus_select_button()
@@ -1182,7 +1185,7 @@ class MainFrame(wx.Frame):
             return
         filter_idx = self.filter_choice.GetSelection()
         source_name = (
-            self._selected_source_name() if self.source_choice.IsEnabled() else None
+            self._selected_source_name() if self.source_choice.IsShown() else None
         )
         filtered: list[Issue] = []
         for issue in result.issues:
@@ -1263,7 +1266,7 @@ class MainFrame(wx.Frame):
         event.Skip()
 
     def _selected_source_name(self) -> str | None:
-        """Return the selected checker name, or None for All checkers."""
+        """Return the selected checker name, or None for EPUBCheck + Ace."""
         idx = self.source_choice.GetSelection()
         if idx <= 0:
             return None
@@ -1271,6 +1274,14 @@ class MainFrame(wx.Frame):
         if idx > len(names):
             return None
         return names[idx - 1]
+
+    def _set_source_filter_visible(self, visible: bool) -> None:
+        """Show or hide the Source filter (only useful for multi-checker runs)."""
+        self.filter_row.Show(self.source_label, visible)
+        self.filter_row.Show(self.source_choice, visible)
+        self.source_label.Enable(visible)
+        self.source_choice.Enable(visible)
+        self.panel.Layout()
 
     def _sync_source_filter_choices(
         self,
@@ -1283,10 +1294,11 @@ class MainFrame(wx.Frame):
         sources = _result_source_names(result) if result is not None else []
         self._source_filter_names = sources
         self.source_choice.Set(list(source_filter_choices(sources)))
-        has_sources = bool(sources)
-        self.source_label.Enable(has_sources)
-        self.source_choice.Enable(has_sources)
-        if not has_sources or reset_to_all or prefer is None:
+        # Only EPUBCheck + Ace is a multi-checker run; hide for single tools
+        # (.ebrl, .pdf, DAISY/DTBook via Pipeline, EPUBCheck-only, etc.).
+        visible = "EPUBCheck" in sources and "Ace" in sources
+        self._set_source_filter_visible(visible)
+        if not visible or reset_to_all or prefer is None:
             self.source_choice.SetSelection(0)
             return
         try:

@@ -52,7 +52,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Issue filter": "Filtre des problèmes",
         "Source:": "Source :",
         "Issue source filter": "Filtre par vérificateur",
-        "All checkers": "Tous les vérificateurs",
+        "EPUBCheck + Ace": "EPUBCheck + Ace",
         "Show issues from a specific checker, or all": (
             "Afficher les problèmes d'un vérificateur précis, ou tous"
         ),
@@ -60,6 +60,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Errors only": "Erreurs uniquement",
         "Warnings only": "Avertissements uniquement",
         "Info / usage": "Info / usage",
+        "Show one example of each issue": (
+            "Afficher un exemple de chaque problème"
+        ),
         "&Copy summary": "&Copier le résumé",
         "Copy the result summary (Ctrl+Shift+C)": (
             "Copier le résumé du résultat (Ctrl+Shift+C)"
@@ -331,7 +334,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Issue filter": "Filtro de problemas",
         "Source:": "Origen:",
         "Issue source filter": "Filtro por verificador",
-        "All checkers": "Todos los verificadores",
+        "EPUBCheck + Ace": "EPUBCheck + Ace",
         "Show issues from a specific checker, or all": (
             "Mostrar problemas de un verificador concreto, o de todos"
         ),
@@ -339,6 +342,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Errors only": "Solo errores",
         "Warnings only": "Solo advertencias",
         "Info / usage": "Info / uso",
+        "Show one example of each issue": (
+            "Mostrar un ejemplo de cada problema"
+        ),
         "&Copy summary": "&Copiar resumen",
         "Copy the result summary (Ctrl+Shift+C)": (
             "Copiar el resumen del resultado (Ctrl+Shift+C)"
@@ -611,7 +617,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Issue filter": "Problemfilter",
         "Source:": "Quelle:",
         "Issue source filter": "Filter nach Prüfprogramm",
-        "All checkers": "Alle Prüfprogramme",
+        "EPUBCheck + Ace": "EPUBCheck + Ace",
         "Show issues from a specific checker, or all": (
             "Probleme eines bestimmten Prüfprogramms oder aller anzeigen"
         ),
@@ -619,6 +625,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Errors only": "Nur Fehler",
         "Warnings only": "Nur Warnungen",
         "Info / usage": "Info / Verwendung",
+        "Show one example of each issue": (
+            "Ein Beispiel für jedes Problem anzeigen"
+        ),
         "&Copy summary": "Zusammenfassung &kopieren",
         "Copy the result summary (Ctrl+Shift+C)": (
             "Ergebniszusammenfassung kopieren (Ctrl+Shift+C)"
@@ -889,7 +898,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Issue filter": "Filtro de problemas",
         "Source:": "Origem:",
         "Issue source filter": "Filtro por verificador",
-        "All checkers": "Todos os verificadores",
+        "EPUBCheck + Ace": "EPUBCheck + Ace",
         "Show issues from a specific checker, or all": (
             "Mostrar problemas de um verificador específico, ou de todos"
         ),
@@ -897,6 +906,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Errors only": "Apenas erros",
         "Warnings only": "Apenas avisos",
         "Info / usage": "Info / utilização",
+        "Show one example of each issue": (
+            "Mostrar um exemplo de cada problema"
+        ),
         "&Copy summary": "&Copiar resumo",
         "Copy the result summary (Ctrl+Shift+C)": (
             "Copiar o resumo do resultado (Ctrl+Shift+C)"
