@@ -8,9 +8,9 @@ An accessible, cross-platform desktop front-end for the
 Those checkers are Java command-line tools. This app wraps them so you can open
 a publication and see a clear result — **Passed**, **Passed with warnings**, or
 **Failed** — without typing `java -jar` commands or reading a long console log
-first. `.ebrl` files use eBraille Checker; `.epub` files use stock EPUBCheck;
-`.pdf` files use veraPDF against PDF/UA-2; exploded folders are classified
-automatically.
+first. `.ebrl` files use eBraille Checker; `.epub` files use stock EPUBCheck
+plus Ace by DAISY when available; `.pdf` files use veraPDF against PDF/UA-2;
+exploded folders are classified automatically.
 
 Built with [wxPython](https://wxpython.org/) for native widgets and screen reader
 support on Windows, macOS, and Linux.
@@ -33,7 +33,8 @@ support on Windows, macOS, and Linux.
 - Result-first UI: multi-line verdict with counts; colour cues (green / orange /
   red) reinforce the text; issues listed by severity
 - Filter issues (all / errors / warnings / info); optional **Show one example
-  of each warning/error** to collapse repeated codes with counts
+  of each issue** to collapse repeated codes with counts
+- Filter by source (**EPUBCheck + Ace**, or either tool alone) when both ran
 - Optional full checker log for advanced diagnosis
 - Copy summary; view or save text / HTML reports (**Report** menu) — HTML
   reports embed an EPUB/eBraille cover image when present, or the first page
@@ -48,7 +49,7 @@ support on Windows, macOS, and Linux.
 - Uses `-Xss4m` when launching Java to avoid known stack overflow crashes on
   smaller JREs
 - **Packaged builds** can include bundled Eclipse Temurin JRE, eBraille Checker,
-  EPUBCheck, and veraPDF (works offline on first launch)
+  EPUBCheck, Ace by DAISY, and veraPDF (works offline on first launch)
 
 ## Requirements
 
