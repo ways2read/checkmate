@@ -1,3 +1,3 @@
 """CheckMate — accessible cross-platform front-end."""
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"

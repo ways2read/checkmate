@@ -19,6 +19,7 @@ from .checker import (
     checker_status_text,
     run_check,
 )
+from .fido_settings import fido_settings_present
 from .i18n import (
     LANGUAGES,
     _,
@@ -58,10 +59,42 @@ ResultEvent, EVT_RESULT = wx.lib.newevent.NewEvent()
 UpdateInfoEvent, EVT_UPDATE_INFO = wx.lib.newevent.NewEvent()
 InstallDoneEvent, EVT_INSTALL_DONE = wx.lib.newevent.NewEvent()
 JavaMissingEvent, EVT_JAVA_MISSING = wx.lib.newevent.NewEvent()
+ExplainAiEvent, EVT_EXPLAIN_AI = wx.lib.newevent.NewEvent()
 
 # ListCtrl is native on Windows but generic (and VoiceOver/Orca-invisible) on
 # macOS/Linux. DataViewListCtrl is the reverse — use the native control per OS.
 _USE_DATAVIEW_ISSUES = sys.platform != "win32"
+
+
+class _FocusableReadOnlyText(wx.TextCtrl):
+    """Single-line read-only field that stays in the keyboard tab order."""
+
+    def AcceptsFocus(self) -> bool:  # noqa: N802 — wx override
+        return True
+
+    def AcceptsFocusFromKeyboard(self) -> bool:  # noqa: N802 — wx override
+        return True
+
+
+def _ensure_win_tab_stop(window: wx.Window) -> None:
+    """Force WS_TABSTOP on MSW — TE_READONLY edits often omit it."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        hwnd = int(window.GetHandle())
+        if not hwnd:
+            return
+        gwl_style = -16
+        ws_tabstop = 0x00010000
+        user32 = ctypes.windll.user32
+        style = int(user32.GetWindowLongW(hwnd, gwl_style))
+        if style & ws_tabstop:
+            return
+        user32.SetWindowLongW(hwnd, gwl_style, style | ws_tabstop)
+    except Exception:
+        pass
 
 
 def _macos_make_first_responder(window: wx.Window) -> bool:
@@ -267,14 +300,32 @@ class IssueDetailDialog(wx.Dialog):
     """Full issue text in a keyboard-navigable, read-only view."""
 
     def __init__(
-        self, parent: wx.Window, issue: Issue, *, count: int = 1
+        self,
+        parent: wx.Window,
+        issue: Issue,
+        *,
+        count: int = 1,
+        check_result: CheckResult | None = None,
     ) -> None:
         super().__init__(
             parent,
             title=_("Issue details"),
             style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX,
         )
-        self.SetSize((640, 420))
+        self._issue = issue
+        self._issue_count = max(1, int(count))
+        self._check_result = check_result
+        self._session = None
+        self._busy = False
+        self._ai_markdown = ""
+        self._ai_plain = False
+        self._show_ai = fido_settings_present()
+        if self._show_ai:
+            self.SetSize((780, 760))
+            self.SetMinSize((700, 520))
+        else:
+            self.SetSize((640, 420))
+            self.SetMinSize((480, 320))
         root = wx.BoxSizer(wx.VERTICAL)
 
         lines = [
@@ -301,16 +352,400 @@ class IssueDetailDialog(wx.Dialog):
             style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_WORDWRAP | wx.BORDER_SUNKEN,
             name=_("Issue details"),
         )
+        text.SetMinSize((-1, 120))
+        # With AI: details 1/3, explainer 2/3. Without AI: details fills the dialog.
         root.Add(text, 1, wx.EXPAND | wx.ALL, 12)
 
-        buttons = self.CreateStdDialogButtonSizer(wx.CLOSE)
-        if buttons is not None:
-            root.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        if self._show_ai:
+            ai_box = wx.StaticBox(self, label=_("Explain with AI"))
+            ai_sizer = wx.StaticBoxSizer(ai_box, wx.VERTICAL)
+
+            top_row = wx.BoxSizer(wx.HORIZONTAL)
+            self.explain_btn = wx.Button(self, label=_("Explain with AI"))
+            self.explain_btn.SetToolTip(
+                _(
+                    "Ask AI to explain this issue in plain language "
+                    "(uses FIDO AI settings)"
+                )
+            )
+            top_row.Add(self.explain_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+
+            model_label = wx.StaticText(self, label=_("Model:"))
+            top_row.Add(model_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+            self.ai_model_ctrl = _FocusableReadOnlyText(
+                self,
+                value=self._ai_model_display_text(),
+                style=wx.TE_READONLY | wx.BORDER_SUNKEN,
+                name=_("AI model"),
+            )
+            self.ai_model_ctrl.SetToolTip(
+                _("AI model selected in FIDO (read-only)")
+            )
+            _ensure_win_tab_stop(self.ai_model_ctrl)
+            top_row.Add(self.ai_model_ctrl, 1, wx.EXPAND)
+            ai_sizer.Add(top_row, 0, wx.EXPAND | wx.ALL, 6)
+
+            self.ai_status = wx.StaticText(self, label="")
+            # Give status a name so screen readers can find the announcement.
+            self.ai_status.SetName(_("AI status"))
+            ai_sizer.Add(self.ai_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
+            # Multiline TextCtrl (not HtmlWindow): screen readers can read it,
+            # and it does not trap focus / Escape the way HtmlWindow can.
+            # Use View in browser for formatted HTML.
+            self.ai_output = wx.TextCtrl(
+                self,
+                value="",
+                style=wx.TE_MULTILINE
+                | wx.TE_READONLY
+                | wx.TE_WORDWRAP
+                | wx.BORDER_SUNKEN,
+                name=_("AI explanation"),
+            )
+            self.ai_output.SetMinSize((-1, 240))
+            ai_sizer.Add(self.ai_output, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
+            follow_row = wx.BoxSizer(wx.HORIZONTAL)
+            self.followup_ctrl = wx.TextCtrl(
+                self,
+                value="",
+                style=wx.TE_PROCESS_ENTER,
+                name=_("Follow-up question"),
+            )
+            if hasattr(self.followup_ctrl, "SetHint"):
+                self.followup_ctrl.SetHint(_("Ask a follow-up question…"))
+            self.ask_btn = wx.Button(self, label=_("Ask"))
+            self.ask_btn.Enable(False)
+            follow_row.Add(self.followup_ctrl, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+            follow_row.Add(self.ask_btn, 0)
+            ai_sizer.Add(follow_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
+            root.Add(ai_sizer, 2, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+
+            self.explain_btn.Bind(wx.EVT_BUTTON, self._on_explain)
+            self.ask_btn.Bind(wx.EVT_BUTTON, self._on_ask_followup)
+            self.followup_ctrl.Bind(wx.EVT_TEXT_ENTER, self._on_ask_followup)
+            self.Bind(EVT_EXPLAIN_AI, self._on_explain_ai_event)
+
+        footer = wx.BoxSizer(wx.HORIZONTAL)
+        if self._show_ai:
+            self.view_browser_btn = wx.Button(self, label=_("View in browser"))
+            self.view_browser_btn.SetToolTip(
+                _("Open the explanation in your web browser")
+            )
+            self.view_browser_btn.Enable(False)
+            footer.Add(self.view_browser_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+
+            self.save_html_btn = wx.Button(self, label=_("Save as HTML…"))
+            self.save_html_btn.SetToolTip(_("Save the explanation as an HTML file"))
+            self.save_html_btn.Enable(False)
+            footer.Add(self.save_html_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+
+            self.save_md_btn = wx.Button(self, label=_("Save as Markdown…"))
+            self.save_md_btn.SetToolTip(_("Save the explanation as a Markdown file"))
+            self.save_md_btn.Enable(False)
+            footer.Add(self.save_md_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+
+            self.copy_ai_btn = wx.Button(self, label=_("Copy to clipboard"))
+            self.copy_ai_btn.SetToolTip(
+                _("Copy the explanation markdown to the clipboard")
+            )
+            self.copy_ai_btn.Enable(False)
+            footer.Add(self.copy_ai_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+
+            self.view_browser_btn.Bind(wx.EVT_BUTTON, self._on_view_ai_browser)
+            self.save_html_btn.Bind(wx.EVT_BUTTON, self._on_save_ai_html)
+            self.save_md_btn.Bind(wx.EVT_BUTTON, self._on_save_ai_markdown)
+            self.copy_ai_btn.Bind(wx.EVT_BUTTON, self._on_copy_ai_clipboard)
+
+        footer.AddStretchSpacer(1)
+        close_btn = wx.Button(self, id=wx.ID_CLOSE, label=_("Close"))
+        close_btn.Bind(wx.EVT_BUTTON, self._on_close_dialog)
+        footer.Add(close_btn, 0, wx.ALIGN_CENTER_VERTICAL)
+        root.Add(footer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
 
         self.SetSizer(root)
         self.CentreOnParent()
+        # Modal dialogs must EndModal — Close() alone can leave ShowModal hung.
+        self.SetEscapeId(wx.ID_CLOSE)
+        self.SetAffirmativeId(wx.ID_CLOSE)
+        self.Bind(wx.EVT_CLOSE, self._on_close_dialog)
+        self.Bind(wx.EVT_CHAR_HOOK, self._on_dialog_char_hook)
+        close_btn.SetDefault()
         text.SetFocus()
         text.SetInsertionPoint(0)
+
+    def _on_dialog_char_hook(self, event: wx.KeyEvent) -> None:
+        if event.GetKeyCode() == wx.WXK_ESCAPE:
+            self._on_close_dialog(event)
+            return
+        event.Skip()
+
+    def _on_close_dialog(self, event: wx.Event | None = None) -> None:
+        # Always allow closing, even while an explain request is in flight.
+        if self.IsModal():
+            self.EndModal(wx.ID_CLOSE)
+        else:
+            self.Destroy()
+
+    def _ai_model_display_text(self) -> str:
+        from .fido_settings import selected_model_service_string
+
+        model = selected_model_service_string().strip()
+        return model if model else _("(no model selected)")
+
+    def _refresh_ai_model_display(self) -> None:
+        if not self._show_ai:
+            return
+        self.ai_model_ctrl.SetValue(self._ai_model_display_text())
+
+    def _has_ai_content(self) -> bool:
+        return bool((self._ai_markdown or "").strip()) or self._ai_plain
+
+    def _set_ai_export_enabled(self, enabled: bool) -> None:
+        if not self._show_ai:
+            return
+        self.view_browser_btn.Enable(enabled)
+        self.save_html_btn.Enable(enabled)
+        self.save_md_btn.Enable(enabled)
+        self.copy_ai_btn.Enable(enabled)
+
+    def _ai_export_markdown(self) -> str:
+        from .ai.markdown_html import export_explanation_markdown
+
+        return export_explanation_markdown(
+            self._issue,
+            self._ai_markdown,
+            count=self._issue_count,
+        )
+
+    def _ai_browser_html(self) -> str:
+        from .ai.markdown_html import markdown_to_browser_page
+
+        title = _("AI explanation")
+        code = (self._issue.code or "").strip()
+        if code:
+            title = f"{title} — {code}"
+        return markdown_to_browser_page(self._ai_export_markdown(), title=title)
+
+    def _set_ai_content(self, markdown_text: str, *, plain: bool = False) -> None:
+        from .ai.markdown_html import with_ai_disclaimer
+
+        self._ai_plain = plain
+        raw = markdown_text or ""
+        self._ai_markdown = raw if plain else with_ai_disclaimer(raw)
+        self.ai_output.SetValue(self._ai_markdown)
+        self.ai_output.SetInsertionPoint(0)
+        self._set_ai_export_enabled(self._has_ai_content())
+
+    def _on_view_ai_browser(self, _event: wx.Event) -> None:
+        if not self._has_ai_content():
+            return
+        try:
+            fd, name = tempfile.mkstemp(
+                prefix="checkmate-explain-",
+                suffix=".html",
+                text=True,
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(self._ai_browser_html())
+            webbrowser.open(Path(name).as_uri())
+            self.ai_status.SetLabel(_("Opened in browser."))
+        except OSError as exc:
+            wx.MessageBox(
+                _("Could not open the explanation in a browser:\n{error}", error=exc),
+                _("Error"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+
+    def _on_save_ai_html(self, _event: wx.Event) -> None:
+        if not self._has_ai_content():
+            return
+        from .ai.markdown_html import explanation_filename_stem
+
+        stem = explanation_filename_stem(self._issue.code)
+        with wx.FileDialog(
+            self,
+            _("Save AI explanation as HTML"),
+            defaultFile=f"{stem}.html",
+            wildcard=_("HTML files (*.html)|*.html;*.htm|All files (*.*)|*.*"),
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        ) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            path = Path(dlg.GetPath())
+        try:
+            path.write_text(self._ai_browser_html(), encoding="utf-8")
+            self.ai_status.SetLabel(_("Saved to {path}", path=path))
+        except OSError as exc:
+            wx.MessageBox(
+                _("Could not save the explanation:\n{error}", error=exc),
+                _("Error"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+
+    def _on_save_ai_markdown(self, _event: wx.Event) -> None:
+        if not self._has_ai_content():
+            return
+        from .ai.markdown_html import explanation_filename_stem
+
+        stem = explanation_filename_stem(self._issue.code)
+        with wx.FileDialog(
+            self,
+            _("Save AI explanation as Markdown"),
+            defaultFile=f"{stem}.md",
+            wildcard=_(
+                "Markdown files (*.md)|*.md;*.markdown|All files (*.*)|*.*"
+            ),
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        ) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            path = Path(dlg.GetPath())
+        try:
+            path.write_text(self._ai_export_markdown(), encoding="utf-8")
+            self.ai_status.SetLabel(_("Saved to {path}", path=path))
+        except OSError as exc:
+            wx.MessageBox(
+                _("Could not save the explanation:\n{error}", error=exc),
+                _("Error"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+
+    def _on_copy_ai_clipboard(self, _event: wx.Event) -> None:
+        if not self._has_ai_content():
+            return
+        text = self._ai_markdown or ""
+        if wx.TheClipboard.Open():
+            try:
+                wx.TheClipboard.SetData(wx.TextDataObject(text))
+            finally:
+                wx.TheClipboard.Close()
+            self.ai_status.SetLabel(_("Copied to clipboard."))
+            # Modal confirmation so screen readers announce the result.
+            wx.MessageBox(
+                _("The explanation was copied to the clipboard."),
+                _("Copied to clipboard"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            self.copy_ai_btn.SetFocus()
+        else:
+            wx.MessageBox(
+                _("Could not copy to the clipboard."),
+                _("Error"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+
+    def _set_busy(self, busy: bool, status: str = "") -> None:
+        self._busy = busy
+        if not self._show_ai:
+            return
+        self.explain_btn.Enable(not busy)
+        self.ask_btn.Enable(not busy and self._session is not None)
+        self.followup_ctrl.Enable(not busy)
+        self._set_ai_export_enabled(not busy and self._has_ai_content())
+        if status:
+            self.ai_status.SetLabel(status)
+        elif not busy:
+            self.ai_status.SetLabel("")
+        self.Layout()
+
+    def _on_explain(self, _event: wx.Event) -> None:
+        if self._busy:
+            return
+        self._set_busy(True, _("Explaining…"))
+        issue = self._issue
+        result = self._check_result
+
+        def work() -> None:
+            from .ai.explain import explain_issue
+
+            try:
+                out = explain_issue(issue, result)
+            except Exception as exc:
+                from .ai.explain import ExplainResult
+
+                out = ExplainResult(ok=False, error_key="provider_error", text=str(exc))
+            try:
+                wx.PostEvent(self, ExplainAiEvent(kind="explain", result=out))
+            except RuntimeError:
+                # Dialog was closed while the request was running.
+                return
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_ask_followup(self, _event: wx.Event) -> None:
+        if self._busy or self._session is None:
+            return
+        question = self.followup_ctrl.GetValue().strip()
+        if not question:
+            return
+        self._set_busy(True, _("Thinking…"))
+        session = self._session
+
+        def work() -> None:
+            from .ai.explain import ask_followup
+
+            try:
+                out = ask_followup(session, question)
+            except Exception as exc:
+                from .ai.explain import ExplainResult
+
+                out = ExplainResult(
+                    ok=False,
+                    error_key="provider_error",
+                    text=str(exc),
+                    session=session,
+                )
+            try:
+                wx.PostEvent(
+                    self,
+                    ExplainAiEvent(kind="followup", result=out, question=question),
+                )
+            except RuntimeError:
+                return
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_explain_ai_event(self, event: ExplainAiEvent) -> None:
+        from .ai.explain import error_message_for_key
+        from .ai.markdown_html import append_followup_markdown
+
+        result = event.result
+        kind = getattr(event, "kind", "explain")
+        self._set_busy(False)
+        self._refresh_ai_model_display()
+        if not result.ok:
+            msg = error_message_for_key(result.error_key, detail=result.text or "")
+            self._set_ai_content(msg, plain=True)
+            self.ai_status.SetLabel(_("Could not explain this issue."))
+            if result.session is not None:
+                self._session = result.session
+                self.ask_btn.Enable(True)
+            return
+
+        self._session = result.session
+        self.ask_btn.Enable(True)
+        if kind == "followup":
+            question = getattr(event, "question", "") or ""
+            self._ai_markdown = append_followup_markdown(
+                self._ai_markdown,
+                heading=_("Follow-up"),
+                question=question,
+                answer=result.text or "",
+            )
+            self._set_ai_content(self._ai_markdown)
+            self.followup_ctrl.SetValue("")
+        else:
+            self._set_ai_content(result.text or "")
+        self.ai_status.SetLabel(_("Done"))
+        self.ai_output.SetFocus()
+        self.ai_output.SetInsertionPoint(0)
 
 
 class AboutDialog(wx.Dialog):
@@ -1250,7 +1685,12 @@ class MainFrame(wx.Frame):
                 count = 1
         if issue is None:
             return
-        dlg = IssueDetailDialog(self, issue, count=count)
+        dlg = IssueDetailDialog(
+            self,
+            issue,
+            count=count,
+            check_result=self._last_result,
+        )
         dlg.ShowModal()
         dlg.Destroy()
 

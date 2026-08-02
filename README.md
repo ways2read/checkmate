@@ -36,6 +36,10 @@ support on Windows, macOS, and Linux.
   of each issue** to collapse repeated codes with counts
 - Filter by source (**EPUBCheck + Ace**, or either tool alone) when both ran
 - Optional full checker log for advanced diagnosis
+- **Explain with AI** (when FIDO AI settings are present on this machine): open
+  an issue’s details and ask for a structured plain-language briefing plus
+  follow-up questions. Uses FIDO’s API keys and/or unlock code (keys from
+  unlock stay in memory only). Validation itself stays offline.
 - Copy summary; view or save text / HTML reports (**Report** menu) — HTML
   reports embed an EPUB/eBraille cover image when present, or the first page
   of a PDF; **Clear results** returns to the launch state
