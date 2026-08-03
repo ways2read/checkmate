@@ -3,6 +3,7 @@
 from .explain import ExplainResult, ask_followup, error_message_for_key, explain_issue
 from .fix import FixResult, apply_proposed_fix, propose_fix
 from .litellm_client import litellm_available
+from .overview import explain_overview
 
 __all__ = [
     "ExplainResult",
@@ -11,6 +12,7 @@ __all__ = [
     "apply_proposed_fix",
     "error_message_for_key",
     "explain_issue",
+    "explain_overview",
     "litellm_available",
     "propose_fix",
 ]

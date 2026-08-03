@@ -14,6 +14,73 @@ _MAX_EXCERPT_CHARS = 6000
 _CONTEXT_LINES = 20
 
 
+def _parse_ace_file(location: str) -> str | None:
+    """Ace locations look like ``file · CSS · snippet``."""
+    loc = (location or "").strip()
+    if not loc:
+        return None
+    part = loc.split("·")[0].strip() if "·" in loc else loc.split("\u00b7")[0].strip()
+    if part and not part.startswith("<"):
+        return part.replace("\\", "/")
+    return None
+
+
+def _ace_location_parts(location: str) -> list[str]:
+    loc = (location or "").strip()
+    if not loc:
+        return []
+    return [p.strip() for p in re.split(r"\s*[·\u00b7]\s*", loc) if p.strip()]
+
+
+def _find_line_for_hints(text: str, hints: list[str]) -> int | None:
+    """
+    Best-effort 1-based line for Ace (no line/column): match CSS selectors or
+    HTML/CSS snippets from the location string inside the file text.
+    """
+    if not text or not hints:
+        return None
+    lines = text.splitlines()
+    if not lines:
+        return None
+    # Prefer longer, more specific hints first.
+    ordered = sorted(
+        (h for h in hints if h and len(h.strip()) >= 2),
+        key=len,
+        reverse=True,
+    )
+    for hint in ordered:
+        needle = hint.strip()
+        # Strip Ace's compacting ellipsis for matching.
+        if needle.endswith("…"):
+            needle = needle[:-1].rstrip()
+        if len(needle) < 2:
+            continue
+        # Exact substring on a single line.
+        for i, line in enumerate(lines):
+            if needle in line:
+                return i + 1
+        # Compacted HTML snippets: allow whitespace flexibility per line.
+        compact_needle = re.sub(r"\s+", "", needle)
+        if len(compact_needle) >= 4:
+            for i, line in enumerate(lines):
+                if compact_needle in re.sub(r"\s+", "", line):
+                    return i + 1
+        # Multi-line: search normalized file for a short unique fragment.
+        if len(needle) >= 8:
+            norm = text.replace("\r\n", "\n").replace("\r", "\n")
+            pos = norm.find(needle)
+            if pos < 0 and compact_needle:
+                compact_file = re.sub(r"\s+", "", norm)
+                cpos = compact_file.find(compact_needle)
+                if cpos >= 0:
+                    # Map compacted index back roughly via line scan already failed;
+                    # fall through to next hint.
+                    pass
+            elif pos >= 0:
+                return norm.count("\n", 0, pos) + 1
+    return None
+
+
 def _parse_epubcheck_location(location: str) -> tuple[str | None, int | None]:
     """Parse ``path (line,column)`` → (path, line)."""
     loc = (location or "").strip()
@@ -28,15 +95,13 @@ def _parse_epubcheck_location(location: str) -> tuple[str | None, int | None]:
     return None, None
 
 
-def _parse_ace_file(location: str) -> str | None:
-    """Ace locations look like ``file · CSS · snippet``."""
-    loc = (location or "").strip()
-    if not loc:
-        return None
-    part = loc.split("·")[0].strip() if "·" in loc else loc.split("\u00b7")[0].strip()
-    if part and not part.startswith("<"):
-        return part.replace("\\", "/")
-    return None
+def parse_issue_location(location: str) -> tuple[str | None, int | None]:
+    """Parse checker location → (member path, line number or None)."""
+    loc = location or ""
+    # Ace uses a middle-dot separator; do not treat the whole string as a path.
+    if "·" in loc or "\u00b7" in loc:
+        return _parse_ace_file(loc), None
+    return _parse_epubcheck_location(loc)
 
 
 def _read_member_text(target: Path, member: str) -> str | None:
@@ -121,15 +186,6 @@ def _raw_window_around_line(text: str, line: int | None) -> str:
     return chunk
 
 
-def parse_issue_location(location: str) -> tuple[str | None, int | None]:
-    """Parse checker location → (member path, line number or None)."""
-    loc = location or ""
-    # Ace uses a middle-dot separator; do not treat the whole string as a path.
-    if "·" in loc or "\u00b7" in loc:
-        return _parse_ace_file(loc), None
-    return _parse_epubcheck_location(loc)
-
-
 def send_file_context_enabled() -> bool:
     val = read_settings().get("ai_send_file_context", True)
     return bool(val)
@@ -172,6 +228,13 @@ def gather_issue_context(
             if member:
                 text = _read_member_text(path, member)
                 if text:
+                    # Ace has no line/column — locate via CSS selector / HTML snippet.
+                    if line is None and (
+                        "·" in (issue.location or "")
+                        or "\u00b7" in (issue.location or "")
+                    ):
+                        hints = _ace_location_parts(issue.location)[1:]
+                        line = _find_line_for_hints(text, hints)
                     ctx["file_member"] = member
                     ctx["file_excerpt"] = _window_around_line(text, line)
                     ctx["file_excerpt_raw"] = _raw_window_around_line(text, line)

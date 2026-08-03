@@ -41,12 +41,19 @@ support on Windows, macOS, and Linux.
   follow-up questions. Uses FIDO’s API keys and/or unlock code (keys from
   unlock stay in memory only). Validation itself stays offline. Requests show
   a cancellable progress dialog, check the provider connection first, and
-  write diagnostics to the app log (**Help → Open application log…**).
+  write diagnostics to the app log (**Help → Open debugging log…**).
+- **AI overview** (same FIDO AI gate): from the **Report** menu (or **Report…**
+  button), ask for a whole-report briefing — themes, priorities, and next steps
+  based on the unique issue codes (not a full file dump). View, save, or copy
+  the result like other AI replies.
 - **Fix with AI** (EPUB and eBraille only, when FIDO AI settings are present):
   from the same issue details dialog, ask for a minimal proposed markup patch,
   preview before/after, then **Apply fix** to the exploded folder or packaged
   `.epub`/`.ebrl` (creates a `.bak` backup). The details dialog closes and the
-  publication is re-checked automatically. Packaged rewrite uses the same
+  publication is re-checked automatically. CheckMate then reports whether the
+  targeted issue is gone, whether overall error/warning counts decreased, and
+  (for Ace fixes) whether any new EPUBCheck errors appeared; if anything looks
+  wrong, it offers to revert from the backup. Packaged rewrite uses the same
   EPUB-safe extract/rebuild approach as FIDO.
 - Copy summary; view or save text / HTML reports (**Report** menu) — HTML
   reports embed an EPUB/eBraille cover image when present, or the first page
@@ -194,6 +201,9 @@ executable (or inside the `.app` bundle on macOS).
 - When a check finishes, focus moves to Result (with a brief leave/refocus if
   it already had focus). The result text is selected on focus so screen readers
   announce it; arrow keys then allow line/character review
+- **Explain with AI** prefers an Edge/WebKit `WebView` so the reply is real HTML
+  (headings, lists, links) for screen readers; falls back to a Markdown text
+  field if no webview backend is available (`HtmlWindow` is not used)
 - Accessible name includes the verdict text; the window title also appends it
 - **Language** menu: English, Français, Español, Deutsch, Português
 - Severity and pass/fail are always in text; result colour is only a visual cue
@@ -316,7 +326,7 @@ checkmate/
     paths.py           # App data and bundle locations
     subprocess_util.py # Quiet subprocess helpers (Windows)
     fido_settings.py   # Read FIDO AI keys/models (no FIDO import)
-    logging_setup.py   # App-data log file (Help → Open application log)
+    logging_setup.py   # App-data log file (Help → Open debugging log)
     ai/                # Explain with AI / Fix with AI
   run.py               # Launcher (incl. SSL cert setup when frozen)
   scripts/

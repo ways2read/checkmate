@@ -7,6 +7,7 @@ EPUB-valid. CheckMate does not import the FIDO package.
 
 from __future__ import annotations
 
+import re
 import shutil
 import tempfile
 import zipfile
@@ -14,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _PACKAGE_SUFFIXES = {".epub", ".ebrl", ".zip"}
+_BACKUP_NAME_RE = re.compile(r"^(?P<stem>.+)(?P<bak>\.bak\d*)$", re.IGNORECASE)
 
 
 def is_packaged_publication(path: Path) -> bool:
@@ -105,16 +107,91 @@ class ApplyResult:
     member: str = ""
 
 
+def next_backup_path(path: Path) -> Path:
+    """
+    Choose a backup path that does not overwrite an existing backup.
+
+    First backup is ``file.ext.bak``; further ones are ``file.ext.bak1``,
+    ``file.ext.bak2``, …
+    """
+    path = Path(path)
+    bak = path.with_suffix(path.suffix + ".bak")
+    if not bak.exists():
+        return bak
+    n = 1
+    while True:
+        cand = path.with_suffix(f"{path.suffix}.bak{n}")
+        if not cand.exists():
+            return cand
+        n += 1
+
+
+def original_path_from_backup(backup_path: str | Path) -> Path | None:
+    """Map ``file.ext.bak`` / ``file.ext.bakN`` back to ``file.ext``."""
+    bak = Path(backup_path)
+    match = _BACKUP_NAME_RE.match(bak.name)
+    if not match:
+        return None
+    return bak.with_name(match.group("stem"))
+
+
+def _newline_style(text: str) -> str:
+    """Dominant newline convention in *text* (``\\n``, ``\\r\\n``, or ``\\r``)."""
+    crlf = text.count("\r\n")
+    lf = text.count("\n") - crlf
+    cr = text.count("\r") - crlf
+    if crlf >= lf and crlf >= cr and crlf > 0:
+        return "\r\n"
+    if cr > lf and cr > 0:
+        return "\r"
+    return "\n"
+
+
+def normalize_newlines(text: str) -> str:
+    """Normalize all newlines to ``\\n`` for matching."""
+    return (text or "").replace("\r\n", "\n").replace("\r", "\n")
+
+
+def count_occurrences(text: str, needle: str) -> int:
+    """Count *needle* in *text*, trying exact then newline-normalized match."""
+    if not needle:
+        return 0
+    count = text.count(needle)
+    if count:
+        return count
+    norm_text = normalize_newlines(text)
+    norm_needle = normalize_newlines(needle)
+    if norm_needle == needle and norm_text == text:
+        return 0
+    return norm_text.count(norm_needle)
+
+
 def _replace_once(text: str, original: str, replacement: str) -> tuple[str | None, str | None]:
     """Return (new_text, error_key). error_key set when original cannot be applied safely."""
     if not original:
         return None, "empty_original"
     count = text.count(original)
+    if count == 1:
+        return text.replace(original, replacement, 1), None
+    if count > 1:
+        return None, "ambiguous_match"
+
+    # AI excerpts join with ``\\n`` after splitlines(); packaged CSS often uses CRLF.
+    style = _newline_style(text)
+    norm_text = normalize_newlines(text)
+    norm_orig = normalize_newlines(original)
+    norm_repl = normalize_newlines(replacement)
+    if not norm_orig:
+        return None, "empty_original"
+    count = norm_text.count(norm_orig)
     if count == 0:
         return None, "no_match"
     if count > 1:
         return None, "ambiguous_match"
-    return text.replace(original, replacement, 1), None
+    new_norm = norm_text.replace(norm_orig, norm_repl, 1)
+    if style != "\n":
+        return new_norm.replace("\n", style), None
+    return new_norm, None
 
 
 def apply_text_replacement(
@@ -149,7 +226,7 @@ def apply_text_replacement(
         if target.is_dir():
             path = resolve_member_path(target, resolved) or (target / resolved)
             if backup and path.is_file():
-                bak = path.with_suffix(path.suffix + ".bak")
+                bak = next_backup_path(path)
                 shutil.copy2(path, bak)
                 backup_path = str(bak)
             path.write_text(new_text, encoding="utf-8", newline="")
@@ -157,16 +234,7 @@ def apply_text_replacement(
 
         if is_packaged_publication(target):
             if backup:
-                bak = target.with_suffix(target.suffix + ".bak")
-                # Avoid clobbering an older backup silently: numbered if needed.
-                if bak.exists():
-                    n = 1
-                    while True:
-                        cand = target.with_suffix(f"{target.suffix}.bak{n}")
-                        if not cand.exists():
-                            bak = cand
-                            break
-                        n += 1
+                bak = next_backup_path(target)
                 shutil.copy2(target, bak)
                 backup_path = str(bak)
 
@@ -202,3 +270,38 @@ def apply_text_replacement(
             member=resolved,
             backup_path=backup_path,
         )
+
+
+def restore_from_backup(backup_path: str | Path, restore_to: str | Path) -> None:
+    """Copy a ``.bak`` / ``.bakN`` file back over the publication or member it came from."""
+    bak = Path(backup_path)
+    dest = Path(restore_to)
+    if not bak.is_file():
+        raise FileNotFoundError(str(bak))
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(bak, dest)
+
+
+def restore_path_for_apply(
+    target: str | Path,
+    apply_result: ApplyResult,
+) -> str:
+    """
+    Path that ``restore_from_backup`` should overwrite after a successful apply.
+
+    Packaged publications restore onto the ``.epub``/``.ebrl``; exploded folders
+    restore onto the edited member file beside the ``.bak`` / ``.bakN``.
+    """
+    target = Path(target)
+    bak = (apply_result.backup_path or "").strip()
+    if is_packaged_publication(target):
+        return str(target)
+    if bak:
+        original = original_path_from_backup(bak)
+        if original is not None:
+            return str(original)
+    if apply_result.member:
+        member_path = resolve_member_path(target, apply_result.member)
+        if member_path is not None:
+            return str(member_path)
+    return str(target)

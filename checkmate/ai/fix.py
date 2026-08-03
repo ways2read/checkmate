@@ -6,14 +6,14 @@ import json
 import logging
 import re
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
 from ..epub_package import ApplyResult, apply_text_replacement, read_member_text
 from ..i18n import _, get_language
 from ..models import CheckResult, Issue
-from .context import gather_issue_context
+from .context import gather_issue_context, parse_issue_location
 from .litellm_client import (
     DEFAULT_FIX_MAX_TOKENS,
     ensure_credentials_ready,
@@ -272,18 +272,20 @@ def _proposal_in_publication(
     ctx: dict[str, str],
 ) -> bool:
     """True when proposal.original occurs exactly once in the target member."""
+    from ..epub_package import count_occurrences
+
     if not proposal.original:
         return False
     raw = ctx.get("file_excerpt_raw") or ""
-    if raw and raw.count(proposal.original) == 1:
+    if raw and count_occurrences(raw, proposal.original) == 1:
         return True
     if not target_path:
         # Fall back: original must at least appear in the excerpt we sent
-        return bool(raw) and proposal.original in raw
+        return bool(raw) and count_occurrences(raw, proposal.original) >= 1
     resolved, text = read_member_text(Path(target_path), proposal.file)
     if text is None:
         return False
-    return text.count(proposal.original) == 1
+    return count_occurrences(text, proposal.original) == 1
 
 
 def format_fix_preview(proposal: FixProposal) -> str:
@@ -489,6 +491,156 @@ def apply_proposed_fix(
         proposal.replacement,
         backup=True,
     )
+
+
+def _members_match(a: str | None, b: str | None) -> bool:
+    if not a or not b:
+        return True  # no file constraint
+    na = a.replace("\\", "/").lstrip("/")
+    nb = b.replace("\\", "/").lstrip("/")
+    if na == nb:
+        return True
+    if Path(na).name == Path(nb).name:
+        return True
+    return na.endswith(nb) or nb.endswith(na)
+
+
+def issue_still_present(before: Issue, result: CheckResult) -> bool:
+    """
+    True when the issue that Fix with AI targeted still appears after re-check.
+
+    Matches on code + message (location line numbers may shift). When both
+    sides name a file member, that member must also agree.
+    """
+    if not before.code and not before.message:
+        return False
+    before_member, _before_line = parse_issue_location(before.location)
+    for issue in result.issues:
+        if before.code and issue.code != before.code:
+            continue
+        if before.source and issue.source and before.source != issue.source:
+            continue
+        if before.message and issue.message != before.message:
+            continue
+        member, _line = parse_issue_location(issue.location)
+        if before_member and member and not _members_match(before_member, member):
+            continue
+        return True
+    return False
+
+
+def _problem_total(result: CheckResult) -> int:
+    return int(result.fatals) + int(result.errors) + int(result.warnings)
+
+
+def _issue_fingerprint(issue: Issue) -> tuple[str, str, str, str, str]:
+    """Stable-ish identity ignoring line/column shifts within a member."""
+    member, _line = parse_issue_location(issue.location)
+    member_key = (member or "").replace("\\", "/").lstrip("/").lower()
+    return (
+        (issue.source or "").strip().lower(),
+        (issue.code or "").strip(),
+        (issue.message or "").strip(),
+        member_key,
+        issue.severity.value,
+    )
+
+
+def _is_ace_source(source: str) -> bool:
+    return "ace" in (source or "").strip().lower()
+
+
+def _is_epubcheck_source(source: str) -> bool:
+    return "epubcheck" in (source or "").strip().lower()
+
+
+def new_epubcheck_errors(
+    before: CheckResult,
+    after: CheckResult,
+) -> list[Issue]:
+    """EPUBCheck fatal/error issues present after the fix but not before."""
+    from ..models import Severity
+
+    before_keys = {
+        _issue_fingerprint(i)
+        for i in before.issues
+        if _is_epubcheck_source(i.source)
+        and i.severity in {Severity.FATAL, Severity.ERROR}
+    }
+    found: list[Issue] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for issue in after.issues:
+        if not _is_epubcheck_source(issue.source):
+            continue
+        if issue.severity not in {Severity.FATAL, Severity.ERROR}:
+            continue
+        key = _issue_fingerprint(issue)
+        if key in before_keys or key in seen:
+            continue
+        seen.add(key)
+        found.append(issue)
+    return found
+
+
+@dataclass
+class FixVerifyReport:
+    """Outcome of comparing the pre-fix check with the post-apply re-check."""
+
+    target_resolved: bool
+    counts_reduced: bool
+    before_fatals: int
+    before_errors: int
+    before_warnings: int
+    after_fatals: int
+    after_errors: int
+    after_warnings: int
+    fixed_ace_issue: bool
+    new_epubcheck_errors: list[Issue] = field(default_factory=list)
+
+    @property
+    def has_concerns(self) -> bool:
+        if not self.target_resolved:
+            return True
+        if not self.counts_reduced:
+            return True
+        if self.fixed_ace_issue and self.new_epubcheck_errors:
+            return True
+        return False
+
+
+def evaluate_fix_outcome(
+    before_issue: Issue,
+    before_result: CheckResult,
+    after_result: CheckResult,
+) -> FixVerifyReport:
+    """Compare pre/post checks for resolution, totals, and Ace→EPUBCheck side effects."""
+    new_epub: list[Issue] = []
+    fixed_ace = _is_ace_source(before_issue.source)
+    if fixed_ace:
+        new_epub = new_epubcheck_errors(before_result, after_result)
+    return FixVerifyReport(
+        target_resolved=not issue_still_present(before_issue, after_result),
+        counts_reduced=_problem_total(after_result) < _problem_total(before_result),
+        before_fatals=before_result.fatals,
+        before_errors=before_result.errors,
+        before_warnings=before_result.warnings,
+        after_fatals=after_result.fatals,
+        after_errors=after_result.errors,
+        after_warnings=after_result.warnings,
+        fixed_ace_issue=fixed_ace,
+        new_epubcheck_errors=new_epub,
+    )
+
+
+@dataclass
+class PendingFixVerify:
+    """State handed from the issue dialog to the main window after Apply fix."""
+
+    issue: Issue
+    target_path: str
+    backup_path: str
+    restore_to: str
+    before_result: CheckResult
 
 
 def error_message_for_key(key: str | None, detail: str = "") -> str:

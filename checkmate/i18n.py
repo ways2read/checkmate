@@ -68,9 +68,10 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Copier le résumé du résultat (Ctrl+Shift+C)"
         ),
         "&Report…": "&Rapport…",
-        "View or save reports, copy the summary, or view the full log": (
-            "Afficher ou enregistrer les rapports, copier le résumé "
-            "ou afficher le journal complet"
+        "View or save reports, AI overview (when available), "
+        "copy the summary, or view the full log": (
+            "Afficher ou enregistrer les rapports, aperçu IA (si disponible), "
+            "copier le résumé ou afficher le journal complet"
         ),
         "Issues list": "Liste des problèmes",
         "Severity": "Sévérité",
@@ -101,6 +102,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "View &HTML report in browser\tCtrl+H": (
             "Afficher le rapport &HTML dans le navigateur\tCtrl+H"
         ),
+        "AI &overview…\tCtrl+Shift+A": "Aperçu &IA…\tCtrl+Shift+A",
         "Save &HTML report…\tCtrl+S": "Enregistrer le rapport &HTML…\tCtrl+S",
         "Save &HTML report…": "Enregistrer le rapport &HTML…",
         "E&xit\tEsc": "&Quitter\tÉchap",
@@ -307,6 +309,22 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Language changed to {language}.": "Langue changée : {language}.",
         "Explain with AI": "Expliquer avec l’IA",
         "AI assistance": "Assistance IA",
+        "AI overview": "Aperçu IA",
+        "Overall assessment": "Évaluation générale",
+        "Main themes": "Thèmes principaux",
+        "Suggested priorities": "Priorités suggérées",
+        "Practical next steps": "Prochaines étapes pratiques",
+        "Caveats": "Précautions",
+        "Writing overview…": "Rédaction de l’aperçu…",
+        "Nothing to overview": "Rien à résumer",
+        "Save AI overview as HTML": "Enregistrer l’aperçu IA en HTML",
+        "Save AI overview as Markdown": "Enregistrer l’aperçu IA en Markdown",
+        "A check is already running. Wait for it to finish, then try again.": (
+            "Une vérification est déjà en cours. Attendez qu’elle se termine, "
+            "puis réessayez."
+        ),
+        "Opening issue details…": "Ouverture des détails du problème…",
+        "Loading AI view…": "Chargement de la vue IA…",
         "Fix with AI": "Corriger avec l’IA",
         "Ask AI to propose a minimal markup fix for this EPUB "
         "or eBraille issue (uses FIDO AI settings)": (
@@ -318,6 +336,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "(creates a .bak backup first)": (
             "Écrire la correction proposée dans la publication "
             "(crée d’abord une sauvegarde .bak)"
+        ),
+        "Write the proposed fix into the publication, "
+        "then re-check and confirm whether the issue is resolved": (
+            "Écrire la correction proposée dans la publication, "
+            "puis revérifier et confirmer si le problème est résolu"
         ),
         "Write the proposed fix into the publication, "
         "then re-check automatically": (
@@ -342,6 +365,86 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Fix applied. Backup: {path}. Re-check with F5.": (
             "Correction appliquée. Sauvegarde : {path}. Revérifiez avec F5."
+        ),
+        "The issue appears to be resolved after applying the fix.": (
+            "Le problème semble résolu après application de la correction."
+        ),
+        "The targeted issue appears to be resolved (code: {code}).": (
+            "Le problème ciblé semble résolu (code : {code})."
+        ),
+        "The targeted issue is still reported after the fix was applied "
+        "(code: {code}).": (
+            "Le problème ciblé est toujours signalé après application de la "
+            "correction (code : {code})."
+        ),
+        "Totals before: {fatals} fatal(s), {errors} error(s), "
+        "{warnings} warning(s).": (
+            "Totaux avant : {fatals} fatal(s), {errors} erreur(s), "
+            "{warnings} avertissement(s)."
+        ),
+        "Totals after: {fatals} fatal(s), {errors} error(s), "
+        "{warnings} warning(s).": (
+            "Totaux après : {fatals} fatal(s), {errors} erreur(s), "
+            "{warnings} avertissement(s)."
+        ),
+        "Overall errors/warnings decreased.": (
+            "Le total des erreurs/avertissements a diminué."
+        ),
+        "Overall errors/warnings did not decrease after the fix.": (
+            "Le total des erreurs/avertissements n’a pas diminué après "
+            "la correction."
+        ),
+        "Fixing this Ace issue introduced {n} new EPUBCheck "
+        "error(s) that were not present before:": (
+            "La correction de ce problème Ace a introduit {n} nouvelle(s) "
+            "erreur(s) EPUBCheck absentes auparavant :"
+        ),
+        "No new EPUBCheck errors were introduced by this Ace fix.": (
+            "Aucune nouvelle erreur EPUBCheck n’a été introduite par "
+            "cette correction Ace."
+        ),
+        "…and {n} more.": "…et {n} de plus.",
+        "No backup file was found to revert.": (
+            "Aucun fichier de sauvegarde n’a été trouvé pour le rétablissement."
+        ),
+        "Do you want to revert to the backup?\n\n"
+        "Backup:\n{backup}": (
+            "Voulez-vous rétablir la sauvegarde ?\n\n"
+            "Sauvegarde :\n{backup}"
+        ),
+        "Fix confirmed": "Correction confirmée",
+        "Fix not confirmed": "Correction non confirmée",
+        "Re-check failed": "Échec de la revérification",
+        "Reverted": "Rétabli",
+        "The publication was reverted to the backup.": (
+            "La publication a été rétablie à partir de la sauvegarde."
+        ),
+        "Could not revert to the backup:\n{detail}": (
+            "Impossible de rétablir à partir de la sauvegarde :\n{detail}"
+        ),
+        "Do you want to revert to the backup created before the fix?": (
+            "Voulez-vous rétablir la sauvegarde créée avant la correction ?"
+        ),
+        "The publication was changed, but the re-check could not be completed.\n\n"
+        "{detail}": (
+            "La publication a été modifiée, mais la revérification n’a pas pu "
+            "être terminée.\n\n{detail}"
+        ),
+        "The issue is still reported after the fix was applied "
+        "(code: {code}).\n\n"
+        "No backup file was found to revert.": (
+            "Le problème est toujours signalé après application de la "
+            "correction (code : {code}).\n\n"
+            "Aucun fichier de sauvegarde n’a été trouvé pour le rétablissement."
+        ),
+        "The issue is still reported after the fix was applied "
+        "(code: {code}).\n\n"
+        "Do you want to revert to the backup?\n\n"
+        "Backup:\n{backup}": (
+            "Le problème est toujours signalé après application de la "
+            "correction (code : {code}).\n\n"
+            "Voulez-vous rétablir la sauvegarde ?\n\n"
+            "Sauvegarde :\n{backup}"
         ),
         "Apply this fix to the publication?\n\n"
         "File: {file}\n\n"
@@ -536,13 +639,13 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Checking AI connection…": "Vérification de la connexion IA…",
         "Cancelling…": "Annulation…",
         "Cancelled.": "Annulé.",
-        "Open application &log…": "Ouvrir le journal de l’&application…",
-        "No application log has been written yet.": (
-            "Aucun journal d’application n’a encore été écrit."
+        "Open debugging &log…": "Ouvrir le journal de &débogage…",
+        "No debugging log has been written yet.": (
+            "Aucun journal de débogage n’a encore été écrit."
         ),
-        "Application log": "Journal d’application",
-        "Could not open the application log:\n{path}": (
-            "Impossible d’ouvrir le journal d’application :\n{path}"
+        "Debugging log": "Journal de débogage",
+        "Could not open the debugging log:\n{path}": (
+            "Impossible d’ouvrir le journal de débogage :\n{path}"
         ),
         "Continuing truncated reply…": "Poursuite de la réponse tronquée…",
         "\n\n---\n*Note: The AI reply was cut off again. "
@@ -596,9 +699,10 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Copiar el resumen del resultado (Ctrl+Shift+C)"
         ),
         "&Report…": "&Informe…",
-        "View or save reports, copy the summary, or view the full log": (
-            "Ver o guardar informes, copiar el resumen "
-            "o ver el registro completo"
+        "View or save reports, AI overview (when available), "
+        "copy the summary, or view the full log": (
+            "Ver o guardar informes, resumen de IA (si está disponible), "
+            "copiar el resumen o ver el registro completo"
         ),
         "Issues list": "Lista de problemas",
         "Severity": "Gravedad",
@@ -629,6 +733,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "View &HTML report in browser\tCtrl+H": (
             "Ver informe &HTML en el navegador\tCtrl+H"
         ),
+        "AI &overview…\tCtrl+Shift+A": "Resumen de &IA…\tCtrl+Shift+A",
         "Save &HTML report…\tCtrl+S": "Guardar informe &HTML…\tCtrl+S",
         "Save &HTML report…": "Guardar informe &HTML…",
         "E&xit\tEsc": "&Salir\tEsc",
@@ -836,6 +941,22 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Language changed to {language}.": "Idioma cambiado a {language}.",
         "Explain with AI": "Explicar con IA",
         "AI assistance": "Asistencia de IA",
+        "AI overview": "Resumen de IA",
+        "Overall assessment": "Evaluación general",
+        "Main themes": "Temas principales",
+        "Suggested priorities": "Prioridades sugeridas",
+        "Practical next steps": "Próximos pasos prácticos",
+        "Caveats": "Advertencias",
+        "Writing overview…": "Redactando el resumen…",
+        "Nothing to overview": "Nada que resumir",
+        "Save AI overview as HTML": "Guardar resumen de IA como HTML",
+        "Save AI overview as Markdown": "Guardar resumen de IA como Markdown",
+        "A check is already running. Wait for it to finish, then try again.": (
+            "Ya hay una comprobación en curso. Espere a que termine e "
+            "inténtelo de nuevo."
+        ),
+        "Opening issue details…": "Abriendo detalles del problema…",
+        "Loading AI view…": "Cargando la vista de IA…",
         "Fix with AI": "Corregir con IA",
         "Ask AI to propose a minimal markup fix for this EPUB "
         "or eBraille issue (uses FIDO AI settings)": (
@@ -847,6 +968,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "(creates a .bak backup first)": (
             "Escribir la corrección propuesta en la publicación "
             "(crea primero una copia .bak)"
+        ),
+        "Write the proposed fix into the publication, "
+        "then re-check and confirm whether the issue is resolved": (
+            "Escribir la corrección propuesta en la publicación "
+            "y volver a comprobar para confirmar si el problema está resuelto"
         ),
         "Write the proposed fix into the publication, "
         "then re-check automatically": (
@@ -872,6 +998,84 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Fix applied. Backup: {path}. Re-check with F5.": (
             "Corrección aplicada. Copia de seguridad: {path}. "
             "Vuelva a comprobar con F5."
+        ),
+        "The issue appears to be resolved after applying the fix.": (
+            "El problema parece resuelto tras aplicar la corrección."
+        ),
+        "The targeted issue appears to be resolved (code: {code}).": (
+            "El problema concreto parece resuelto (código: {code})."
+        ),
+        "The targeted issue is still reported after the fix was applied "
+        "(code: {code}).": (
+            "El problema concreto sigue apareciendo tras aplicar la "
+            "corrección (código: {code})."
+        ),
+        "Totals before: {fatals} fatal(s), {errors} error(s), "
+        "{warnings} warning(s).": (
+            "Totales antes: {fatals} fatal(es), {errors} error(es), "
+            "{warnings} advertencia(s)."
+        ),
+        "Totals after: {fatals} fatal(s), {errors} error(s), "
+        "{warnings} warning(s).": (
+            "Totales después: {fatals} fatal(es), {errors} error(es), "
+            "{warnings} advertencia(s)."
+        ),
+        "Overall errors/warnings decreased.": (
+            "El total de errores/advertencias disminuyó."
+        ),
+        "Overall errors/warnings did not decrease after the fix.": (
+            "El total de errores/advertencias no disminuyó tras la corrección."
+        ),
+        "Fixing this Ace issue introduced {n} new EPUBCheck "
+        "error(s) that were not present before:": (
+            "Al corregir este problema de Ace se introdujeron {n} error(es) "
+            "nuevos de EPUBCheck que antes no estaban:"
+        ),
+        "No new EPUBCheck errors were introduced by this Ace fix.": (
+            "Esta corrección de Ace no introdujo errores nuevos de EPUBCheck."
+        ),
+        "…and {n} more.": "…y {n} más.",
+        "No backup file was found to revert.": (
+            "No se encontró ningún archivo de copia de seguridad para revertir."
+        ),
+        "Do you want to revert to the backup?\n\n"
+        "Backup:\n{backup}": (
+            "¿Desea revertir a la copia de seguridad?\n\n"
+            "Copia de seguridad:\n{backup}"
+        ),
+        "Fix confirmed": "Corrección confirmada",
+        "Fix not confirmed": "Corrección no confirmada",
+        "Re-check failed": "Error al volver a comprobar",
+        "Reverted": "Revertido",
+        "The publication was reverted to the backup.": (
+            "La publicación se revirtió a la copia de seguridad."
+        ),
+        "Could not revert to the backup:\n{detail}": (
+            "No se pudo revertir a la copia de seguridad:\n{detail}"
+        ),
+        "Do you want to revert to the backup created before the fix?": (
+            "¿Desea revertir a la copia de seguridad creada antes de la corrección?"
+        ),
+        "The publication was changed, but the re-check could not be completed.\n\n"
+        "{detail}": (
+            "La publicación se modificó, pero no se pudo completar la "
+            "nueva comprobación.\n\n{detail}"
+        ),
+        "The issue is still reported after the fix was applied "
+        "(code: {code}).\n\n"
+        "No backup file was found to revert.": (
+            "El problema sigue apareciendo tras aplicar la corrección "
+            "(código: {code}).\n\n"
+            "No se encontró ningún archivo de copia de seguridad para revertir."
+        ),
+        "The issue is still reported after the fix was applied "
+        "(code: {code}).\n\n"
+        "Do you want to revert to the backup?\n\n"
+        "Backup:\n{backup}": (
+            "El problema sigue apareciendo tras aplicar la corrección "
+            "(código: {code}).\n\n"
+            "¿Desea revertir a la copia de seguridad?\n\n"
+            "Copia de seguridad:\n{backup}"
         ),
         "Apply this fix to the publication?\n\n"
         "File: {file}\n\n"
@@ -1065,13 +1269,13 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Checking AI connection…": "Comprobando conexión de IA…",
         "Cancelling…": "Cancelando…",
         "Cancelled.": "Cancelado.",
-        "Open application &log…": "Abrir el registro de la &aplicación…",
-        "No application log has been written yet.": (
-            "Todavía no se ha escrito ningún registro de la aplicación."
+        "Open debugging &log…": "Abrir el registro de &depuración…",
+        "No debugging log has been written yet.": (
+            "Todavía no se ha escrito ningún registro de depuración."
         ),
-        "Application log": "Registro de la aplicación",
-        "Could not open the application log:\n{path}": (
-            "No se pudo abrir el registro de la aplicación:\n{path}"
+        "Debugging log": "Registro de depuración",
+        "Could not open the debugging log:\n{path}": (
+            "No se pudo abrir el registro de depuración:\n{path}"
         ),
         "Continuing truncated reply…": "Continuando la respuesta truncada…",
         "\n\n---\n*Note: The AI reply was cut off again. "
@@ -1125,9 +1329,10 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Ergebniszusammenfassung kopieren (Ctrl+Shift+C)"
         ),
         "&Report…": "&Bericht…",
-        "View or save reports, copy the summary, or view the full log": (
-            "Berichte anzeigen oder speichern, Zusammenfassung kopieren "
-            "oder vollständiges Protokoll anzeigen"
+        "View or save reports, AI overview (when available), "
+        "copy the summary, or view the full log": (
+            "Berichte anzeigen oder speichern, KI-Überblick (falls verfügbar), "
+            "Zusammenfassung kopieren oder vollständiges Protokoll anzeigen"
         ),
         "Issues list": "Problemliste",
         "Severity": "Schweregrad",
@@ -1158,6 +1363,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "View &HTML report in browser\tCtrl+H": (
             "&HTML-Bericht im Browser anzeigen\tCtrl+H"
         ),
+        "AI &overview…\tCtrl+Shift+A": "KI-&Überblick…\tCtrl+Shift+A",
         "Save &HTML report…\tCtrl+S": "&HTML-Bericht speichern…\tCtrl+S",
         "Save &HTML report…": "&HTML-Bericht speichern…",
         "E&xit\tEsc": "Be&enden\tEsc",
@@ -1363,6 +1569,22 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Language changed to {language}.": "Sprache geändert: {language}.",
         "Explain with AI": "Mit KI erklären",
         "AI assistance": "KI-Unterstützung",
+        "AI overview": "KI-Überblick",
+        "Overall assessment": "Gesamteinschätzung",
+        "Main themes": "Hauptthemen",
+        "Suggested priorities": "Empfohlene Prioritäten",
+        "Practical next steps": "Praktische nächste Schritte",
+        "Caveats": "Hinweise",
+        "Writing overview…": "Überblick wird erstellt…",
+        "Nothing to overview": "Nichts zum Zusammenfassen",
+        "Save AI overview as HTML": "KI-Überblick als HTML speichern",
+        "Save AI overview as Markdown": "KI-Überblick als Markdown speichern",
+        "A check is already running. Wait for it to finish, then try again.": (
+            "Eine Prüfung läuft bereits. Warten Sie, bis sie fertig ist, "
+            "und versuchen Sie es erneut."
+        ),
+        "Opening issue details…": "Problemdetails werden geöffnet…",
+        "Loading AI view…": "KI-Ansicht wird geladen…",
         "Fix with AI": "Mit KI beheben",
         "Ask AI to propose a minimal markup fix for this EPUB "
         "or eBraille issue (uses FIDO AI settings)": (
@@ -1374,6 +1596,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "(creates a .bak backup first)": (
             "Die vorgeschlagene Korrektur in die Publikation schreiben "
             "(erstellt zuerst eine .bak-Sicherung)"
+        ),
+        "Write the proposed fix into the publication, "
+        "then re-check and confirm whether the issue is resolved": (
+            "Die vorgeschlagene Korrektur in die Publikation schreiben, "
+            "dann erneut prüfen und bestätigen, ob das Problem behoben ist"
         ),
         "Write the proposed fix into the publication, "
         "then re-check automatically": (
@@ -1398,6 +1625,86 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Fix applied. Backup: {path}. Re-check with F5.": (
             "Korrektur angewendet. Sicherung: {path}. Erneut prüfen mit F5."
+        ),
+        "The issue appears to be resolved after applying the fix.": (
+            "Das Problem scheint nach dem Anwenden der Korrektur behoben zu sein."
+        ),
+        "The targeted issue appears to be resolved (code: {code}).": (
+            "Das gezielte Problem scheint behoben zu sein (Code: {code})."
+        ),
+        "The targeted issue is still reported after the fix was applied "
+        "(code: {code}).": (
+            "Das gezielte Problem wird nach dem Anwenden der Korrektur "
+            "weiterhin gemeldet (Code: {code})."
+        ),
+        "Totals before: {fatals} fatal(s), {errors} error(s), "
+        "{warnings} warning(s).": (
+            "Summen vorher: {fatals} Fatal Error(s), {errors} Fehler, "
+            "{warnings} Warnung(en)."
+        ),
+        "Totals after: {fatals} fatal(s), {errors} error(s), "
+        "{warnings} warning(s).": (
+            "Summen nachher: {fatals} Fatal Error(s), {errors} Fehler, "
+            "{warnings} Warnung(en)."
+        ),
+        "Overall errors/warnings decreased.": (
+            "Die Gesamtzahl der Fehler/Warnungen ist gesunken."
+        ),
+        "Overall errors/warnings did not decrease after the fix.": (
+            "Die Gesamtzahl der Fehler/Warnungen ist nach der Korrektur "
+            "nicht gesunken."
+        ),
+        "Fixing this Ace issue introduced {n} new EPUBCheck "
+        "error(s) that were not present before:": (
+            "Das Beheben dieses Ace-Problems hat {n} neue EPUBCheck-Fehler "
+            "eingeführt, die vorher nicht vorhanden waren:"
+        ),
+        "No new EPUBCheck errors were introduced by this Ace fix.": (
+            "Durch diese Ace-Korrektur wurden keine neuen EPUBCheck-Fehler "
+            "eingeführt."
+        ),
+        "…and {n} more.": "…und {n} weitere.",
+        "No backup file was found to revert.": (
+            "Es wurde keine Sicherungsdatei zum Zurücksetzen gefunden."
+        ),
+        "Do you want to revert to the backup?\n\n"
+        "Backup:\n{backup}": (
+            "Möchten Sie die Sicherung wiederherstellen?\n\n"
+            "Sicherung:\n{backup}"
+        ),
+        "Fix confirmed": "Korrektur bestätigt",
+        "Fix not confirmed": "Korrektur nicht bestätigt",
+        "Re-check failed": "Erneute Prüfung fehlgeschlagen",
+        "Reverted": "Zurückgesetzt",
+        "The publication was reverted to the backup.": (
+            "Die Publikation wurde auf die Sicherung zurückgesetzt."
+        ),
+        "Could not revert to the backup:\n{detail}": (
+            "Die Sicherung konnte nicht wiederhergestellt werden:\n{detail}"
+        ),
+        "Do you want to revert to the backup created before the fix?": (
+            "Möchten Sie die vor der Korrektur erstellte Sicherung wiederherstellen?"
+        ),
+        "The publication was changed, but the re-check could not be completed.\n\n"
+        "{detail}": (
+            "Die Publikation wurde geändert, aber die erneute Prüfung konnte "
+            "nicht abgeschlossen werden.\n\n{detail}"
+        ),
+        "The issue is still reported after the fix was applied "
+        "(code: {code}).\n\n"
+        "No backup file was found to revert.": (
+            "Das Problem wird nach dem Anwenden der Korrektur weiterhin "
+            "gemeldet (Code: {code}).\n\n"
+            "Es wurde keine Sicherungsdatei zum Zurücksetzen gefunden."
+        ),
+        "The issue is still reported after the fix was applied "
+        "(code: {code}).\n\n"
+        "Do you want to revert to the backup?\n\n"
+        "Backup:\n{backup}": (
+            "Das Problem wird nach dem Anwenden der Korrektur weiterhin "
+            "gemeldet (Code: {code}).\n\n"
+            "Möchten Sie die Sicherung wiederherstellen?\n\n"
+            "Sicherung:\n{backup}"
         ),
         "Apply this fix to the publication?\n\n"
         "File: {file}\n\n"
@@ -1592,13 +1899,13 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Checking AI connection…": "KI-Verbindung wird geprüft…",
         "Cancelling…": "Wird abgebrochen…",
         "Cancelled.": "Abgebrochen.",
-        "Open application &log…": "Anwendungs&protokoll öffnen…",
-        "No application log has been written yet.": (
-            "Es wurde noch kein Anwendungsprotokoll geschrieben."
+        "Open debugging &log…": "&Debug-Protokoll öffnen…",
+        "No debugging log has been written yet.": (
+            "Es wurde noch kein Debug-Protokoll geschrieben."
         ),
-        "Application log": "Anwendungsprotokoll",
-        "Could not open the application log:\n{path}": (
-            "Das Anwendungsprotokoll konnte nicht geöffnet werden:\n{path}"
+        "Debugging log": "Debug-Protokoll",
+        "Could not open the debugging log:\n{path}": (
+            "Das Debug-Protokoll konnte nicht geöffnet werden:\n{path}"
         ),
         "Continuing truncated reply…": "Gekürzte Antwort wird fortgesetzt…",
         "\n\n---\n*Note: The AI reply was cut off again. "
@@ -1652,9 +1959,10 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Copiar o resumo do resultado (Ctrl+Shift+C)"
         ),
         "&Report…": "&Relatório…",
-        "View or save reports, copy the summary, or view the full log": (
-            "Ver ou guardar relatórios, copiar o resumo "
-            "ou ver o registo completo"
+        "View or save reports, AI overview (when available), "
+        "copy the summary, or view the full log": (
+            "Ver ou guardar relatórios, visão geral de IA (quando disponível), "
+            "copiar o resumo ou ver o registo completo"
         ),
         "Issues list": "Lista de problemas",
         "Severity": "Gravidade",
@@ -1685,6 +1993,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "View &HTML report in browser\tCtrl+H": (
             "Ver relatório &HTML no navegador\tCtrl+H"
         ),
+        "AI &overview…\tCtrl+Shift+A": "Visão geral de &IA…\tCtrl+Shift+A",
         "Save &HTML report…\tCtrl+S": "Guardar relatório &HTML…\tCtrl+S",
         "Save &HTML report…": "Guardar relatório &HTML…",
         "E&xit\tEsc": "&Sair\tEsc",
@@ -1892,6 +2201,22 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Language changed to {language}.": "Idioma alterado para {language}.",
         "Explain with AI": "Explicar com IA",
         "AI assistance": "Assistência de IA",
+        "AI overview": "Visão geral de IA",
+        "Overall assessment": "Avaliação geral",
+        "Main themes": "Temas principais",
+        "Suggested priorities": "Prioridades sugeridas",
+        "Practical next steps": "Próximos passos práticos",
+        "Caveats": "Avisos",
+        "Writing overview…": "A redigir a visão geral…",
+        "Nothing to overview": "Nada a resumir",
+        "Save AI overview as HTML": "Guardar visão geral de IA como HTML",
+        "Save AI overview as Markdown": "Guardar visão geral de IA como Markdown",
+        "A check is already running. Wait for it to finish, then try again.": (
+            "Já há uma verificação em curso. Aguarde que termine e tente "
+            "novamente."
+        ),
+        "Opening issue details…": "A abrir os detalhes do problema…",
+        "Loading AI view…": "A carregar a vista de IA…",
         "Fix with AI": "Corrigir com IA",
         "Ask AI to propose a minimal markup fix for this EPUB "
         "or eBraille issue (uses FIDO AI settings)": (
@@ -1903,6 +2228,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "(creates a .bak backup first)": (
             "Escrever a correção proposta na publicação "
             "(cria primeiro uma cópia .bak)"
+        ),
+        "Write the proposed fix into the publication, "
+        "then re-check and confirm whether the issue is resolved": (
+            "Escrever a correção proposta na publicação, "
+            "depois voltar a verificar e confirmar se o problema ficou resolvido"
         ),
         "Write the proposed fix into the publication, "
         "then re-check automatically": (
@@ -1928,6 +2258,84 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Fix applied. Backup: {path}. Re-check with F5.": (
             "Correção aplicada. Cópia de segurança: {path}. "
             "Volte a verificar com F5."
+        ),
+        "The issue appears to be resolved after applying the fix.": (
+            "O problema parece resolvido após aplicar a correção."
+        ),
+        "The targeted issue appears to be resolved (code: {code}).": (
+            "O problema em causa parece resolvido (código: {code})."
+        ),
+        "The targeted issue is still reported after the fix was applied "
+        "(code: {code}).": (
+            "O problema em causa continua a ser reportado após aplicar a "
+            "correção (código: {code})."
+        ),
+        "Totals before: {fatals} fatal(s), {errors} error(s), "
+        "{warnings} warning(s).": (
+            "Totais antes: {fatals} fatal(is), {errors} erro(s), "
+            "{warnings} aviso(s)."
+        ),
+        "Totals after: {fatals} fatal(s), {errors} error(s), "
+        "{warnings} warning(s).": (
+            "Totais depois: {fatals} fatal(is), {errors} erro(s), "
+            "{warnings} aviso(s)."
+        ),
+        "Overall errors/warnings decreased.": (
+            "O total de erros/avisos diminuiu."
+        ),
+        "Overall errors/warnings did not decrease after the fix.": (
+            "O total de erros/avisos não diminuiu após a correção."
+        ),
+        "Fixing this Ace issue introduced {n} new EPUBCheck "
+        "error(s) that were not present before:": (
+            "Corrigir este problema do Ace introduziu {n} novo(s) erro(s) "
+            "do EPUBCheck que não existiam antes:"
+        ),
+        "No new EPUBCheck errors were introduced by this Ace fix.": (
+            "Esta correção do Ace não introduziu novos erros do EPUBCheck."
+        ),
+        "…and {n} more.": "…e mais {n}.",
+        "No backup file was found to revert.": (
+            "Não foi encontrado nenhum ficheiro de cópia de segurança para reverter."
+        ),
+        "Do you want to revert to the backup?\n\n"
+        "Backup:\n{backup}": (
+            "Pretende reverter para a cópia de segurança?\n\n"
+            "Cópia de segurança:\n{backup}"
+        ),
+        "Fix confirmed": "Correção confirmada",
+        "Fix not confirmed": "Correção não confirmada",
+        "Re-check failed": "Falha na nova verificação",
+        "Reverted": "Revertido",
+        "The publication was reverted to the backup.": (
+            "A publicação foi revertida para a cópia de segurança."
+        ),
+        "Could not revert to the backup:\n{detail}": (
+            "Não foi possível reverter para a cópia de segurança:\n{detail}"
+        ),
+        "Do you want to revert to the backup created before the fix?": (
+            "Pretende reverter para a cópia de segurança criada antes da correção?"
+        ),
+        "The publication was changed, but the re-check could not be completed.\n\n"
+        "{detail}": (
+            "A publicação foi alterada, mas a nova verificação não pôde "
+            "ser concluída.\n\n{detail}"
+        ),
+        "The issue is still reported after the fix was applied "
+        "(code: {code}).\n\n"
+        "No backup file was found to revert.": (
+            "O problema continua a ser reportado após aplicar a correção "
+            "(código: {code}).\n\n"
+            "Não foi encontrado nenhum ficheiro de cópia de segurança para reverter."
+        ),
+        "The issue is still reported after the fix was applied "
+        "(code: {code}).\n\n"
+        "Do you want to revert to the backup?\n\n"
+        "Backup:\n{backup}": (
+            "O problema continua a ser reportado após aplicar a correção "
+            "(código: {code}).\n\n"
+            "Pretende reverter para a cópia de segurança?\n\n"
+            "Cópia de segurança:\n{backup}"
         ),
         "Apply this fix to the publication?\n\n"
         "File: {file}\n\n"
@@ -2122,13 +2530,13 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Checking AI connection…": "A verificar ligação de IA…",
         "Cancelling…": "A cancelar…",
         "Cancelled.": "Cancelado.",
-        "Open application &log…": "Abrir o registo da &aplicação…",
-        "No application log has been written yet.": (
-            "Ainda não foi escrito nenhum registo da aplicação."
+        "Open debugging &log…": "Abrir o registo de &depuração…",
+        "No debugging log has been written yet.": (
+            "Ainda não foi escrito nenhum registo de depuração."
         ),
-        "Application log": "Registo da aplicação",
-        "Could not open the application log:\n{path}": (
-            "Não foi possível abrir o registo da aplicação:\n{path}"
+        "Debugging log": "Registo de depuração",
+        "Could not open the debugging log:\n{path}": (
+            "Não foi possível abrir o registo de depuração:\n{path}"
         ),
         "Continuing truncated reply…": "A continuar a resposta truncada…",
         "\n\n---\n*Note: The AI reply was cut off again. "

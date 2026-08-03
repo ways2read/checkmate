@@ -1,4 +1,4 @@
-"""Render AI markdown replies as HTML for HtmlWindow and the browser."""
+"""Render AI markdown replies as HTML for WebView and the browser."""
 
 from __future__ import annotations
 
@@ -231,16 +231,21 @@ def markdown_to_browser_page(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{safe_title}</title>
 <style>
+  html, body {{
+    height: 100%;
+    margin: 0;
+  }}
   body {{
     font-family: system-ui, Segoe UI, sans-serif;
     line-height: 1.45;
     max-width: 52rem;
-    margin: 1.5rem auto;
-    padding: 0 1.25rem 2rem;
+    margin: 0 auto;
+    padding: 1rem 1.25rem 2rem;
     color: #111;
     background: #fff;
     overflow-wrap: anywhere;
     word-wrap: break-word;
+    box-sizing: border-box;
   }}
   h1, h2, h3 {{ line-height: 1.25; }}
   pre, code {{
