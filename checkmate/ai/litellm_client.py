@@ -32,6 +32,57 @@ def _ensure_local_model_cost_map() -> None:
     os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 
+def _bundled_tiktoken_cache_dir() -> str | None:
+    """Directory of pre-downloaded tiktoken BPE files inside a frozen build."""
+    import sys
+    from pathlib import Path
+
+    candidates: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass) / "tiktoken_cache")
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).resolve().parent / "_internal" / "tiktoken_cache")
+        candidates.append(Path(sys.executable).resolve().parent / "tiktoken_cache")
+    for path in candidates:
+        if path.is_dir():
+            return str(path)
+    return None
+
+
+def _ensure_tiktoken_ready() -> None:
+    """
+    Make ``tiktoken.get_encoding("cl100k_base")`` work in frozen builds.
+
+    PyInstaller does not expose ``tiktoken_ext`` to ``pkgutil.iter_modules``, so
+    plugin discovery finds nothing. Register constructors explicitly, and prefer
+    a bundled BPE cache so import does not need Azure Blob downloads.
+    """
+    cache = _bundled_tiktoken_cache_dir()
+    if cache:
+        os.environ.setdefault("TIKTOKEN_CACHE_DIR", cache)
+        logger.info("Using bundled tiktoken cache: %s", cache)
+
+    try:
+        import tiktoken.registry as reg
+        import tiktoken_ext.openai_public as openai_public
+    except Exception:
+        logger.exception("Could not import tiktoken encoding plugins")
+        raise
+
+    constructors = getattr(openai_public, "ENCODING_CONSTRUCTORS", None)
+    if not isinstance(constructors, dict) or not constructors:
+        raise RuntimeError("tiktoken_ext.openai_public has no ENCODING_CONSTRUCTORS")
+
+    with reg._lock:
+        # Replace (do not merge into None) so get_encoding skips broken discovery.
+        reg.ENCODING_CONSTRUCTORS = dict(constructors)
+    logger.info(
+        "Registered tiktoken encodings: %s",
+        ", ".join(sorted(constructors)),
+    )
+
+
 def _get_litellm() -> Any:
     """Import litellm lazily so env flags are applied first."""
     global _litellm, _litellm_import_error
@@ -43,13 +94,18 @@ def _get_litellm() -> Any:
     t0 = time.perf_counter()
     logger.info("Importing litellm…")
     try:
+        _ensure_tiktoken_ready()
         import litellm as _mod
     except Exception as exc:
         _litellm_import_error = exc
         logger.exception("Failed to import litellm")
         raise
     _litellm = _mod
-    logger.info("Imported litellm in %.1fs from %s", time.perf_counter() - t0, getattr(_mod, "__file__", "?"))
+    logger.info(
+        "Imported litellm in %.1fs from %s",
+        time.perf_counter() - t0,
+        getattr(_mod, "__file__", "?"),
+    )
     return _litellm
 
 

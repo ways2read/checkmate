@@ -73,6 +73,77 @@ def _resolve_output(dist_dir: Path, onefile: bool) -> Path:
     return dist_dir / APP_NAME
 
 
+def _internal_dir_for_output(output: Path) -> Path | None:
+    """Return the PyInstaller ``_internal`` / Frameworks folder for datas."""
+    output = output.resolve()
+    if sys.platform == "darwin" and output.suffix == ".app":
+        # Prefer _internal-style layout used by recent PyInstaller onedir apps.
+        for cand in (
+            output / "Contents" / "Frameworks",
+            output / "Contents" / "Resources",
+            output / "Contents" / "MacOS" / "_internal",
+        ):
+            if cand.is_dir():
+                return cand
+        return None
+    if output.is_dir():
+        internal = output / "_internal"
+        return internal if internal.is_dir() else output
+    return None
+
+
+def _bundle_tiktoken_support(output: Path) -> None:
+    """
+    Ship tiktoken BPE cache so LiteLLM import does not download encodings.
+
+    Also copy ``tiktoken_ext`` onto disk so plugin discovery can see it when
+    the PYZ namespace package has an empty ``__path__``.
+    """
+    import hashlib
+    import urllib.request
+
+    internal = _internal_dir_for_output(output)
+    if internal is None:
+        print("Warning: could not locate _internal for tiktoken cache", file=sys.stderr)
+        return
+
+    # Encoding plugin module (namespace package) on the filesystem.
+    try:
+        import tiktoken_ext.openai_public as _op
+
+        src_plugin = Path(_op.__file__)
+    except Exception as exc:
+        print(f"Warning: could not locate tiktoken_ext plugin: {exc}", file=sys.stderr)
+        src_plugin = None
+    if src_plugin is not None and src_plugin.is_file():
+        dest_plugin_dir = internal / "tiktoken_ext"
+        dest_plugin_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_plugin, dest_plugin_dir / "openai_public.py")
+        print(f"Bundled tiktoken_ext plugin → {dest_plugin_dir}")
+
+    url = "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
+    expected_hash = "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7"
+    cache_key = hashlib.sha1(url.encode()).hexdigest()
+    cache_dir = internal / "tiktoken_cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_dir / cache_key
+    if cache_path.is_file():
+        data = cache_path.read_bytes()
+        if hashlib.sha256(data).hexdigest() == expected_hash:
+            print(f"tiktoken cache already present: {cache_path.name}")
+            return
+    print(f"Downloading cl100k_base tiktoken encoding…")
+    with urllib.request.urlopen(url, timeout=120) as resp:
+        data = resp.read()
+    actual = hashlib.sha256(data).hexdigest()
+    if actual != expected_hash:
+        raise RuntimeError(
+            f"tiktoken encoding hash mismatch (got {actual}, expected {expected_hash})"
+        )
+    cache_path.write_bytes(data)
+    print(f"Bundled tiktoken cache → {cache_path}")
+
+
 def _runtime_dir_for_output(output: Path) -> Path:
     output = output.resolve()
     if sys.platform == "darwin" and output.suffix == ".app":
@@ -313,6 +384,11 @@ def build(
 
     subprocess.run(cmd, cwd=ROOT, check=True)
     output = _resolve_output(dist_dir, onefile)
+
+    if not onefile:
+        print()
+        print("Bundling tiktoken encodings / plugins…")
+        _bundle_tiktoken_support(output)
 
     if (
         sys.platform == "darwin"
