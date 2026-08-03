@@ -306,6 +306,110 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Java not found": "Java introuvable",
         "Language changed to {language}.": "Langue changée : {language}.",
         "Explain with AI": "Expliquer avec l’IA",
+        "AI assistance": "Assistance IA",
+        "Fix with AI": "Corriger avec l’IA",
+        "Ask AI to propose a minimal markup fix for this EPUB "
+        "or eBraille issue (uses FIDO AI settings)": (
+            "Demander à l’IA de proposer une correction minimale du balisage "
+            "pour ce problème EPUB ou eBraille (utilise les réglages IA de FIDO)"
+        ),
+        "Apply fix": "Appliquer la correction",
+        "Write the proposed fix into the publication "
+        "(creates a .bak backup first)": (
+            "Écrire la correction proposée dans la publication "
+            "(crée d’abord une sauvegarde .bak)"
+        ),
+        "Write the proposed fix into the publication, "
+        "then re-check automatically": (
+            "Écrire la correction proposée dans la publication, "
+            "puis revérifier automatiquement"
+        ),
+        "Proposed fix": "Correction proposée",
+        "Before": "Avant",
+        "After": "Après",
+        "File": "Fichier",
+        "(no rationale)": "(aucune justification)",
+        "Proposing fix…": "Proposition de correction…",
+        "Applying fix…": "Application de la correction…",
+        "Could not propose a fix.": "Impossible de proposer une correction.",
+        "Could not apply the fix.": "Impossible d’appliquer la correction.",
+        "Fix proposed. Review, then Apply fix.": (
+            "Correction proposée. Vérifiez, puis appliquez la correction."
+        ),
+        "Fix applied": "Correction appliquée",
+        "Fix applied. Re-check the publication with F5.": (
+            "Correction appliquée. Revérifiez la publication avec F5."
+        ),
+        "Fix applied. Backup: {path}. Re-check with F5.": (
+            "Correction appliquée. Sauvegarde : {path}. Revérifiez avec F5."
+        ),
+        "Apply this fix to the publication?\n\n"
+        "File: {file}\n\n"
+        "A .bak backup will be created first. "
+        "Re-check the publication (F5) afterward to verify.": (
+            "Appliquer cette correction à la publication ?\n\n"
+            "Fichier : {file}\n\n"
+            "Une sauvegarde .bak sera créée d’abord. "
+            "Revérifiez ensuite la publication (F5)."
+        ),
+        "Fix with AI is only available for EPUB and eBraille publications.": (
+            "Corriger avec l’IA n’est disponible que pour les publications "
+            "EPUB et eBraille."
+        ),
+        "The AI did not return an applicable patch. You can still read the "
+        "reply above, or try Explain with AI.": (
+            "L’IA n’a pas renvoyé de correctif applicable. Réessayez "
+            "Corriger avec l’IA, ou utilisez Expliquer avec l’IA."
+        ),
+        "The AI did not return an applicable patch. Try Fix with AI again, "
+        "or use Explain with AI.": (
+            "L’IA n’a pas renvoyé de correctif applicable. Réessayez "
+            "Corriger avec l’IA, ou utilisez Expliquer avec l’IA."
+        ),
+        "The AI reply was incomplete or unusable (draft text or invalid JSON). "
+        "Try Fix with AI again.": (
+            "La réponse de l’IA était incomplète ou inutilisable (brouillon "
+            "ou JSON invalide). Réessayez Corriger avec l’IA."
+        ),
+        "The AI reply was cut off before a complete patch was ready. "
+        "Try Fix with AI again.": (
+            "La réponse de l’IA a été coupée avant qu’un correctif complet "
+            "soit prêt. Réessayez Corriger avec l’IA."
+        ),
+        "The AI proposed a patch that does not match the publication file. "
+        "Try Fix with AI again.": (
+            "L’IA a proposé un correctif qui ne correspond pas au fichier "
+            "de la publication. Réessayez Corriger avec l’IA."
+        ),
+        "The proposed patch has an empty original string.": (
+            "Le correctif proposé a une chaîne d’origine vide."
+        ),
+        "Could not apply the fix: the original text was not found in the file "
+        "(it may have changed).": (
+            "Impossible d’appliquer la correction : le texte d’origine "
+            "est introuvable dans le fichier (il a peut‑être changé)."
+        ),
+        "Could not apply the fix: the original text appears more than once "
+        "in the file.": (
+            "Impossible d’appliquer la correction : le texte d’origine "
+            "apparaît plusieurs fois dans le fichier."
+        ),
+        "The publication path is missing or no longer exists.": (
+            "Le chemin de la publication est manquant ou n’existe plus."
+        ),
+        "Could not find the file to edit inside the publication.": (
+            "Impossible de trouver le fichier à modifier dans la publication."
+        ),
+        "This publication type cannot be edited in place by CheckMate.": (
+            "Ce type de publication ne peut pas être modifié sur place "
+            "par CheckMate."
+        ),
+        "Could not write the fixed publication.": (
+            "Impossible d’écrire la publication corrigée."
+        ),
+        "The publication package could not be read or rebuilt.": (
+            "Le paquet de publication n’a pas pu être lu ou reconstruit."
+        ),
         "What this means": "Ce que cela signifie",
         "Why it matters": "Pourquoi c’est important",
         "Where in the file": "Où dans le fichier",
@@ -422,6 +526,29 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Explain the issue first, then ask a follow-up.": (
             "Expliquez d’abord le problème, puis posez une question de suivi."
+        ),
+        "The AI request timed out. Try again, or check your connection and FIDO settings.": (
+            "La requête IA a expiré. Réessayez, ou vérifiez votre connexion "
+            "et les paramètres FIDO."
+        ),
+        "The AI request was cancelled.": "La requête IA a été annulée.",
+        "Checking AI credentials…": "Vérification des identifiants IA…",
+        "Checking AI connection…": "Vérification de la connexion IA…",
+        "Cancelling…": "Annulation…",
+        "Cancelled.": "Annulé.",
+        "Open application &log…": "Ouvrir le journal de l’&application…",
+        "No application log has been written yet.": (
+            "Aucun journal d’application n’a encore été écrit."
+        ),
+        "Application log": "Journal d’application",
+        "Could not open the application log:\n{path}": (
+            "Impossible d’ouvrir le journal d’application :\n{path}"
+        ),
+        "Continuing truncated reply…": "Poursuite de la réponse tronquée…",
+        "\n\n---\n*Note: The AI reply was cut off again. "
+        "Ask a follow-up such as “Please continue.”*": (
+            "\n\n---\n*Remarque : la réponse de l’IA a encore été coupée. "
+            "Posez une question de suivi telle que « Veuillez continuer. »*"
         ),
     },
     LANG_ES: {
@@ -708,6 +835,110 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Java not found": "Java no encontrado",
         "Language changed to {language}.": "Idioma cambiado a {language}.",
         "Explain with AI": "Explicar con IA",
+        "AI assistance": "Asistencia de IA",
+        "Fix with AI": "Corregir con IA",
+        "Ask AI to propose a minimal markup fix for this EPUB "
+        "or eBraille issue (uses FIDO AI settings)": (
+            "Pedir a la IA una corrección mínima de marcado para este "
+            "problema de EPUB o eBraille (usa la configuración de IA de FIDO)"
+        ),
+        "Apply fix": "Aplicar corrección",
+        "Write the proposed fix into the publication "
+        "(creates a .bak backup first)": (
+            "Escribir la corrección propuesta en la publicación "
+            "(crea primero una copia .bak)"
+        ),
+        "Write the proposed fix into the publication, "
+        "then re-check automatically": (
+            "Escribir la corrección propuesta en la publicación "
+            "y volver a comprobar automáticamente"
+        ),
+        "Proposed fix": "Corrección propuesta",
+        "Before": "Antes",
+        "After": "Después",
+        "File": "Archivo",
+        "(no rationale)": "(sin justificación)",
+        "Proposing fix…": "Proponiendo corrección…",
+        "Applying fix…": "Aplicando corrección…",
+        "Could not propose a fix.": "No se pudo proponer una corrección.",
+        "Could not apply the fix.": "No se pudo aplicar la corrección.",
+        "Fix proposed. Review, then Apply fix.": (
+            "Corrección propuesta. Revísela y luego aplíquela."
+        ),
+        "Fix applied": "Corrección aplicada",
+        "Fix applied. Re-check the publication with F5.": (
+            "Corrección aplicada. Vuelva a comprobar la publicación con F5."
+        ),
+        "Fix applied. Backup: {path}. Re-check with F5.": (
+            "Corrección aplicada. Copia de seguridad: {path}. "
+            "Vuelva a comprobar con F5."
+        ),
+        "Apply this fix to the publication?\n\n"
+        "File: {file}\n\n"
+        "A .bak backup will be created first. "
+        "Re-check the publication (F5) afterward to verify.": (
+            "¿Aplicar esta corrección a la publicación?\n\n"
+            "Archivo: {file}\n\n"
+            "Se creará primero una copia .bak. "
+            "Después, vuelva a comprobar la publicación (F5)."
+        ),
+        "Fix with AI is only available for EPUB and eBraille publications.": (
+            "Corregir con IA solo está disponible para publicaciones "
+            "EPUB y eBraille."
+        ),
+        "The AI did not return an applicable patch. You can still read the "
+        "reply above, or try Explain with AI.": (
+            "La IA no devolvió un parche aplicable. Vuelva a intentar "
+            "Corregir con IA, o use Explicar con IA."
+        ),
+        "The AI did not return an applicable patch. Try Fix with AI again, "
+        "or use Explain with AI.": (
+            "La IA no devolvió un parche aplicable. Vuelva a intentar "
+            "Corregir con IA, o use Explicar con IA."
+        ),
+        "The AI reply was incomplete or unusable (draft text or invalid JSON). "
+        "Try Fix with AI again.": (
+            "La respuesta de la IA estaba incompleta o era inutilizable "
+            "(borrador o JSON no válido). Vuelva a intentar Corregir con IA."
+        ),
+        "The AI reply was cut off before a complete patch was ready. "
+        "Try Fix with AI again.": (
+            "La respuesta de la IA se cortó antes de un parche completo. "
+            "Vuelva a intentar Corregir con IA."
+        ),
+        "The AI proposed a patch that does not match the publication file. "
+        "Try Fix with AI again.": (
+            "La IA propuso un parche que no coincide con el archivo de la "
+            "publicación. Vuelva a intentar Corregir con IA."
+        ),
+        "The proposed patch has an empty original string.": (
+            "El parche propuesto tiene una cadena original vacía."
+        ),
+        "Could not apply the fix: the original text was not found in the file "
+        "(it may have changed).": (
+            "No se pudo aplicar la corrección: no se encontró el texto "
+            "original en el archivo (puede haber cambiado)."
+        ),
+        "Could not apply the fix: the original text appears more than once "
+        "in the file.": (
+            "No se pudo aplicar la corrección: el texto original aparece "
+            "más de una vez en el archivo."
+        ),
+        "The publication path is missing or no longer exists.": (
+            "Falta la ruta de la publicación o ya no existe."
+        ),
+        "Could not find the file to edit inside the publication.": (
+            "No se pudo encontrar el archivo a editar dentro de la publicación."
+        ),
+        "This publication type cannot be edited in place by CheckMate.": (
+            "CheckMate no puede editar este tipo de publicación in situ."
+        ),
+        "Could not write the fixed publication.": (
+            "No se pudo escribir la publicación corregida."
+        ),
+        "The publication package could not be read or rebuilt.": (
+            "No se pudo leer o reconstruir el paquete de la publicación."
+        ),
         "What this means": "Qué significa",
         "Why it matters": "Por qué importa",
         "Where in the file": "Dónde en el archivo",
@@ -824,6 +1055,29 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Explain the issue first, then ask a follow-up.": (
             "Explique primero el problema y luego haga una pregunta de seguimiento."
+        ),
+        "The AI request timed out. Try again, or check your connection and FIDO settings.": (
+            "La solicitud de IA agotó el tiempo de espera. Inténtelo de nuevo, "
+            "o compruebe su conexión y la configuración de FIDO."
+        ),
+        "The AI request was cancelled.": "La solicitud de IA se canceló.",
+        "Checking AI credentials…": "Comprobando credenciales de IA…",
+        "Checking AI connection…": "Comprobando conexión de IA…",
+        "Cancelling…": "Cancelando…",
+        "Cancelled.": "Cancelado.",
+        "Open application &log…": "Abrir el registro de la &aplicación…",
+        "No application log has been written yet.": (
+            "Todavía no se ha escrito ningún registro de la aplicación."
+        ),
+        "Application log": "Registro de la aplicación",
+        "Could not open the application log:\n{path}": (
+            "No se pudo abrir el registro de la aplicación:\n{path}"
+        ),
+        "Continuing truncated reply…": "Continuando la respuesta truncada…",
+        "\n\n---\n*Note: The AI reply was cut off again. "
+        "Ask a follow-up such as “Please continue.”*": (
+            "\n\n---\n*Nota: la respuesta de la IA se cortó otra vez. "
+            "Haga una pregunta de seguimiento como «Por favor, continúe.»*"
         ),
     },
     LANG_DE: {
@@ -1108,6 +1362,110 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Java not found": "Java nicht gefunden",
         "Language changed to {language}.": "Sprache geändert: {language}.",
         "Explain with AI": "Mit KI erklären",
+        "AI assistance": "KI-Unterstützung",
+        "Fix with AI": "Mit KI beheben",
+        "Ask AI to propose a minimal markup fix for this EPUB "
+        "or eBraille issue (uses FIDO AI settings)": (
+            "KI um einen minimalen Markup-Fix für dieses EPUB- oder "
+            "eBraille-Problem bitten (nutzt FIDO-KI-Einstellungen)"
+        ),
+        "Apply fix": "Korrektur anwenden",
+        "Write the proposed fix into the publication "
+        "(creates a .bak backup first)": (
+            "Die vorgeschlagene Korrektur in die Publikation schreiben "
+            "(erstellt zuerst eine .bak-Sicherung)"
+        ),
+        "Write the proposed fix into the publication, "
+        "then re-check automatically": (
+            "Die vorgeschlagene Korrektur in die Publikation schreiben "
+            "und automatisch erneut prüfen"
+        ),
+        "Proposed fix": "Vorgeschlagene Korrektur",
+        "Before": "Vorher",
+        "After": "Nachher",
+        "File": "Datei",
+        "(no rationale)": "(keine Begründung)",
+        "Proposing fix…": "Korrektur wird vorgeschlagen…",
+        "Applying fix…": "Korrektur wird angewendet…",
+        "Could not propose a fix.": "Es konnte keine Korrektur vorgeschlagen werden.",
+        "Could not apply the fix.": "Die Korrektur konnte nicht angewendet werden.",
+        "Fix proposed. Review, then Apply fix.": (
+            "Korrektur vorgeschlagen. Prüfen, dann Korrektur anwenden."
+        ),
+        "Fix applied": "Korrektur angewendet",
+        "Fix applied. Re-check the publication with F5.": (
+            "Korrektur angewendet. Publikation mit F5 erneut prüfen."
+        ),
+        "Fix applied. Backup: {path}. Re-check with F5.": (
+            "Korrektur angewendet. Sicherung: {path}. Erneut prüfen mit F5."
+        ),
+        "Apply this fix to the publication?\n\n"
+        "File: {file}\n\n"
+        "A .bak backup will be created first. "
+        "Re-check the publication (F5) afterward to verify.": (
+            "Diese Korrektur auf die Publikation anwenden?\n\n"
+            "Datei: {file}\n\n"
+            "Zuerst wird eine .bak-Sicherung erstellt. "
+            "Prüfen Sie die Publikation danach erneut (F5)."
+        ),
+        "Fix with AI is only available for EPUB and eBraille publications.": (
+            "Mit KI beheben ist nur für EPUB- und eBraille-Publikationen "
+            "verfügbar."
+        ),
+        "The AI did not return an applicable patch. You can still read the "
+        "reply above, or try Explain with AI.": (
+            "Die KI hat keinen anwendbaren Patch zurückgegeben. Versuchen Sie "
+            "Mit KI beheben erneut, oder nutzen Sie Mit KI erklären."
+        ),
+        "The AI did not return an applicable patch. Try Fix with AI again, "
+        "or use Explain with AI.": (
+            "Die KI hat keinen anwendbaren Patch zurückgegeben. Versuchen Sie "
+            "Mit KI beheben erneut, oder nutzen Sie Mit KI erklären."
+        ),
+        "The AI reply was incomplete or unusable (draft text or invalid JSON). "
+        "Try Fix with AI again.": (
+            "Die KI-Antwort war unvollständig oder unbrauchbar (Entwurf oder "
+            "ungültiges JSON). Versuchen Sie Mit KI beheben erneut."
+        ),
+        "The AI reply was cut off before a complete patch was ready. "
+        "Try Fix with AI again.": (
+            "Die KI-Antwort wurde abgeschnitten, bevor ein vollständiger Patch "
+            "fertig war. Versuchen Sie Mit KI beheben erneut."
+        ),
+        "The AI proposed a patch that does not match the publication file. "
+        "Try Fix with AI again.": (
+            "Die KI hat einen Patch vorgeschlagen, der nicht zur Publikationsdatei "
+            "passt. Versuchen Sie Mit KI beheben erneut."
+        ),
+        "The proposed patch has an empty original string.": (
+            "Der vorgeschlagene Patch hat eine leere Originalzeichenfolge."
+        ),
+        "Could not apply the fix: the original text was not found in the file "
+        "(it may have changed).": (
+            "Korrektur nicht anwendbar: der Originaltext wurde in der Datei "
+            "nicht gefunden (er könnte sich geändert haben)."
+        ),
+        "Could not apply the fix: the original text appears more than once "
+        "in the file.": (
+            "Korrektur nicht anwendbar: der Originaltext kommt in der Datei "
+            "mehrfach vor."
+        ),
+        "The publication path is missing or no longer exists.": (
+            "Der Publikationspfad fehlt oder existiert nicht mehr."
+        ),
+        "Could not find the file to edit inside the publication.": (
+            "Die zu bearbeitende Datei wurde in der Publikation nicht gefunden."
+        ),
+        "This publication type cannot be edited in place by CheckMate.": (
+            "Dieser Publikationstyp kann von CheckMate nicht vor Ort "
+            "bearbeitet werden."
+        ),
+        "Could not write the fixed publication.": (
+            "Die korrigierte Publikation konnte nicht geschrieben werden."
+        ),
+        "The publication package could not be read or rebuilt.": (
+            "Das Publikationspaket konnte nicht gelesen oder neu erstellt werden."
+        ),
         "What this means": "Was das bedeutet",
         "Why it matters": "Warum es wichtig ist",
         "Where in the file": "Wo in der Datei",
@@ -1224,6 +1582,29 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Explain the issue first, then ask a follow-up.": (
             "Erklären Sie zuerst das Problem und stellen Sie dann eine Nachfrage."
+        ),
+        "The AI request timed out. Try again, or check your connection and FIDO settings.": (
+            "Die KI-Anfrage ist abgelaufen. Versuchen Sie es erneut, oder prüfen Sie "
+            "Ihre Verbindung und die FIDO-Einstellungen."
+        ),
+        "The AI request was cancelled.": "Die KI-Anfrage wurde abgebrochen.",
+        "Checking AI credentials…": "KI-Zugangsdaten werden geprüft…",
+        "Checking AI connection…": "KI-Verbindung wird geprüft…",
+        "Cancelling…": "Wird abgebrochen…",
+        "Cancelled.": "Abgebrochen.",
+        "Open application &log…": "Anwendungs&protokoll öffnen…",
+        "No application log has been written yet.": (
+            "Es wurde noch kein Anwendungsprotokoll geschrieben."
+        ),
+        "Application log": "Anwendungsprotokoll",
+        "Could not open the application log:\n{path}": (
+            "Das Anwendungsprotokoll konnte nicht geöffnet werden:\n{path}"
+        ),
+        "Continuing truncated reply…": "Gekürzte Antwort wird fortgesetzt…",
+        "\n\n---\n*Note: The AI reply was cut off again. "
+        "Ask a follow-up such as “Please continue.”*": (
+            "\n\n---\n*Hinweis: Die KI-Antwort wurde erneut abgeschnitten. "
+            "Stellen Sie eine Nachfrage wie „Bitte fortsetzen.“*"
         ),
     },
     LANG_PT: {
@@ -1510,6 +1891,111 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Java not found": "Java não encontrado",
         "Language changed to {language}.": "Idioma alterado para {language}.",
         "Explain with AI": "Explicar com IA",
+        "AI assistance": "Assistência de IA",
+        "Fix with AI": "Corrigir com IA",
+        "Ask AI to propose a minimal markup fix for this EPUB "
+        "or eBraille issue (uses FIDO AI settings)": (
+            "Pedir à IA uma correção mínima de marcação para este "
+            "problema de EPUB ou eBraille (usa as definições de IA do FIDO)"
+        ),
+        "Apply fix": "Aplicar correção",
+        "Write the proposed fix into the publication "
+        "(creates a .bak backup first)": (
+            "Escrever a correção proposta na publicação "
+            "(cria primeiro uma cópia .bak)"
+        ),
+        "Write the proposed fix into the publication, "
+        "then re-check automatically": (
+            "Escrever a correção proposta na publicação "
+            "e voltar a verificar automaticamente"
+        ),
+        "Proposed fix": "Correção proposta",
+        "Before": "Antes",
+        "After": "Depois",
+        "File": "Ficheiro",
+        "(no rationale)": "(sem justificação)",
+        "Proposing fix…": "A propor correção…",
+        "Applying fix…": "A aplicar correção…",
+        "Could not propose a fix.": "Não foi possível propor uma correção.",
+        "Could not apply the fix.": "Não foi possível aplicar a correção.",
+        "Fix proposed. Review, then Apply fix.": (
+            "Correção proposta. Reveja e depois aplique a correção."
+        ),
+        "Fix applied": "Correção aplicada",
+        "Fix applied. Re-check the publication with F5.": (
+            "Correção aplicada. Volte a verificar a publicação com F5."
+        ),
+        "Fix applied. Backup: {path}. Re-check with F5.": (
+            "Correção aplicada. Cópia de segurança: {path}. "
+            "Volte a verificar com F5."
+        ),
+        "Apply this fix to the publication?\n\n"
+        "File: {file}\n\n"
+        "A .bak backup will be created first. "
+        "Re-check the publication (F5) afterward to verify.": (
+            "Aplicar esta correção à publicação?\n\n"
+            "Ficheiro: {file}\n\n"
+            "Será criada primeiro uma cópia .bak. "
+            "Depois, volte a verificar a publicação (F5)."
+        ),
+        "Fix with AI is only available for EPUB and eBraille publications.": (
+            "Corrigir com IA só está disponível para publicações "
+            "EPUB e eBraille."
+        ),
+        "The AI did not return an applicable patch. You can still read the "
+        "reply above, or try Explain with AI.": (
+            "A IA não devolveu uma correção aplicável. Tente novamente "
+            "Corrigir com IA, ou use Explicar com IA."
+        ),
+        "The AI did not return an applicable patch. Try Fix with AI again, "
+        "or use Explain with AI.": (
+            "A IA não devolveu uma correção aplicável. Tente novamente "
+            "Corrigir com IA, ou use Explicar com IA."
+        ),
+        "The AI reply was incomplete or unusable (draft text or invalid JSON). "
+        "Try Fix with AI again.": (
+            "A resposta da IA estava incompleta ou inutilizável (rascunho "
+            "ou JSON inválido). Tente novamente Corrigir com IA."
+        ),
+        "The AI reply was cut off before a complete patch was ready. "
+        "Try Fix with AI again.": (
+            "A resposta da IA foi cortada antes de uma correção completa. "
+            "Tente novamente Corrigir com IA."
+        ),
+        "The AI proposed a patch that does not match the publication file. "
+        "Try Fix with AI again.": (
+            "A IA propôs uma correção que não corresponde ao ficheiro da "
+            "publicação. Tente novamente Corrigir com IA."
+        ),
+        "The proposed patch has an empty original string.": (
+            "A correção proposta tem uma cadeia original vazia."
+        ),
+        "Could not apply the fix: the original text was not found in the file "
+        "(it may have changed).": (
+            "Não foi possível aplicar a correção: o texto original "
+            "não foi encontrado no ficheiro (pode ter mudado)."
+        ),
+        "Could not apply the fix: the original text appears more than once "
+        "in the file.": (
+            "Não foi possível aplicar a correção: o texto original "
+            "aparece mais do que uma vez no ficheiro."
+        ),
+        "The publication path is missing or no longer exists.": (
+            "O caminho da publicação está em falta ou já não existe."
+        ),
+        "Could not find the file to edit inside the publication.": (
+            "Não foi possível encontrar o ficheiro a editar na publicação."
+        ),
+        "This publication type cannot be edited in place by CheckMate.": (
+            "Este tipo de publicação não pode ser editado no local "
+            "pelo CheckMate."
+        ),
+        "Could not write the fixed publication.": (
+            "Não foi possível escrever a publicação corrigida."
+        ),
+        "The publication package could not be read or rebuilt.": (
+            "O pacote da publicação não pôde ser lido ou reconstruído."
+        ),
         "What this means": "O que isto significa",
         "Why it matters": "Porque é importante",
         "Where in the file": "Onde no ficheiro",
@@ -1626,6 +2112,29 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Explain the issue first, then ask a follow-up.": (
             "Explique primeiro o problema e depois faça uma pergunta de seguimento."
+        ),
+        "The AI request timed out. Try again, or check your connection and FIDO settings.": (
+            "O pedido de IA expirou. Tente novamente, ou verifique a sua ligação "
+            "e as definições do FIDO."
+        ),
+        "The AI request was cancelled.": "O pedido de IA foi cancelado.",
+        "Checking AI credentials…": "A verificar credenciais de IA…",
+        "Checking AI connection…": "A verificar ligação de IA…",
+        "Cancelling…": "A cancelar…",
+        "Cancelled.": "Cancelado.",
+        "Open application &log…": "Abrir o registo da &aplicação…",
+        "No application log has been written yet.": (
+            "Ainda não foi escrito nenhum registo da aplicação."
+        ),
+        "Application log": "Registo da aplicação",
+        "Could not open the application log:\n{path}": (
+            "Não foi possível abrir o registo da aplicação:\n{path}"
+        ),
+        "Continuing truncated reply…": "A continuar a resposta truncada…",
+        "\n\n---\n*Note: The AI reply was cut off again. "
+        "Ask a follow-up such as “Please continue.”*": (
+            "\n\n---\n*Nota: a resposta da IA foi cortada outra vez. "
+            "Faça uma pergunta de seguimento como «Por favor, continue.»*"
         ),
     },
 }

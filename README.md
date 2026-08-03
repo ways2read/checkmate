@@ -39,7 +39,15 @@ support on Windows, macOS, and Linux.
 - **Explain with AI** (when FIDO AI settings are present on this machine): open
   an issue’s details and ask for a structured plain-language briefing plus
   follow-up questions. Uses FIDO’s API keys and/or unlock code (keys from
-  unlock stay in memory only). Validation itself stays offline.
+  unlock stay in memory only). Validation itself stays offline. Requests show
+  a cancellable progress dialog, check the provider connection first, and
+  write diagnostics to the app log (**Help → Open application log…**).
+- **Fix with AI** (EPUB and eBraille only, when FIDO AI settings are present):
+  from the same issue details dialog, ask for a minimal proposed markup patch,
+  preview before/after, then **Apply fix** to the exploded folder or packaged
+  `.epub`/`.ebrl` (creates a `.bak` backup). The details dialog closes and the
+  publication is re-checked automatically. Packaged rewrite uses the same
+  EPUB-safe extract/rebuild approach as FIDO.
 - Copy summary; view or save text / HTML reports (**Report** menu) — HTML
   reports embed an EPUB/eBraille cover image when present, or the first page
   of a PDF; **Clear results** returns to the launch state
@@ -298,6 +306,7 @@ checkmate/
     checker.py         # Run jar, parse JSON results
     cover_image.py     # EPUB cover / PDF first-page for HTML reports
     publication.py     # Classify .ebrl / .epub / .pdf / exploded folders
+    epub_package.py    # Extract / rebuild .epub/.ebrl (Fix with AI apply)
     updater.py         # Tool download / update (GitHub + veraPDF installer)
     java_util.py       # Locate Java (bundled or PATH)
     models.py          # Verdict and issue models
@@ -306,6 +315,9 @@ checkmate/
     settings.py        # Persisted preferences
     paths.py           # App data and bundle locations
     subprocess_util.py # Quiet subprocess helpers (Windows)
+    fido_settings.py   # Read FIDO AI keys/models (no FIDO import)
+    logging_setup.py   # App-data log file (Help → Open application log)
+    ai/                # Explain with AI / Fix with AI
   run.py               # Launcher (incl. SSL cert setup when frozen)
   scripts/
     package.py               # PyInstaller + bundled JRE, checker, EPUBCheck, veraPDF

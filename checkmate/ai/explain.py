@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import logging
+import threading
 from dataclasses import dataclass
+from typing import Callable
 
 from ..i18n import _, get_language
 from ..models import CheckResult, Issue
 from .context import gather_issue_context
 from .litellm_client import ensure_credentials_ready, litellm_available
 from .resources import resources_prompt_block
-from .session import ExplainSession
+from .session import ExplainSession, ProviderError
+
+logger = logging.getLogger(__name__)
+
+StatusCallback = Callable[[str], None]
 
 
 @dataclass
@@ -101,51 +108,206 @@ def build_user_prompt(ctx: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
+def _looks_truncated(text: str, finish_reason: str | None) -> bool:
+    if (finish_reason or "").lower() in {"length", "max_tokens"}:
+        return True
+    t = text or ""
+    if not t.strip():
+        return False
+    # Unclosed markdown fence (common when cut mid-example).
+    return t.count("```") % 2 == 1
+
+
+def _continue_prompt() -> str:
+    lang = _language_name()
+    return (
+        f"Your previous reply was cut off before it finished.\n"
+        f"Continue from exactly where you stopped. "
+        f"Do not repeat completed sections. "
+        f"Close any open code fences. "
+        f"Reply entirely in {lang}."
+    )
+
+
+def _merge_continuation(first: str, second: str) -> str:
+    a = (first or "").rstrip()
+    b = (second or "").lstrip()
+    if not b:
+        return a
+    if not a:
+        return b
+    return f"{a}\n\n{b}"
+
+
+def _cancelled(cancel_event: threading.Event | None) -> bool:
+    return cancel_event is not None and cancel_event.is_set()
+
+
+def _status(cb: StatusCallback | None, message: str) -> None:
+    if cb is not None:
+        try:
+            cb(message)
+        except Exception:
+            logger.debug("AI status callback failed", exc_info=True)
+
+
 def explain_issue(
     issue: Issue,
     result: CheckResult | None = None,
     *,
     target_path: str | None = None,
+    cancel_event: threading.Event | None = None,
+    status_callback: StatusCallback | None = None,
 ) -> ExplainResult:
+    from .litellm_client import DEFAULT_EXPLAIN_MAX_TOKENS
+
+    if _cancelled(cancel_event):
+        return ExplainResult(ok=False, error_key="cancelled")
+
     if not litellm_available():
+        logger.error("Explain requested but litellm is not installed")
         return ExplainResult(ok=False, error_key="no_litellm")
 
+    _status(status_callback, _("Checking AI credentials…"))
     ok, err = ensure_credentials_ready()
     if not ok:
+        logger.warning("Explain credentials not ready: %s", err)
         return ExplainResult(ok=False, error_key=err or "no_key")
+    if _cancelled(cancel_event):
+        return ExplainResult(ok=False, error_key="cancelled")
 
     ctx = gather_issue_context(issue, result, target_path=target_path)
     try:
         session = ExplainSession.create()
+    except RuntimeError as e:
+        return ExplainResult(ok=False, error_key=str(e) or "no_key")
+
+    _status(status_callback, _("Checking AI connection…"))
+    conn_ok, conn_err, conn_detail = session.check_connection(cancel_event=cancel_event)
+    if not conn_ok:
+        return ExplainResult(
+            ok=False,
+            error_key=conn_err or "network",
+            text=conn_detail,
+            session=session,
+        )
+    if _cancelled(cancel_event):
+        return ExplainResult(ok=False, error_key="cancelled", session=session)
+
+    _status(status_callback, _("Explaining…"))
+    logger.info("Explain request starting model=%s code=%s", session.model, issue.code)
+    try:
         text = session.ask(
             system=build_system_prompt(issue),
             user=build_user_prompt(ctx),
+            max_tokens=DEFAULT_EXPLAIN_MAX_TOKENS,
+        )
+    except ProviderError as e:
+        return ExplainResult(
+            ok=False,
+            error_key=e.error_key,
+            text=e.detail,
+            session=session,
         )
     except RuntimeError as e:
-        return ExplainResult(ok=False, error_key=str(e) or "no_key")
+        return ExplainResult(ok=False, error_key=str(e) or "no_key", session=session)
     except Exception as e:
-        return ExplainResult(ok=False, error_key="provider_error", text=str(e))
+        logger.exception("Explain provider error")
+        return ExplainResult(
+            ok=False, error_key="provider_error", text=str(e), session=session
+        )
+
+    if _cancelled(cancel_event):
+        return ExplainResult(ok=False, error_key="cancelled", session=session)
 
     if not (text or "").strip():
+        logger.warning("Explain returned empty response model=%s", session.model)
         return ExplainResult(ok=False, error_key="empty_response", session=session)
+
+    if _looks_truncated(text, session.last_finish_reason):
+        logger.warning(
+            "Explain truncated model=%s finish_reason=%s; requesting continuation",
+            session.model,
+            session.last_finish_reason,
+        )
+        if _cancelled(cancel_event):
+            return ExplainResult(ok=False, error_key="cancelled", session=session)
+        _status(status_callback, _("Continuing truncated reply…"))
+        try:
+            cont = session.followup(
+                _continue_prompt(),
+                max_tokens=DEFAULT_EXPLAIN_MAX_TOKENS,
+            )
+            text = _merge_continuation(text, cont)
+            if session.messages and session.messages[-1].get("role") == "assistant":
+                session.messages[-1]["content"] = text
+        except ProviderError as e:
+            return ExplainResult(
+                ok=False,
+                error_key=e.error_key,
+                text=e.detail,
+                session=session,
+            )
+        except Exception as e:
+            logger.exception("Explain continuation failed")
+            return ExplainResult(
+                ok=False, error_key="provider_error", text=str(e), session=session
+            )
+
+        if _looks_truncated(text, session.last_finish_reason):
+            logger.warning(
+                "Explain still truncated after continuation model=%s finish_reason=%s",
+                session.model,
+                session.last_finish_reason,
+            )
+            note = _(
+                "\n\n---\n*Note: The AI reply was cut off again. "
+                "Ask a follow-up such as “Please continue.”*"
+            )
+            text = (text or "").rstrip() + note
+
+    logger.info("Explain request completed model=%s", session.model)
     return ExplainResult(ok=True, text=text, session=session)
 
 
-def ask_followup(session: ExplainSession, question: str) -> ExplainResult:
+def ask_followup(
+    session: ExplainSession,
+    question: str,
+    *,
+    cancel_event: threading.Event | None = None,
+    status_callback: StatusCallback | None = None,
+) -> ExplainResult:
     q = (question or "").strip()
     if not q:
         return ExplainResult(ok=False, error_key="empty_question", session=session)
+    if _cancelled(cancel_event):
+        return ExplainResult(ok=False, error_key="cancelled", session=session)
+
     lang = _language_name()
+    _status(status_callback, _("Thinking…"))
+    logger.info("Follow-up request starting model=%s", session.model)
     try:
         text = session.followup(
             f"Follow-up question about the same issue.\n"
             f"Reply entirely in {lang}.\n\n"
             f"{q}"
         )
+    except ProviderError as e:
+        return ExplainResult(
+            ok=False,
+            error_key=e.error_key,
+            text=e.detail,
+            session=session,
+        )
     except Exception as e:
+        logger.exception("Follow-up provider error")
         return ExplainResult(
             ok=False, error_key="provider_error", text=str(e), session=session
         )
+
+    if _cancelled(cancel_event):
+        return ExplainResult(ok=False, error_key="cancelled", session=session)
+    logger.info("Follow-up request completed model=%s", session.model)
     return ExplainResult(ok=True, text=text, session=session)
 
 
@@ -157,6 +319,10 @@ def error_message_for_key(key: str | None, detail: str = "") -> str:
         "no_model": _("No AI model is selected in FIDO settings."),
         "not_found": _("The AI services unlock code was not found. Check the code in FIDO."),
         "network": _("Could not reach the unlock server or AI provider. Check your connection."),
+        "timeout": _(
+            "The AI request timed out. Try again, or check your connection and FIDO settings."
+        ),
+        "cancelled": _("The AI request was cancelled."),
         "bad_json": _("The unlock server returned invalid data."),
         "expired": _("The AI services unlock code has expired."),
         "parse": _("The unlock data could not be processed."),
@@ -168,6 +334,6 @@ def error_message_for_key(key: str | None, detail: str = "") -> str:
         "no_session": _("Explain the issue first, then ask a follow-up."),
     }
     base = mapping.get(key or "", _("Could not explain this issue."))
-    if detail and key == "provider_error":
+    if detail and key in {"provider_error", "timeout", "network", "no_key", "no_model"}:
         return f"{base}\n\n{detail}"
     return base

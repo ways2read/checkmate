@@ -60,6 +60,8 @@ UpdateInfoEvent, EVT_UPDATE_INFO = wx.lib.newevent.NewEvent()
 InstallDoneEvent, EVT_INSTALL_DONE = wx.lib.newevent.NewEvent()
 JavaMissingEvent, EVT_JAVA_MISSING = wx.lib.newevent.NewEvent()
 ExplainAiEvent, EVT_EXPLAIN_AI = wx.lib.newevent.NewEvent()
+FixAiEvent, EVT_FIX_AI = wx.lib.newevent.NewEvent()
+ApplyFixEvent, EVT_APPLY_FIX = wx.lib.newevent.NewEvent()
 
 # ListCtrl is native on Windows but generic (and VoiceOver/Orca-invisible) on
 # macOS/Linux. DataViewListCtrl is the reverse — use the native control per OS.
@@ -319,7 +321,12 @@ class IssueDetailDialog(wx.Dialog):
         self._busy = False
         self._ai_markdown = ""
         self._ai_plain = False
+        self._fix_proposal = None
+        self._ai_cancel: threading.Event | None = None
+        self._ai_progress: wx.ProgressDialog | None = None
+        self._ai_progress_timer: wx.Timer | None = None
         self._show_ai = fido_settings_present()
+        self._show_fix = self._show_ai and self._fix_available_for_result(check_result)
         if self._show_ai:
             self.SetSize((780, 760))
             self.SetMinSize((700, 520))
@@ -357,7 +364,7 @@ class IssueDetailDialog(wx.Dialog):
         root.Add(text, 1, wx.EXPAND | wx.ALL, 12)
 
         if self._show_ai:
-            ai_box = wx.StaticBox(self, label=_("Explain with AI"))
+            ai_box = wx.StaticBox(self, label=_("AI assistance"))
             ai_sizer = wx.StaticBoxSizer(ai_box, wx.VERTICAL)
 
             top_row = wx.BoxSizer(wx.HORIZONTAL)
@@ -369,6 +376,16 @@ class IssueDetailDialog(wx.Dialog):
                 )
             )
             top_row.Add(self.explain_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+
+            if self._show_fix:
+                self.fix_btn = wx.Button(self, label=_("Fix with AI"))
+                self.fix_btn.SetToolTip(
+                    _(
+                        "Ask AI to propose a minimal markup fix for this EPUB "
+                        "or eBraille issue (uses FIDO AI settings)"
+                    )
+                )
+                top_row.Add(self.fix_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
 
             model_label = wx.StaticText(self, label=_("Model:"))
             top_row.Add(model_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
@@ -423,12 +440,30 @@ class IssueDetailDialog(wx.Dialog):
             root.Add(ai_sizer, 2, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
 
             self.explain_btn.Bind(wx.EVT_BUTTON, self._on_explain)
+            if self._show_fix:
+                self.fix_btn.Bind(wx.EVT_BUTTON, self._on_fix)
             self.ask_btn.Bind(wx.EVT_BUTTON, self._on_ask_followup)
             self.followup_ctrl.Bind(wx.EVT_TEXT_ENTER, self._on_ask_followup)
             self.Bind(EVT_EXPLAIN_AI, self._on_explain_ai_event)
+            self.Bind(EVT_FIX_AI, self._on_fix_ai_event)
+            self.Bind(EVT_APPLY_FIX, self._on_apply_fix_event)
 
         footer = wx.BoxSizer(wx.HORIZONTAL)
         if self._show_ai:
+            if self._show_fix:
+                self.apply_fix_btn = wx.Button(self, label=_("Apply fix"))
+                self.apply_fix_btn.SetToolTip(
+                    _(
+                        "Write the proposed fix into the publication, "
+                        "then re-check automatically"
+                    )
+                )
+                self.apply_fix_btn.Enable(False)
+                footer.Add(
+                    self.apply_fix_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6
+                )
+                self.apply_fix_btn.Bind(wx.EVT_BUTTON, self._on_apply_fix)
+
             self.view_browser_btn = wx.Button(self, label=_("View in browser"))
             self.view_browser_btn.SetToolTip(
                 _("Open the explanation in your web browser")
@@ -475,6 +510,12 @@ class IssueDetailDialog(wx.Dialog):
         text.SetFocus()
         text.SetInsertionPoint(0)
 
+    @staticmethod
+    def _fix_available_for_result(check_result: CheckResult | None) -> bool:
+        from .ai.context import fix_allowed_for_result
+
+        return fix_allowed_for_result(check_result)
+
     def _on_dialog_char_hook(self, event: wx.KeyEvent) -> None:
         if event.GetKeyCode() == wx.WXK_ESCAPE:
             self._on_close_dialog(event)
@@ -483,6 +524,9 @@ class IssueDetailDialog(wx.Dialog):
 
     def _on_close_dialog(self, event: wx.Event | None = None) -> None:
         # Always allow closing, even while an explain request is in flight.
+        if self._ai_cancel is not None:
+            self._ai_cancel.set()
+        self._close_ai_progress()
         if self.IsModal():
             self.EndModal(wx.ID_CLOSE)
         else:
@@ -501,6 +545,11 @@ class IssueDetailDialog(wx.Dialog):
 
     def _has_ai_content(self) -> bool:
         return bool((self._ai_markdown or "").strip()) or self._ai_plain
+
+    def _set_apply_fix_enabled(self, enabled: bool) -> None:
+        if not self._show_fix:
+            return
+        self.apply_fix_btn.Enable(enabled and self._fix_proposal is not None)
 
     def _set_ai_export_enabled(self, enabled: bool) -> None:
         if not self._show_ai:
@@ -646,6 +695,9 @@ class IssueDetailDialog(wx.Dialog):
         if not self._show_ai:
             return
         self.explain_btn.Enable(not busy)
+        if self._show_fix:
+            self.fix_btn.Enable(not busy)
+            self._set_apply_fix_enabled(not busy)
         self.ask_btn.Enable(not busy and self._session is not None)
         self.followup_ctrl.Enable(not busy)
         self._set_ai_export_enabled(not busy and self._has_ai_content())
@@ -655,26 +707,138 @@ class IssueDetailDialog(wx.Dialog):
             self.ai_status.SetLabel("")
         self.Layout()
 
+    def _ai_status_callback(self, message: str) -> None:
+        def update() -> None:
+            if self._ai_progress is not None:
+                try:
+                    cont, _skip = self._ai_progress.Pulse(message)
+                    if not cont and self._ai_cancel is not None:
+                        self._ai_cancel.set()
+                except RuntimeError:
+                    pass
+            if self._show_ai:
+                self.ai_status.SetLabel(message)
+
+        wx.CallAfter(update)
+
+    def _open_ai_progress(self, title: str, message: str) -> threading.Event:
+        self._close_ai_progress()
+        cancel = threading.Event()
+        self._ai_cancel = cancel
+        self._ai_progress = wx.ProgressDialog(
+            title,
+            message,
+            maximum=100,
+            parent=self,
+            style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
+        )
+        self._ai_progress_timer = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self._on_ai_progress_timer, self._ai_progress_timer)
+        self._ai_progress_timer.Start(200)
+        return cancel
+
+    def _on_ai_progress_timer(self, _event: wx.TimerEvent) -> None:
+        dlg = self._ai_progress
+        cancel = self._ai_cancel
+        if dlg is None or cancel is None:
+            return
+        try:
+            cont, _skip = dlg.Pulse()
+        except RuntimeError:
+            return
+        if not cont:
+            cancel.set()
+            try:
+                dlg.Pulse(_("Cancelling…"))
+            except RuntimeError:
+                pass
+            self._close_ai_progress()
+            self._set_busy(False)
+            if self._show_ai:
+                self.ai_status.SetLabel(_("Cancelled."))
+
+    def _close_ai_progress(self) -> None:
+        timer = self._ai_progress_timer
+        if timer is not None:
+            try:
+                if timer.IsRunning():
+                    timer.Stop()
+            except RuntimeError:
+                pass
+            self._ai_progress_timer = None
+        dlg = self._ai_progress
+        self._ai_progress = None
+        if dlg is not None:
+            try:
+                dlg.Destroy()
+            except RuntimeError:
+                pass
+
     def _on_explain(self, _event: wx.Event) -> None:
         if self._busy:
             return
-        self._set_busy(True, _("Explaining…"))
+        self._fix_proposal = None
+        self._set_apply_fix_enabled(False)
+        cancel = self._open_ai_progress(
+            _("Explain with AI"), _("Checking AI connection…")
+        )
+        self._set_busy(True, _("Checking AI connection…"))
         issue = self._issue
         result = self._check_result
+        status_cb = self._ai_status_callback
 
         def work() -> None:
-            from .ai.explain import explain_issue
+            from .ai.explain import ExplainResult, explain_issue
 
             try:
-                out = explain_issue(issue, result)
+                out = explain_issue(
+                    issue,
+                    result,
+                    cancel_event=cancel,
+                    status_callback=status_cb,
+                )
             except Exception as exc:
-                from .ai.explain import ExplainResult
-
                 out = ExplainResult(ok=False, error_key="provider_error", text=str(exc))
+            if cancel.is_set():
+                return
+            wx.CallAfter(self._close_ai_progress)
             try:
                 wx.PostEvent(self, ExplainAiEvent(kind="explain", result=out))
             except RuntimeError:
                 # Dialog was closed while the request was running.
+                return
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_fix(self, _event: wx.Event) -> None:
+        if self._busy or not self._show_fix:
+            return
+        self._fix_proposal = None
+        self._set_apply_fix_enabled(False)
+        cancel = self._open_ai_progress(_("Fix with AI"), _("Checking AI connection…"))
+        self._set_busy(True, _("Checking AI connection…"))
+        issue = self._issue
+        result = self._check_result
+        status_cb = self._ai_status_callback
+
+        def work() -> None:
+            from .ai.fix import FixResult, propose_fix
+
+            try:
+                out = propose_fix(
+                    issue,
+                    result,
+                    cancel_event=cancel,
+                    status_callback=status_cb,
+                )
+            except Exception as exc:
+                out = FixResult(ok=False, error_key="provider_error", text=str(exc))
+            if cancel.is_set():
+                return
+            wx.CallAfter(self._close_ai_progress)
+            try:
+                wx.PostEvent(self, FixAiEvent(result=out))
+            except RuntimeError:
                 return
 
         threading.Thread(target=work, daemon=True).start()
@@ -685,23 +849,31 @@ class IssueDetailDialog(wx.Dialog):
         question = self.followup_ctrl.GetValue().strip()
         if not question:
             return
+        cancel = self._open_ai_progress(_("Follow-up"), _("Thinking…"))
         self._set_busy(True, _("Thinking…"))
         session = self._session
+        status_cb = self._ai_status_callback
 
         def work() -> None:
-            from .ai.explain import ask_followup
+            from .ai.explain import ExplainResult, ask_followup
 
             try:
-                out = ask_followup(session, question)
+                out = ask_followup(
+                    session,
+                    question,
+                    cancel_event=cancel,
+                    status_callback=status_cb,
+                )
             except Exception as exc:
-                from .ai.explain import ExplainResult
-
                 out = ExplainResult(
                     ok=False,
                     error_key="provider_error",
                     text=str(exc),
                     session=session,
                 )
+            if cancel.is_set():
+                return
+            wx.CallAfter(self._close_ai_progress)
             try:
                 wx.PostEvent(
                     self,
@@ -718,9 +890,13 @@ class IssueDetailDialog(wx.Dialog):
 
         result = event.result
         kind = getattr(event, "kind", "explain")
+        self._close_ai_progress()
         self._set_busy(False)
         self._refresh_ai_model_display()
         if not result.ok:
+            if result.error_key == "cancelled":
+                self.ai_status.SetLabel(_("Cancelled."))
+                return
             msg = error_message_for_key(result.error_key, detail=result.text or "")
             self._set_ai_content(msg, plain=True)
             self.ai_status.SetLabel(_("Could not explain this issue."))
@@ -746,6 +922,94 @@ class IssueDetailDialog(wx.Dialog):
         self.ai_status.SetLabel(_("Done"))
         self.ai_output.SetFocus()
         self.ai_output.SetInsertionPoint(0)
+
+    def _on_fix_ai_event(self, event: FixAiEvent) -> None:
+        from .ai.fix import error_message_for_key
+
+        result = event.result
+        self._close_ai_progress()
+        self._set_busy(False)
+        self._refresh_ai_model_display()
+        if not result.ok:
+            if result.error_key == "cancelled":
+                self.ai_status.SetLabel(_("Cancelled."))
+                return
+            msg = error_message_for_key(result.error_key, detail=result.text or "")
+            self._fix_proposal = None
+            self._set_apply_fix_enabled(False)
+            self._set_ai_content(msg, plain=True)
+            self.ai_status.SetLabel(_("Could not propose a fix."))
+            if result.session is not None:
+                self._session = result.session
+                self.ask_btn.Enable(True)
+            return
+
+        self._session = result.session
+        self.ask_btn.Enable(True)
+        self._fix_proposal = result.proposal
+        self._set_ai_content(result.text or "")
+        if result.proposal is None:
+            self._set_apply_fix_enabled(False)
+            self.ai_status.SetLabel(_("Done"))
+        else:
+            self._set_apply_fix_enabled(True)
+            self.ai_status.SetLabel(_("Fix proposed. Review, then Apply fix."))
+        self.ai_output.SetFocus()
+        self.ai_output.SetInsertionPoint(0)
+
+    def _on_apply_fix(self, _event: wx.Event) -> None:
+        if self._busy or not self._show_fix or self._fix_proposal is None:
+            return
+        target = ""
+        if self._check_result and self._check_result.target_path:
+            target = self._check_result.target_path
+        if not target:
+            wx.MessageBox(
+                _("The publication path is missing or no longer exists."),
+                _("Error"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+
+        self._set_busy(True, _("Applying fix…"))
+        proposal = self._fix_proposal
+
+        def work() -> None:
+            from .ai.fix import apply_proposed_fix
+
+            try:
+                out = apply_proposed_fix(proposal, target)
+            except Exception as exc:
+                from .epub_package import ApplyResult
+
+                out = ApplyResult(ok=False, error_key="write_failed", detail=str(exc))
+            try:
+                wx.PostEvent(self, ApplyFixEvent(result=out))
+            except RuntimeError:
+                return
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_apply_fix_event(self, event: ApplyFixEvent) -> None:
+        from .ai.fix import error_message_for_key
+
+        result = event.result
+        self._set_busy(False)
+        if not result.ok:
+            msg = error_message_for_key(result.error_key, detail=result.detail or "")
+            self.ai_status.SetLabel(_("Could not apply the fix."))
+            wx.MessageBox(msg, _("Error"), wx.OK | wx.ICON_ERROR, self)
+            self._set_apply_fix_enabled(True)
+            return
+
+        self._fix_proposal = None
+        self._set_apply_fix_enabled(False)
+        # Close and let the main window re-check (no success dialog).
+        if self.IsModal():
+            self.EndModal(wx.ID_APPLY)
+        else:
+            self.Destroy()
 
 
 class AboutDialog(wx.Dialog):
@@ -1265,6 +1529,10 @@ class MainFrame(wx.Frame):
         menubar.Append(lang_menu, _("&Language"))
 
         help_menu = wx.Menu()
+        self.menu_open_app_log = help_menu.Append(
+            wx.ID_ANY, _("Open application &log…")
+        )
+        help_menu.AppendSeparator()
         self.menu_about = help_menu.Append(wx.ID_ABOUT, _("&About"))
         menubar.Append(help_menu, _("&Help"))
         self.SetMenuBar(menubar)
@@ -1326,6 +1594,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_view_full_log, self.menu_view_log)
         self.Bind(wx.EVT_MENU, self.on_check_updates, self.menu_update)
         self.Bind(wx.EVT_MENU, self.on_reinstall_checker, self.menu_install)
+        self.Bind(wx.EVT_MENU, self.on_open_app_log, self.menu_open_app_log)
         self.Bind(wx.EVT_MENU, self.on_about, self.menu_about)
         self.Bind(wx.EVT_MENU, lambda _e: self.Close(), id=wx.ID_EXIT)
         self.SetAcceleratorTable(
@@ -1691,8 +1960,11 @@ class MainFrame(wx.Frame):
             count=count,
             check_result=self._last_result,
         )
-        dlg.ShowModal()
+        result_code = dlg.ShowModal()
         dlg.Destroy()
+        if result_code == wx.ID_APPLY:
+            # Apply fix succeeded — re-scan so the issues list reflects the edit.
+            wx.CallAfter(self.on_check, None)
 
     def on_issue_activated(self, _event: wx.Event) -> None:
         self._show_issue_details()
@@ -2275,8 +2547,42 @@ class MainFrame(wx.Frame):
         with AboutDialog(self) as dlg:
             dlg.ShowModal()
 
+    def on_open_app_log(self, _event: wx.CommandEvent) -> None:
+        from .logging_setup import log_file_path
+
+        path = log_file_path()
+        if not path.is_file():
+            wx.MessageBox(
+                _("No application log has been written yet."),
+                _("Application log"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        try:
+            if sys.platform == "win32":
+                os.startfile(path)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                import subprocess
+
+                subprocess.call(["open", str(path)])
+            else:
+                import subprocess
+
+                subprocess.call(["xdg-open", str(path)])
+        except OSError:
+            wx.MessageBox(
+                _("Could not open the application log:\n{path}").format(path=path),
+                _("Error"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+
 
 def run_app(argv: list[str] | None = None) -> None:
+    from .logging_setup import configure_logging
+
+    configure_logging()
     paths = parse_launch_paths(argv)
     app = EBrailleApp(initial_paths=paths)
     app.MainLoop()
