@@ -3,18 +3,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
+import time
 from typing import Any, Callable
 
-try:
-    import litellm
-except ImportError:
-    litellm = None  # type: ignore
-
 logger = logging.getLogger(__name__)
-
-_CONFIGURED = False
 
 # Keep well under LiteLLM's ~600s default so UI never looks permanently hung.
 DEFAULT_COMPLETION_TIMEOUT_SEC = 180
@@ -27,17 +22,65 @@ DEFAULT_FIX_MAX_TOKENS = 8192
 
 StatusCallback = Callable[[str], None]
 
+_CONFIGURED = False
+_litellm: Any = None
+_litellm_import_error: BaseException | None = None
 
-def configure_litellm_defaults() -> None:
-    global _CONFIGURED
-    if _CONFIGURED or litellm is None:
-        return
-    litellm.drop_params = True
-    _CONFIGURED = True
+
+def _ensure_local_model_cost_map() -> None:
+    """Avoid LiteLLM's import-time GitHub fetch (can hang in frozen builds)."""
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
+
+def _get_litellm() -> Any:
+    """Import litellm lazily so env flags are applied first."""
+    global _litellm, _litellm_import_error
+    if _litellm is not None:
+        return _litellm
+    if _litellm_import_error is not None:
+        raise _litellm_import_error
+    _ensure_local_model_cost_map()
+    t0 = time.perf_counter()
+    logger.info("Importing litellm…")
+    try:
+        import litellm as _mod
+    except Exception as exc:
+        _litellm_import_error = exc
+        logger.exception("Failed to import litellm")
+        raise
+    _litellm = _mod
+    logger.info("Imported litellm in %.1fs from %s", time.perf_counter() - t0, getattr(_mod, "__file__", "?"))
+    return _litellm
 
 
 def litellm_available() -> bool:
-    return litellm is not None
+    try:
+        return _get_litellm() is not None
+    except Exception:
+        return False
+
+
+def preload_litellm() -> tuple[bool, str]:
+    """
+    Import litellm on the calling thread (prefer the UI thread).
+
+    Returns ``(ok, detail)``. Safe to call more than once.
+    """
+    try:
+        _get_litellm()
+        configure_litellm_defaults()
+        return True, ""
+    except Exception as exc:
+        return False, str(exc) or type(exc).__name__
+
+
+def configure_litellm_defaults() -> None:
+    global _CONFIGURED
+    mod = _get_litellm()
+    if _CONFIGURED or mod is None:
+        return
+    mod.drop_params = True
+    _CONFIGURED = True
 
 
 def completion_output_kwargs(model: str | None, max_tokens: int) -> dict[str, Any]:
@@ -80,7 +123,8 @@ def completion_output_kwargs(model: str | None, max_tokens: int) -> dict[str, An
 
 
 def litellm_completion(**kwargs: Any) -> Any:
-    if litellm is None:
+    mod = _get_litellm()
+    if mod is None:
         raise RuntimeError("litellm is not installed")
     configure_litellm_defaults()
     out = dict(kwargs)
@@ -122,7 +166,7 @@ def litellm_completion(**kwargs: Any) -> Any:
         out.get("max_tokens"),
         out.get("max_completion_tokens"),
     )
-    return litellm.completion(**out)
+    return mod.completion(**out)
 
 
 def assistant_text_from_response(response: Any) -> str:
@@ -153,8 +197,9 @@ def classify_provider_error(exc: BaseException) -> tuple[str, str]:
     msg = detail.lower()
 
     timeout_type = False
-    if litellm is not None:
-        timeout_cls = getattr(litellm, "Timeout", None)
+    mod = _litellm
+    if mod is not None:
+        timeout_cls = getattr(mod, "Timeout", None)
         if timeout_cls is not None and isinstance(exc, timeout_cls):
             timeout_type = True
     if (
@@ -166,14 +211,14 @@ def classify_provider_error(exc: BaseException) -> tuple[str, str]:
     ):
         return "timeout", detail
 
-    if litellm is not None:
-        auth_cls = getattr(litellm, "AuthenticationError", None)
+    if mod is not None:
+        auth_cls = getattr(mod, "AuthenticationError", None)
         if auth_cls is not None and isinstance(exc, auth_cls):
             return "no_key", detail
-        conn_cls = getattr(litellm, "APIConnectionError", None)
+        conn_cls = getattr(mod, "APIConnectionError", None)
         if conn_cls is not None and isinstance(exc, conn_cls):
             return "network", detail
-        not_found = getattr(litellm, "NotFoundError", None)
+        not_found = getattr(mod, "NotFoundError", None)
         if not_found is not None and isinstance(exc, not_found):
             return "no_model", detail
 

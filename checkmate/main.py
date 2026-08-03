@@ -986,9 +986,11 @@ class IssueDetailDialog(wx.Dialog):
         self._fix_proposal = None
         self._set_apply_fix_enabled(False)
         cancel = self._open_ai_progress(
-            _("Explain with AI"), _("Checking AI connection…")
+            _("Explain with AI"), _("Loading AI libraries…")
         )
-        self._set_busy(True, _("Checking AI connection…"))
+        self._set_busy(True, _("Loading AI libraries…"))
+        if not self._preload_ai_libraries():
+            return
         issue = self._issue
         result = self._check_result
         status_cb = self._ai_status_callback
@@ -1015,13 +1017,32 @@ class IssueDetailDialog(wx.Dialog):
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _preload_ai_libraries(self) -> bool:
+        """Import LiteLLM on the UI thread before starting a worker."""
+        from .ai.litellm_client import preload_litellm
+
+        ok, detail = preload_litellm()
+        if ok:
+            return True
+        self._close_ai_progress()
+        self._set_busy(False)
+        from .ai.explain import error_message_for_key
+
+        msg = error_message_for_key("no_litellm", detail=detail)
+        if hasattr(self, "ai_status"):
+            self.ai_status.SetLabel(_("Could not load AI libraries."))
+        wx.MessageBox(msg, _("Error"), wx.OK | wx.ICON_ERROR, self)
+        return False
+
     def _on_fix(self, _event: wx.Event) -> None:
         if self._busy or not self._show_fix:
             return
         self._fix_proposal = None
         self._set_apply_fix_enabled(False)
-        cancel = self._open_ai_progress(_("Fix with AI"), _("Checking AI connection…"))
-        self._set_busy(True, _("Checking AI connection…"))
+        cancel = self._open_ai_progress(_("Fix with AI"), _("Loading AI libraries…"))
+        self._set_busy(True, _("Loading AI libraries…"))
+        if not self._preload_ai_libraries():
+            return
         issue = self._issue
         result = self._check_result
         status_cb = self._ai_status_callback
@@ -1053,8 +1074,16 @@ class IssueDetailDialog(wx.Dialog):
         question = self.followup_ctrl.GetValue().strip()
         if not question:
             return
-        cancel = self._open_ai_progress(_("Follow-up"), _("Thinking…"))
+        cancel = self._open_ai_progress(_("Follow-up"), _("Loading AI libraries…"))
+        self._set_busy(True, _("Loading AI libraries…"))
+        if not self._preload_ai_libraries():
+            return
         self._set_busy(True, _("Thinking…"))
+        if self._ai_progress is not None:
+            try:
+                self._ai_progress.Pulse(_("Thinking…"))
+            except RuntimeError:
+                pass
         session = self._session
         status_cb = self._ai_status_callback
 
@@ -2625,9 +2654,10 @@ class MainFrame(wx.Frame):
             elif not self._busy:
                 self._restore_result_display()
             return
-        # While a check runs, move focus into the result pane so each progress
-        # message ("Checking with Ace…", …) is announced by screen readers.
-        self._show_result_text(event.message, update_title=False, focus=self._busy)
+        # Move focus into the result pane so progress is announced (checks and
+        # one-time first-use warm-up). Selecting the text is what screen readers
+        # pick up as a change.
+        self._show_result_text(event.message, update_title=False, focus=True)
 
     def on_result_event(self, event: ResultEvent) -> None:
         self._set_busy(False)
@@ -2997,7 +3027,7 @@ class MainFrame(wx.Frame):
         self._overview_cancel = cancel
         self._overview_progress = wx.ProgressDialog(
             _("AI overview"),
-            _("Checking AI connection…"),
+            _("Loading AI libraries…"),
             maximum=100,
             parent=self,
             style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
@@ -3007,6 +3037,26 @@ class MainFrame(wx.Frame):
             wx.EVT_TIMER, self._on_overview_progress_timer, self._overview_progress_timer
         )
         self._overview_progress_timer.Start(200)
+
+        from .ai.litellm_client import preload_litellm
+
+        ok, detail = preload_litellm()
+        if not ok:
+            self._close_overview_progress()
+            from .ai.explain import error_message_for_key
+
+            wx.MessageBox(
+                error_message_for_key("no_litellm", detail=detail),
+                _("AI overview"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+
+        try:
+            self._overview_progress.Pulse(_("Checking AI connection…"))
+        except RuntimeError:
+            pass
         status_cb = self._overview_status_callback
 
         def work() -> None:
@@ -3393,6 +3443,11 @@ class MainFrame(wx.Frame):
 
 
 def run_app(argv: list[str] | None = None) -> None:
+    import os
+
+    # Before any LiteLLM import (including via Explain/Fix threads).
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
     from .logging_setup import configure_logging
 
     configure_logging()

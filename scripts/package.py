@@ -274,6 +274,12 @@ def build(
         "litellm",
         "--collect-all",
         "certifi",
+        "--collect-all",
+        "httpx",
+        "--collect-all",
+        "httpcore",
+        "--collect-all",
+        "openai",
         "--collect-submodules",
         "checkmate",
     ]

@@ -313,7 +313,10 @@ def ask_followup(
 
 def error_message_for_key(key: str | None, detail: str = "") -> str:
     mapping = {
-        "no_litellm": _("AI support is not available (litellm is not installed)."),
+        "no_litellm": _(
+            "AI support could not be loaded. Reinstall CheckMate, or check the "
+            "debugging log for import errors."
+        ),
         "no_code": _("No AI credentials found. Configure API keys or an unlock code in FIDO."),
         "no_key": _("No API key is available for the selected AI model. Check FIDO settings or your unlock code."),
         "no_model": _("No AI model is selected in FIDO settings."),

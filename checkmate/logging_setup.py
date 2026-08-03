@@ -9,6 +9,7 @@ from logging.handlers import RotatingFileHandler
 from typing import Any
 
 from .paths import app_data_dir
+from . import __version__
 
 LOG_FILENAME = "checkmatelog.txt"
 _CONFIGURED = False
@@ -51,6 +52,13 @@ def configure_logging(*, level: int = logging.DEBUG) -> None:
         return
     _CONFIGURED = True
 
+    # Must be set before any ``import litellm``. LiteLLM otherwise GETs its
+    # model-cost JSON from GitHub during import; in frozen builds that can
+    # hang indefinitely (source runs usually succeed), so AI never starts.
+    import os
+
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
     root = logging.getLogger()
     root.setLevel(level)
 
@@ -82,7 +90,9 @@ def configure_logging(*, level: int = logging.DEBUG) -> None:
         )
         root.addHandler(console)
 
-    logging.getLogger("checkmate").info("Logging started → %s", path)
+    logging.getLogger("checkmate").info(
+        "Logging started → %s (CheckMate %s)", path, __version__
+    )
 
     # LiteLLM / HTTP stacks are extremely noisy at DEBUG.
     for noisy in ("LiteLLM", "litellm", "httpx", "httpcore", "openai"):
