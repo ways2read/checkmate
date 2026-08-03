@@ -280,6 +280,12 @@ def build(
         "httpcore",
         "--collect-all",
         "openai",
+        "--collect-all",
+        "tiktoken",
+        "--hidden-import",
+        "tiktoken_ext",
+        "--hidden-import",
+        "tiktoken_ext.openai_public",
         "--collect-submodules",
         "checkmate",
     ]
