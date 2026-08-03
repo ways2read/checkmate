@@ -119,7 +119,7 @@ def _bundle_tiktoken_support(output: Path) -> None:
         dest_plugin_dir = internal / "tiktoken_ext"
         dest_plugin_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src_plugin, dest_plugin_dir / "openai_public.py")
-        print(f"Bundled tiktoken_ext plugin → {dest_plugin_dir}")
+        print(f"Bundled tiktoken_ext plugin -> {dest_plugin_dir}")
 
     url = "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
     expected_hash = "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7"
@@ -132,7 +132,7 @@ def _bundle_tiktoken_support(output: Path) -> None:
         if hashlib.sha256(data).hexdigest() == expected_hash:
             print(f"tiktoken cache already present: {cache_path.name}")
             return
-    print(f"Downloading cl100k_base tiktoken encoding…")
+    print("Downloading cl100k_base tiktoken encoding...")
     with urllib.request.urlopen(url, timeout=120) as resp:
         data = resp.read()
     actual = hashlib.sha256(data).hexdigest()
@@ -141,7 +141,7 @@ def _bundle_tiktoken_support(output: Path) -> None:
             f"tiktoken encoding hash mismatch (got {actual}, expected {expected_hash})"
         )
     cache_path.write_bytes(data)
-    print(f"Bundled tiktoken cache → {cache_path}")
+    print(f"Bundled tiktoken cache -> {cache_path}")
 
 
 def _runtime_dir_for_output(output: Path) -> Path:
@@ -387,7 +387,7 @@ def build(
 
     if not onefile:
         print()
-        print("Bundling tiktoken encodings / plugins…")
+        print("Bundling tiktoken encodings / plugins...")
         _bundle_tiktoken_support(output)
 
     if (
