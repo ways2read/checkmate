@@ -16,6 +16,22 @@ $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $Root
 
+function Find-Uv {
+    $cmd = Get-Command "uv" -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+
+    $candidates = @(
+        (Join-Path $env:USERPROFILE ".local\bin\uv.exe"),
+        (Join-Path $env:USERPROFILE ".cargo\bin\uv.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\uv\uv.exe"),
+        (Join-Path $env:LOCALAPPDATA "uv\uv.exe")
+    )
+    foreach ($path in $candidates) {
+        if ($path -and (Test-Path $path)) { return $path }
+    }
+    return $null
+}
+
 function Find-Iscc {
     $cmd = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
@@ -31,6 +47,15 @@ function Find-Iscc {
     return $null
 }
 
+$uv = Find-Uv
+if (-not $uv) {
+    Write-Error @"
+uv was not found on PATH or in common install locations.
+Install from https://docs.astral.sh/uv/getting-started/installation/
+then re-open PowerShell and retry.
+"@
+}
+
 $iscc = Find-Iscc
 if (-not $iscc) {
     Write-Error @"
@@ -40,6 +65,9 @@ or add ISCC.exe to your PATH.
 "@
 }
 
+Write-Host "==> Using uv:   $uv" -ForegroundColor DarkGray
+Write-Host "==> Using ISCC: $iscc" -ForegroundColor DarkGray
+
 $distRoot = Join-Path $Root "dist\CheckMate"
 $distExe = Join-Path $distRoot "CheckMate.exe"
 if (-not $SkipPackage) {
@@ -47,7 +75,7 @@ if (-not $SkipPackage) {
     Write-Host "    (bundles Temurin JRE, eBraille Checker, EPUBCheck, veraPDF, and Ace)" -ForegroundColor DarkGray
     $pkgArgs = @("run", "python", "scripts/package.py")
     if (-not $NoClean) { $pkgArgs += "--clean" }
-    & uv @pkgArgs
+    & $uv @pkgArgs
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 elseif (-not (Test-Path $distExe)) {
