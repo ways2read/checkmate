@@ -307,57 +307,96 @@ def _win_webview_document_hwnd(root_hwnd: int) -> int | None:
         return None
 
 
+def _win_get_focus_hwnd() -> int:
+    if sys.platform != "win32":
+        return 0
+    try:
+        import ctypes
+
+        return int(ctypes.windll.user32.GetFocus() or 0)
+    except Exception:
+        return 0
+
+
+def _win_focus_is_webview_document(view: wx.Window) -> bool:
+    """True when Win32 focus is already inside the WebView document."""
+    try:
+        outer = int(view.GetHandle() or 0)
+    except RuntimeError:
+        return False
+    doc = _win_webview_document_hwnd(outer)
+    return bool(doc) and _win_get_focus_hwnd() == doc
+
+
 def _focus_ai_html_view(
     view: wx.Window,
     *,
     is_webview: bool,
     retries: int = 10,
-) -> None:
+) -> bool:
     """
     Put keyboard focus into the AI HTML pane (and its document HWND on Windows).
+
+    Returns True when focus is on the intended target (document HWND or text).
+    Avoids re-focusing the wx WebView chrome once the document already has focus
+    (that re-announce loop sounds like “wx webview” forever under NVDA).
     """
     try:
         if not view:
-            return
+            return False
     except RuntimeError:
-        return
-    try:
-        view.SetFocus()
-    except RuntimeError:
-        return
+        return False
+
     if not is_webview:
+        try:
+            view.SetFocus()
+        except RuntimeError:
+            return False
         if hasattr(view, "SetInsertionPoint"):
             try:
                 view.SetInsertionPoint(0)
             except RuntimeError:
                 pass
-        return
+        return True
 
     if sys.platform != "win32":
-        return
+        try:
+            view.SetFocus()
+        except RuntimeError:
+            return False
+        return True
+
     try:
         import ctypes
+
+        if _win_focus_is_webview_document(view):
+            return True
 
         outer = int(view.GetHandle() or 0)
         doc = _win_webview_document_hwnd(outer)
         if doc:
-            # Refocus the wx wrapper once the document HWND exists (propagates
-            # into Edge), then focus the document itself for screen readers.
-            try:
-                view.SetFocus()
-            except RuntimeError:
-                pass
+            # Prefer the document HWND only — focusing the wx chrome first makes
+            # screen readers announce “wx webview” on every retry.
             ctypes.windll.user32.SetFocus(doc)
-            return
+            return _win_get_focus_hwnd() == doc
     except Exception:
         pass
+
     if retries > 0:
         wx.CallLater(
-            50,
+            80,
             lambda v=view, n=retries: _focus_ai_html_view(
                 v, is_webview=True, retries=n - 1
             ),
         )
+        return False
+
+    # Last resort only: document HWND not ready yet.
+    try:
+        view.SetFocus()
+    except RuntimeError:
+        pass
+    return False
 
 
 def _refresh_ai_html_tab_stops(
@@ -411,9 +450,11 @@ def _wire_ai_html_host(
     def _push_focus() -> None:
         if focusing["busy"]:
             return
+        if is_webview and _win_focus_is_webview_document(view):
+            return
         focusing["busy"] = True
         try:
-            _focus_ai_html_view(view, is_webview=is_webview, retries=6)
+            _focus_ai_html_view(view, is_webview=is_webview, retries=4)
         finally:
             focusing["busy"] = False
 
@@ -475,7 +516,7 @@ class _AiHtmlHostPanel(wx.Panel):
         """Tab navigation lands here; push into the WebView document."""
         view = self._ai_view
         if view is not None and self._ai_is_webview:
-            _focus_ai_html_view(view, is_webview=True, retries=6)
+            _focus_ai_html_view(view, is_webview=True, retries=4)
             return
         if view is not None:
             try:
@@ -1086,34 +1127,46 @@ class IssueDetailDialog(wx.Dialog):
             self._ai_markdown or "", title=title, plain=False
         )
 
-    def _focus_ai_output_now(self) -> None:
+    def _focus_ai_output_now(self) -> bool:
+        """Try once to put focus in the AI pane. True if already/now on target."""
         if not self._show_ai or not getattr(self, "_ai_view_realized", False):
-            return
+            return True
+        try:
+            if not self:
+                return True
+        except RuntimeError:
+            return True
+        if self._ai_output_is_webview and _win_focus_is_webview_document(
+            self.ai_output
+        ):
+            return True
         try:
             self.Raise()
         except RuntimeError:
-            return
+            return False
         _win_force_foreground(self)
-        host = getattr(self, "_ai_output_host", None)
-        if host is not None and self._ai_output_is_webview:
-            try:
-                # Land on the Tab gate first (stable HWND), then push into Edge.
-                host.SetFocus()
-            except RuntimeError:
-                pass
-        _focus_ai_html_view(
+        return _focus_ai_html_view(
             self.ai_output,
             is_webview=bool(self._ai_output_is_webview),
+            retries=0,
         )
 
     def _schedule_ai_output_focus(self) -> None:
         """Focus the AI pane after progress UI teardown (and WebView load)."""
-        # ProgressDialog destroy often steals app foreground; retry past that.
-        for delay_ms in (0, 50, 150, 350, 700, 1200):
-            if delay_ms == 0:
-                wx.CallAfter(self._focus_ai_output_now)
-            else:
-                wx.CallLater(delay_ms, self._focus_ai_output_now)
+        # One coordinated retry chain — supersedes any previous schedule so we
+        # never stack parallel “wx webview” focus storms.
+        self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
+        gen = self._ai_focus_gen
+
+        def _attempt(remaining: int) -> None:
+            if gen != getattr(self, "_ai_focus_gen", 0):
+                return
+            if self._focus_ai_output_now():
+                return
+            if remaining > 0:
+                wx.CallLater(200, lambda: _attempt(remaining - 1))
+
+        wx.CallAfter(lambda: _attempt(5))
 
     def _set_ai_content(
         self,
@@ -1134,8 +1187,9 @@ class IssueDetailDialog(wx.Dialog):
             # Focus once LOADED fires so NVDA/JAWS land in the document.
             self._ai_focus_after_load = bool(focus)
             self.ai_output.SetPage(self._ai_dialog_html(plain=plain), "")
-            if focus:
-                # Also schedule in case LOADED already fired synchronously.
+            # If LOADED already ran synchronously it cleared the flag — schedule
+            # once as fallback. Do not also schedule while waiting for LOADED.
+            if focus and not self._ai_focus_after_load:
                 self._schedule_ai_output_focus()
         else:
             self.ai_output.SetValue(self._ai_markdown)
@@ -1764,27 +1818,38 @@ class AiOverviewDialog(wx.Dialog):
         if not self._ai_focus_after_load:
             return
         self._ai_focus_after_load = False
-        for delay_ms in (0, 50, 150, 350, 700, 1200):
-            if delay_ms == 0:
-                wx.CallAfter(self._focus_output)
-            else:
-                wx.CallLater(delay_ms, self._focus_output)
+        self._schedule_output_focus()
 
-    def _focus_output(self) -> None:
+    def _schedule_output_focus(self) -> None:
+        self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
+        gen = self._ai_focus_gen
+
+        def _attempt(remaining: int) -> None:
+            if gen != getattr(self, "_ai_focus_gen", 0):
+                return
+            if self._focus_output():
+                return
+            if remaining > 0:
+                wx.CallLater(200, lambda: _attempt(remaining - 1))
+
+        wx.CallAfter(lambda: _attempt(5))
+
+    def _focus_output(self) -> bool:
         try:
+            if not self:
+                return True
             self.Raise()
         except RuntimeError:
-            return
+            return False
         _win_force_foreground(self)
-        host = getattr(self, "_ai_output_host", None)
-        if host is not None and self._ai_output_is_webview:
-            try:
-                host.SetFocus()
-            except RuntimeError:
-                pass
-        _focus_ai_html_view(
+        if self._ai_output_is_webview and _win_focus_is_webview_document(
+            self.ai_output
+        ):
+            return True
+        return _focus_ai_html_view(
             self.ai_output,
             is_webview=bool(self._ai_output_is_webview),
+            retries=0,
         )
 
     def _dialog_html(self) -> str:
@@ -1800,16 +1865,12 @@ class AiOverviewDialog(wx.Dialog):
         if self._ai_output_is_webview:
             self._ai_focus_after_load = bool(focus)
             self.ai_output.SetPage(self._dialog_html(), "")
-            if focus:
-                for delay_ms in (0, 50, 150, 350, 700):
-                    if delay_ms == 0:
-                        wx.CallAfter(self._focus_output)
-                    else:
-                        wx.CallLater(delay_ms, self._focus_output)
+            if focus and not self._ai_focus_after_load:
+                self._schedule_output_focus()
         else:
             self.ai_output.SetValue(self._ai_markdown or "")
             if focus:
-                self._focus_output()
+                self._schedule_output_focus()
 
     def _export_markdown(self) -> str:
         from .ai.markdown_html import with_ai_disclaimer
