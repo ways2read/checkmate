@@ -403,9 +403,163 @@ def _win_focus_is_webview_document(view: wx.Window) -> bool:
     return bool(doc) and _win_get_focus_hwnd() == doc
 
 
+def _tab_into_webview_direction() -> str:
+    """Return 'next' (Tab) or 'prev' (Shift+Tab) for entry into the WebView."""
+    try:
+        if wx.GetKeyState(wx.WXK_SHIFT):
+            return "prev"
+    except Exception:
+        pass
+    return "next"
+
+
+# Edge WebView2 MoveFocus reasons (ICoreWebView2Controller::MoveFocus).
+_COREWEBVIEW2_MOVE_FOCUS_PROGRAMMATIC = 0
+_COREWEBVIEW2_MOVE_FOCUS_NEXT = 1
+_COREWEBVIEW2_MOVE_FOCUS_PREVIOUS = 2
+
+# ICoreWebView2Controller IID — MoveFocus lives here, not on ICoreWebView2
+# (wx GetNativeBackend returns the latter).
+_IID_ICOREWEBVIEW2_CONTROLLER = (
+    0x4D00C0D1,
+    0x9434,
+    0x4EB6,
+    (0x80, 0x78, 0x86, 0x97, 0xA5, 0x60, 0x33, 0x4F),
+)
+
+
+def _win_webview_controller_move_focus(view: wx.Window, reason: int) -> bool:
+    """
+    Call ICoreWebView2Controller::MoveFocus when possible.
+
+    wx OnSetFocus only uses PROGRAMMATIC. Tabbing into a host panel then
+    SetFocus()'ing the WebView never runs NEXT/PREVIOUS, so Edge can leave
+    keyboard input in limbo until a mouse click. Prefer NEXT/PREVIOUS on Tab.
+    """
+    if sys.platform != "win32":
+        return False
+    get_native = getattr(view, "GetNativeBackend", None)
+    if not callable(get_native):
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        raw = get_native()
+        if raw is None:
+            return False
+        ptr = int(raw)
+        if not ptr:
+            return False
+
+        class GUID(ctypes.Structure):
+            _fields_ = [
+                ("Data1", wintypes.DWORD),
+                ("Data2", wintypes.WORD),
+                ("Data3", wintypes.WORD),
+                ("Data4", ctypes.c_ubyte * 8),
+            ]
+
+        iid = GUID()
+        iid.Data1 = _IID_ICOREWEBVIEW2_CONTROLLER[0]
+        iid.Data2 = _IID_ICOREWEBVIEW2_CONTROLLER[1]
+        iid.Data3 = _IID_ICOREWEBVIEW2_CONTROLLER[2]
+        for i, b in enumerate(_IID_ICOREWEBVIEW2_CONTROLLER[3]):
+            iid.Data4[i] = b
+
+        # IUnknown::QueryInterface on the native ICoreWebView2* (usually fails —
+        # controller is a sibling object — but cheap to try).
+        this = ctypes.c_void_p(ptr)
+        vtbl = ctypes.cast(this, ctypes.POINTER(ctypes.c_void_p)).contents
+        vtbl_ptrs = ctypes.cast(vtbl, ctypes.POINTER(ctypes.c_void_p))
+        qi = ctypes.CFUNCTYPE(
+            ctypes.HRESULT,
+            ctypes.c_void_p,
+            ctypes.POINTER(GUID),
+            ctypes.POINTER(ctypes.c_void_p),
+        )(vtbl_ptrs[0])
+        controller = ctypes.c_void_p()
+        hr = qi(this, ctypes.byref(iid), ctypes.byref(controller))
+        if hr != 0 or not controller.value:
+            return False
+
+        c_this = controller
+        c_vtbl = ctypes.cast(c_this, ctypes.POINTER(ctypes.c_void_p)).contents
+        c_ptrs = ctypes.cast(c_vtbl, ctypes.POINTER(ctypes.c_void_p))
+        # IUnknown(3) + get/put IsVisible(2) + Bounds(2) + Zoom(2) +
+        # zoom events(2) + SetBoundsAndZoomFactor(1) + MoveFocus = index 12.
+        move_focus = ctypes.CFUNCTYPE(
+            ctypes.HRESULT, ctypes.c_void_p, ctypes.c_int
+        )(c_ptrs[12])
+        hr = move_focus(c_this, int(reason))
+        # Release the QI'd controller pointer.
+        release = ctypes.CFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(c_ptrs[2])
+        release(c_this)
+        return hr == 0
+    except Exception:
+        return False
+
+
+def _win_webview_synthetic_click(doc_hwnd: int) -> bool:
+    """
+    Arm Edge keyboard input with a client-area click.
+
+    DOM focus / scroll alone is not enough: until WebView2 receives a real
+    activation (MoveFocus NEXT/PREVIOUS or a mouse click), Tab keys stay in
+    limbo. Click the top-left padding (body has 1rem padding) so we do not
+    activate a link.
+    """
+    if sys.platform != "win32" or not doc_hwnd:
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        WM_LBUTTONDOWN = 0x0201
+        WM_LBUTTONUP = 0x0202
+        MK_LBUTTON = 0x0001
+        rect = wintypes.RECT()
+        if not user32.GetClientRect(int(doc_hwnd), ctypes.byref(rect)):
+            return False
+        if rect.right < 4 or rect.bottom < 4:
+            return False
+        x, y = 2, 2
+        lp = (y << 16) | (x & 0xFFFF)
+        user32.SetFocus(int(doc_hwnd))
+        # Synchronous so the click finishes before follow-up DOM focus JS.
+        user32.SendMessageW(int(doc_hwnd), WM_LBUTTONDOWN, MK_LBUTTON, lp)
+        user32.SendMessageW(int(doc_hwnd), WM_LBUTTONUP, 0, lp)
+        return True
+    except Exception:
+        return False
+
+
+def _win_dialog_focus_hwnd(ctrl: wx.Window) -> bool:
+    """Focus a control via WM_NEXTDLGCTL (dialog-manager path, not SetFocus)."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        hwnd = int(ctrl.GetHandle() or 0)
+        if not hwnd:
+            return False
+        top = ctrl.GetTopLevelParent()
+        top_hwnd = int(top.GetHandle() or 0) if top else 0
+        if not top_hwnd:
+            return False
+        WM_NEXTDLGCTL = 0x0028
+        ctypes.windll.user32.SendMessageW(top_hwnd, WM_NEXTDLGCTL, hwnd, 1)
+        return True
+    except Exception:
+        return False
+
+
 # On Tab entry: scroll to top and focus the document body so reading starts at
 # the beginning. Do not jump to the first link (next Tab reaches links).
-_WEBVIEW_ACTIVATE_DOM_JS = """
+# Shift+Tab entry focuses the last link instead.
+_WEBVIEW_ACTIVATE_DOM_JS_NEXT = """
 (function () {
   try {
     var body = document.body;
@@ -428,6 +582,46 @@ _WEBVIEW_ACTIVATE_DOM_JS = """
   }
 })();
 """.strip()
+
+_WEBVIEW_ACTIVATE_DOM_JS_PREV = """
+(function () {
+  try {
+    var body = document.body;
+    if (!body) { return 'none'; }
+    if (!(body.tabIndex < 0)) { body.tabIndex = -1; }
+    var active = document.activeElement;
+    var onChrome = !active
+      || active === body
+      || active === document.documentElement;
+    if (!onChrome) { return 'kept'; }
+    var list = Array.prototype.slice.call(document.querySelectorAll(
+      'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    )).filter(function (el) {
+      if (el.disabled) return false;
+      if (el.getAttribute('aria-hidden') === 'true') return false;
+      var rects = el.getClientRects();
+      return rects && rects.length > 0;
+    });
+    if (list.length) {
+      list[list.length - 1].focus();
+      return 'last';
+    }
+    body.focus();
+    return 'body';
+  } catch (e) {
+    return 'err';
+  }
+})();
+""".strip()
+
+# Back-compat alias used by older call sites / mental model.
+_WEBVIEW_ACTIVATE_DOM_JS = _WEBVIEW_ACTIVATE_DOM_JS_NEXT
+
+
+def _webview_activate_dom_js(direction: str) -> str:
+    if direction == "prev":
+        return _WEBVIEW_ACTIVATE_DOM_JS_PREV
+    return _WEBVIEW_ACTIVATE_DOM_JS_NEXT
 
 
 def _webview_run_script(view: wx.Window, script: str) -> bool:
@@ -461,6 +655,8 @@ def _focus_ai_html_view(
     *,
     is_webview: bool,
     retries: int = 10,
+    direction: str | None = None,
+    arm_keyboard: bool | None = None,
 ) -> bool:
     """
     Put keyboard focus into the AI HTML pane (and its document HWND on Windows).
@@ -469,6 +665,10 @@ def _focus_ai_html_view(
     retrying. Edge needs Win32 focus plus a DOM focus target; avoid calling
     ``view.SetFocus()`` when the document already has focus (that re-enters
     SET_FOCUS handlers and loops).
+
+    When entering from outside the document, also arm WebView2 keyboard input
+    (MoveFocus NEXT/PREVIOUS and/or a synthetic client click). DOM scroll/focus
+    alone leaves Tab in limbo until a mouse click.
     """
     try:
         if not view:
@@ -489,15 +689,34 @@ def _focus_ai_html_view(
         return True
 
     already_doc = sys.platform == "win32" and _win_focus_is_webview_document(view)
+    if direction is None:
+        direction = _tab_into_webview_direction()
+    if arm_keyboard is None:
+        # Only force Edge keyboard arming when Tabbing in from outside.
+        arm_keyboard = not already_doc
 
     if not already_doc:
         try:
+            # Prefer dialog-manager focus so WebView2 can treat Tab as NEXT.
+            _win_dialog_focus_hwnd(view)
             view.SetFocus()
         except RuntimeError:
             return False
+        move_reason = (
+            _COREWEBVIEW2_MOVE_FOCUS_PREVIOUS
+            if direction == "prev"
+            else _COREWEBVIEW2_MOVE_FOCUS_NEXT
+        )
+        if not _win_webview_controller_move_focus(view, move_reason):
+            # wx OnSetFocus already tried PROGRAMMATIC; still attempt it again.
+            _win_webview_controller_move_focus(
+                view, _COREWEBVIEW2_MOVE_FOCUS_PROGRAMMATIC
+            )
+
+    dom_js = _webview_activate_dom_js(direction)
 
     if sys.platform != "win32":
-        _webview_run_script(view, _WEBVIEW_ACTIVATE_DOM_JS)
+        _webview_run_script(view, dom_js)
         return True
 
     try:
@@ -508,8 +727,13 @@ def _focus_ai_html_view(
         if doc:
             if not already_doc:
                 ctypes.windll.user32.SetFocus(doc)
-            # Only focuses body/first link when the page has no active element.
-            _webview_run_script(view, _WEBVIEW_ACTIVATE_DOM_JS)
+            # Scroll / park DOM focus first so the synthetic click lands on
+            # empty body padding, not a link.
+            _webview_run_script(view, dom_js)
+            if arm_keyboard:
+                _win_webview_synthetic_click(doc)
+                # Re-apply DOM start point after the click.
+                _webview_run_script(view, dom_js)
             return True
     except Exception:
         pass
@@ -517,13 +741,17 @@ def _focus_ai_html_view(
     if retries > 0:
         wx.CallLater(
             100,
-            lambda v=view, n=retries: _focus_ai_html_view(
-                v, is_webview=True, retries=n - 1
+            lambda v=view, n=retries, d=direction, a=arm_keyboard: _focus_ai_html_view(
+                v,
+                is_webview=True,
+                retries=n - 1,
+                direction=d,
+                arm_keyboard=a,
             ),
         )
         return False
 
-    _webview_run_script(view, _WEBVIEW_ACTIVATE_DOM_JS)
+    _webview_run_script(view, dom_js)
     return False
 
 
@@ -586,20 +814,26 @@ def _wire_ai_html_host(
 
     focusing = {"busy": False}
 
-    def _push_focus() -> None:
+    def _push_focus(*, from_host_tab: bool = False) -> None:
         # Guard stays up until after nested CallAfter handlers from view.SetFocus
         # run; otherwise SET_FOCUS → CallAfter(_push_focus) loops forever.
         if focusing["busy"]:
             return
         focusing["busy"] = True
         try:
-            _focus_ai_html_view(view, is_webview=is_webview, retries=2)
+            # Host Tab gate: arm Edge keyboard (MoveFocus / synthetic click).
+            # View SET_FOCUS while already inside the document must not re-click.
+            kwargs: dict = {"is_webview": is_webview, "retries": 2}
+            if from_host_tab and is_webview:
+                kwargs["direction"] = _tab_into_webview_direction()
+                kwargs["arm_keyboard"] = True
+            _focus_ai_html_view(view, **kwargs)
         finally:
             wx.CallAfter(lambda: focusing.__setitem__("busy", False))
 
     def _on_host_focus(event: wx.FocusEvent) -> None:
         event.Skip()
-        wx.CallAfter(_push_focus)
+        wx.CallAfter(lambda: _push_focus(from_host_tab=True))
 
     host.Bind(wx.EVT_SET_FOCUS, _on_host_focus)
 
@@ -657,10 +891,17 @@ class _AiHtmlHostPanel(wx.Panel):
             if self._focus_gate_busy:
                 return
             self._focus_gate_busy = True
+            direction = _tab_into_webview_direction()
 
             def _go() -> None:
                 try:
-                    _focus_ai_html_view(view, is_webview=True, retries=2)
+                    _focus_ai_html_view(
+                        view,
+                        is_webview=True,
+                        retries=2,
+                        direction=direction,
+                        arm_keyboard=True,
+                    )
                 finally:
                     wx.CallAfter(
                         lambda: setattr(self, "_focus_gate_busy", False)
@@ -1318,11 +1559,14 @@ class IssueDetailDialog(wx.Dialog):
         except RuntimeError:
             return False
         _win_force_foreground(self)
-        # Always run full activation (Win32 + DOM). Doc HWND alone is not enough.
+        # Always run full activation (Win32 + DOM). Doc HWND alone is not enough;
+        # also arm Edge keyboard input (no mouse click required).
         return _focus_ai_html_view(
             self.ai_output,
             is_webview=bool(self._ai_output_is_webview),
             retries=0,
+            direction="next",
+            arm_keyboard=True,
         )
 
     def _schedule_ai_output_focus(self) -> None:
@@ -2072,6 +2316,8 @@ class AiOverviewDialog(wx.Dialog):
             self.ai_output,
             is_webview=bool(self._ai_output_is_webview),
             retries=0,
+            direction="next",
+            arm_keyboard=True,
         )
 
     def _dialog_html(self) -> str:
