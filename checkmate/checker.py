@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .java_util import JavaInfo, cached_java, detect_java, has_bundled_java
-from .models import CheckResult, Issue, Severity, Verdict, SEVERITY_ORDER
+from .models import SEVERITY_ORDER, CheckResult, Issue, Severity, Verdict
 from .paths import (
     checker_uses_bundled_copy,
     epubcheck_uses_bundled_copy,
@@ -26,7 +26,6 @@ from .updater import (
     ensure_tool_installed,
     read_effective_version,
 )
-
 
 PACKAGED_SUFFIXES = {".ebrl", ".epub", ".zip", ".pdf"}
 
@@ -1429,8 +1428,8 @@ def _with_optional_ace(
 
 
 def checker_status_text() -> str:
-    from .i18n import _
     from .ace_check import ace_uses_bundled_copy, probe_ace
+    from .i18n import _
     from .pipeline_client import probe_pipeline_for_status
 
     java = cached_java()

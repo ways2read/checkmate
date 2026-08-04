@@ -99,7 +99,7 @@ STRICT RULES:
 def build_fix_user_prompt(ctx: dict[str, str]) -> str:
     lang = _language_name()
     lines = [
-        f"Propose a minimal fix for this validation issue.",
+        "Propose a minimal fix for this validation issue.",
         f"Reply with the final ## {_('Proposed fix')} section and one complete JSON patch only.",
         f"Rationale language: {lang}.",
         f"- Severity: {ctx.get('severity', '')}",

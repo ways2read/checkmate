@@ -38,11 +38,13 @@ commands; the notes below only capture non-obvious, environment-specific gotchas
 
 ### Testing / linting
 
-- There is **no committed lint/format/test config** (no ruff/flake8/mypy/pytest
-  setup) and no test directory. `# noqa` comments imply ruff is used informally
-  upstream, but nothing is configured here. The closest available static check
-  is `.venv/bin/python -m compileall checkmate run.py scripts`.
-- To validate a publication without the GUI (useful headless smoke test):
+- Lint with **ruff** (config in `pyproject.toml` under `[tool.ruff]`): run
+  `.venv/bin/ruff check .`. The rule set is intentionally high-signal
+  (`select = ["E9", "F", "I"]` — syntax errors, pyflakes real bugs, import
+  sorting); the codebase is green under it. `ruff` is installed by the startup
+  update script (and is in the `[dev]` extra / `requirements-dev.txt`).
+- There is **no test suite** (no pytest/tests directory). To validate a
+  publication without the GUI (useful headless smoke test):
   `from checkmate.checker import run_check` then `run_check(Path("file.epub"))`
   returns a result with a `.verdict` (e.g. `Verdict.PASSED`) and `.issues`.
 - `testdata/` is gitignored and empty by design — drop sample

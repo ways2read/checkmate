@@ -8,8 +8,8 @@ import sys
 from logging.handlers import RotatingFileHandler
 from typing import Any
 
-from .paths import app_data_dir
 from . import __version__
+from .paths import app_data_dir
 
 LOG_FILENAME = "checkmatelog.txt"
 _CONFIGURED = False
