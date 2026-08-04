@@ -207,7 +207,8 @@ executable (or inside the `.app` bundle on macOS).
   (headings, lists, links) for screen readers; falls back to a Markdown text
   field if no webview backend is available (`HtmlWindow` is not used). The
   details/overview dialogs keep the WebView in the Tab cycle so focus can
-  return after leaving the pane.
+  return after leaving the pane. After Explain/Fix, the dialog reclaims
+  foreground focus so the explanation is reachable without Alt+Tab.
 - Accessible name includes the verdict text; the window title also appends it
 - **Language** menu: English, Français, Español, Deutsch, Português, Dansk,
   Nederlands, Suomi, हिन्दी, Norsk, Русский, Svenska

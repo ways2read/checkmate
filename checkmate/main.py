@@ -211,6 +211,66 @@ def _win_ensure_control_parent(window: wx.Window) -> None:
         pass
 
 
+def _win_clear_control_parent(window: wx.Window) -> None:
+    """
+    Remove WS_EX_CONTROLPARENT so the window itself can be a dialog Tab stop.
+
+    With CONTROLPARENT set, Windows ``GetNextDlgTabItem`` searches children and
+    skips the parent — so a host with no tab-stop children (WebView chrome
+    cleared) is jumped over entirely.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        hwnd = int(window.GetHandle())
+        if not hwnd:
+            return
+        gwl_exstyle = -20
+        ws_ex_controlparent = 0x00010000
+        user32 = ctypes.windll.user32
+        ex = int(user32.GetWindowLongW(hwnd, gwl_exstyle))
+        if not (ex & ws_ex_controlparent):
+            return
+        user32.SetWindowLongW(hwnd, gwl_exstyle, ex & ~ws_ex_controlparent)
+    except Exception:
+        pass
+
+
+def _win_force_foreground(window: wx.Window) -> None:
+    """Restore Win32 foreground after a modal ProgressDialog tears down."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        hwnd = int(window.GetHandle() or 0)
+        if not hwnd:
+            return
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        fg = int(user32.GetForegroundWindow() or 0)
+        if fg == hwnd:
+            return
+        this_thread = int(kernel32.GetCurrentThreadId())
+        fg_thread = 0
+        if fg:
+            fg_thread = int(user32.GetWindowThreadProcessId(fg, None))
+        attached = False
+        if fg_thread and fg_thread != this_thread:
+            attached = bool(user32.AttachThreadInput(this_thread, fg_thread, True))
+        try:
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+        finally:
+            if attached:
+                user32.AttachThreadInput(this_thread, fg_thread, False)
+    except Exception:
+        pass
+
+
 def _win_webview_document_hwnd(root_hwnd: int) -> int | None:
     """
     Inner document HWND for Edge WebView2 / IE (needed for screen-reader focus).
@@ -310,14 +370,22 @@ def _refresh_ai_html_tab_stops(
     Keep a single dialog Tab stop for the AI HTML pane.
 
     Edge WebView2's outer HWND often accepts dialog focus without activating the
-    document, so Tab appears to skip the pane on the way back. The host panel is
-    the stable WS_TABSTOP; focus is then forwarded into the document HWND.
+    document, so Tab appears to skip the pane. The host panel is the stable
+    WS_TABSTOP (and must NOT be WS_EX_CONTROLPARENT, or Windows skips it while
+    searching empty children). Focus is then forwarded into the document HWND.
     """
-    _win_ensure_control_parent(host)
     if is_webview:
+        # Leaf tab-stop: dialog manager must focus the host itself.
+        if host.HasFlag(wx.TAB_TRAVERSAL):
+            host.ToggleWindowStyle(wx.TAB_TRAVERSAL)
+        _win_clear_control_parent(host)
         _ensure_win_tab_stop(host)
         _win_clear_tab_stop(view)
     else:
+        # TextCtrl child must be reachable via CONTROLPARENT recursion.
+        if not host.HasFlag(wx.TAB_TRAVERSAL):
+            host.ToggleWindowStyle(wx.TAB_TRAVERSAL)
+        _win_ensure_control_parent(host)
         _win_clear_tab_stop(host)
         _ensure_win_tab_stop(view)
 
@@ -375,6 +443,10 @@ class _AiHtmlHostPanel(wx.Panel):
     """
 
     def __init__(self, *args, **kwargs) -> None:
+        # Avoid default wxTAB_TRAVERSAL / WS_EX_CONTROLPARENT until we know
+        # whether this hosts a WebView (leaf tab-stop) or a TextCtrl.
+        if "style" not in kwargs:
+            kwargs["style"] = wx.BORDER_NONE
         super().__init__(*args, **kwargs)
         self._ai_view: wx.Window | None = None
         self._ai_is_webview = False
@@ -392,6 +464,12 @@ class _AiHtmlHostPanel(wx.Panel):
 
     def AcceptsFocusFromKeyboard(self) -> bool:  # noqa: N802 — wx override
         return self._accept_kbd_focus
+
+    def AcceptsFocusRecursively(self) -> bool:  # noqa: N802 — wx override
+        # WebView gate is a leaf: do not search (non-tab-stop) children.
+        if self._ai_is_webview:
+            return False
+        return super().AcceptsFocusRecursively()
 
     def SetFocusFromKbd(self) -> None:  # noqa: N802 — wx override
         """Tab navigation lands here; push into the WebView document."""
@@ -1011,6 +1089,18 @@ class IssueDetailDialog(wx.Dialog):
     def _focus_ai_output_now(self) -> None:
         if not self._show_ai or not getattr(self, "_ai_view_realized", False):
             return
+        try:
+            self.Raise()
+        except RuntimeError:
+            return
+        _win_force_foreground(self)
+        host = getattr(self, "_ai_output_host", None)
+        if host is not None and self._ai_output_is_webview:
+            try:
+                # Land on the Tab gate first (stable HWND), then push into Edge.
+                host.SetFocus()
+            except RuntimeError:
+                pass
         _focus_ai_html_view(
             self.ai_output,
             is_webview=bool(self._ai_output_is_webview),
@@ -1018,10 +1108,12 @@ class IssueDetailDialog(wx.Dialog):
 
     def _schedule_ai_output_focus(self) -> None:
         """Focus the AI pane after progress UI teardown (and WebView load)."""
-        # ProgressDialog destroy often steals focus; defer past that.
-        wx.CallAfter(self._focus_ai_output_now)
-        wx.CallLater(120, self._focus_ai_output_now)
-        wx.CallLater(350, self._focus_ai_output_now)
+        # ProgressDialog destroy often steals app foreground; retry past that.
+        for delay_ms in (0, 50, 150, 350, 700, 1200):
+            if delay_ms == 0:
+                wx.CallAfter(self._focus_ai_output_now)
+            else:
+                wx.CallLater(delay_ms, self._focus_ai_output_now)
 
     def _set_ai_content(
         self,
@@ -1238,6 +1330,19 @@ class IssueDetailDialog(wx.Dialog):
                 dlg.Destroy()
             except RuntimeError:
                 pass
+            # Modal progress teardown often leaves no foreground window; reclaim
+            # activation for this dialog so later SetFocus into the WebView sticks.
+            def _reclaim() -> None:
+                try:
+                    if not self:
+                        return
+                    self.Raise()
+                    _win_force_foreground(self)
+                except RuntimeError:
+                    return
+
+            wx.CallAfter(_reclaim)
+            wx.CallLater(100, _reclaim)
 
     def _on_explain(self, _event: wx.Event) -> None:
         if self._busy:
@@ -1659,11 +1764,24 @@ class AiOverviewDialog(wx.Dialog):
         if not self._ai_focus_after_load:
             return
         self._ai_focus_after_load = False
-        wx.CallAfter(self._focus_output)
-        wx.CallLater(120, self._focus_output)
-        wx.CallLater(350, self._focus_output)
+        for delay_ms in (0, 50, 150, 350, 700, 1200):
+            if delay_ms == 0:
+                wx.CallAfter(self._focus_output)
+            else:
+                wx.CallLater(delay_ms, self._focus_output)
 
     def _focus_output(self) -> None:
+        try:
+            self.Raise()
+        except RuntimeError:
+            return
+        _win_force_foreground(self)
+        host = getattr(self, "_ai_output_host", None)
+        if host is not None and self._ai_output_is_webview:
+            try:
+                host.SetFocus()
+            except RuntimeError:
+                pass
         _focus_ai_html_view(
             self.ai_output,
             is_webview=bool(self._ai_output_is_webview),
@@ -1683,8 +1801,11 @@ class AiOverviewDialog(wx.Dialog):
             self._ai_focus_after_load = bool(focus)
             self.ai_output.SetPage(self._dialog_html(), "")
             if focus:
-                wx.CallAfter(self._focus_output)
-                wx.CallLater(120, self._focus_output)
+                for delay_ms in (0, 50, 150, 350, 700):
+                    if delay_ms == 0:
+                        wx.CallAfter(self._focus_output)
+                    else:
+                        wx.CallLater(delay_ms, self._focus_output)
         else:
             self.ai_output.SetValue(self._ai_markdown or "")
             if focus:
