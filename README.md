@@ -155,6 +155,7 @@ versions and Java information.
 |---|---|
 | `Ctrl+O` | Select file |
 | `Ctrl+Shift+O` | Select folder |
+| `Ctrl+Tab` | Leave AI explanation WebView (details/overview dialogs) |
 | `F5` | Re-check current publication |
 | `Ctrl+T` | View text report |
 | `Ctrl+Shift+S` | Save text report |
@@ -208,7 +209,9 @@ executable (or inside the `.app` bundle on macOS).
   field if no webview backend is available (`HtmlWindow` is not used). The
   details/overview dialogs keep the WebView in the Tab cycle so focus can
   return after leaving the pane. After Explain/Fix, the dialog reclaims
-  foreground focus so the explanation is reachable without Alt+Tab.
+  foreground focus so the explanation is reachable without Alt+Tab. Inside the
+  explanation, Tab moves between links; Tab after the last link (or
+  **Ctrl+Tab**) leaves the WebView for the next dialog control.
 - Accessible name includes the verdict text; the window title also appends it
 - **Language** menu: English, Français, Español, Deutsch, Português, Dansk,
   Nederlands, Suomi, हिन्दी, Norsk, Русский, Svenska

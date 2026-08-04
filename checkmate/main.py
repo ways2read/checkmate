@@ -271,6 +271,29 @@ def _win_force_foreground(window: wx.Window) -> None:
         pass
 
 
+def _webview_tab_exit_direction(url: str) -> str | None:
+    """Return 'next' / 'prev' for checkmate:// focus-exit URLs, else None."""
+    u = (url or "").strip().lower()
+    # Edge may append a slash or empty path segment.
+    if u.startswith("checkmate://focus-next"):
+        return "next"
+    if u.startswith("checkmate://focus-prev"):
+        return "prev"
+    return None
+
+
+def _try_set_focus(window: wx.Window | None) -> bool:
+    if window is None:
+        return False
+    try:
+        if not window or not window.IsEnabled() or not window.IsShown():
+            return False
+        window.SetFocus()
+        return True
+    except Exception:
+        return False
+
+
 def _present_progress_dialog(dlg: wx.Window, message: str) -> None:
     """Pulse, raise, and focus a ProgressDialog so screen readers announce it."""
     try:
@@ -496,6 +519,17 @@ def _wire_ai_html_host(
     if isinstance(host, _AiHtmlHostPanel):
         host.bind_ai_view(view, is_webview=is_webview)
     _refresh_ai_html_tab_stops(host, view, is_webview=is_webview)
+
+    if is_webview:
+        tip = _(
+            "In the explanation: Tab moves between links. "
+            "Tab after the last link, or Ctrl+Tab, moves to the next dialog control."
+        )
+        try:
+            host.SetToolTip(tip)
+            view.SetToolTip(tip)
+        except Exception:
+            pass
 
     focusing = {"busy": False}
 
@@ -1138,6 +1172,11 @@ class IssueDetailDialog(wx.Dialog):
     def _on_ai_webview_navigating(self, event) -> None:
         """Open http(s)/mailto links externally; allow in-dialog SetPage loads."""
         url = (event.GetURL() or "").strip()
+        direction = _webview_tab_exit_direction(url)
+        if direction is not None:
+            event.Veto()
+            wx.CallAfter(self._leave_ai_webview, direction == "next")
+            return
         if url.startswith(("http://", "https://", "mailto:")):
             event.Veto()
             try:
@@ -1146,6 +1185,22 @@ class IssueDetailDialog(wx.Dialog):
                 pass
             return
         event.Skip()
+
+    def _leave_ai_webview(self, forward: bool) -> None:
+        """Move dialog focus out of the WebView after Tab-at-boundary / Ctrl+Tab."""
+        if forward:
+            if _try_set_focus(getattr(self, "followup_ctrl", None)):
+                return
+            if _try_set_focus(getattr(self, "ask_btn", None)):
+                return
+            close_btn = self.FindWindowById(wx.ID_CLOSE)
+            _try_set_focus(close_btn)
+            return
+        if _try_set_focus(getattr(self, "ai_model_ctrl", None)):
+            return
+        if self._show_fix and _try_set_focus(getattr(self, "fix_btn", None)):
+            return
+        _try_set_focus(getattr(self, "explain_btn", None))
 
     def _on_ai_webview_loaded(self, event) -> None:
         """After SetPage, move focus into the WebView for screen-reader review."""
@@ -1173,10 +1228,16 @@ class IssueDetailDialog(wx.Dialog):
             title = f"{title} — {code}"
         if plain:
             return markdown_to_browser_page(
-                self._ai_markdown or "", title=title, plain=True
+                self._ai_markdown or "",
+                title=title,
+                plain=True,
+                tab_exit=True,
             )
         return markdown_to_browser_page(
-            self._ai_markdown or "", title=title, plain=False
+            self._ai_markdown or "",
+            title=title,
+            plain=False,
+            tab_exit=True,
         )
 
     def _focus_ai_output_now(self) -> bool:
@@ -1885,6 +1946,11 @@ class AiOverviewDialog(wx.Dialog):
 
     def _on_webview_navigating(self, event) -> None:
         url = (event.GetURL() or "").strip()
+        direction = _webview_tab_exit_direction(url)
+        if direction is not None:
+            event.Veto()
+            wx.CallAfter(self._leave_ai_webview, direction == "next")
+            return
         if url.startswith(("http://", "https://", "mailto:")):
             event.Veto()
             try:
@@ -1893,6 +1959,16 @@ class AiOverviewDialog(wx.Dialog):
                 pass
             return
         event.Skip()
+
+    def _leave_ai_webview(self, forward: bool) -> None:
+        if forward:
+            if _try_set_focus(getattr(self, "view_browser_btn", None)):
+                return
+            close_btn = self.FindWindowById(wx.ID_CLOSE)
+            _try_set_focus(close_btn)
+            return
+        close_btn = self.FindWindowById(wx.ID_CLOSE)
+        _try_set_focus(close_btn)
 
     def _on_webview_loaded(self, event) -> None:
         event.Skip()
@@ -1945,7 +2021,10 @@ class AiOverviewDialog(wx.Dialog):
         from .ai.markdown_html import markdown_to_browser_page
 
         return markdown_to_browser_page(
-            self._ai_markdown or "", title=_("AI overview"), plain=self._ai_plain
+            self._ai_markdown or "",
+            title=_("AI overview"),
+            plain=self._ai_plain,
+            tab_exit=True,
         )
 
     def _paint_content(self, *, focus: bool = False) -> None:

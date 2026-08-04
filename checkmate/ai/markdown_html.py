@@ -217,13 +217,21 @@ def markdown_to_browser_page(
     *,
     title: str = "CheckMate",
     plain: bool = False,
+    tab_exit: bool = False,
 ) -> str:
-    """Full HTML document for viewing/saving in a real browser (CSS allowed)."""
+    """
+    Full HTML document for viewing/saving in a real browser (CSS allowed).
+
+    When ``tab_exit`` is True (in-dialog WebView), include a script that moves
+    focus out of the page to the host dialog: Tab after the last link,
+    Shift+Tab before the first, or Ctrl+Tab / Ctrl+Shift+Tab anytime.
+    """
     safe_title = html.escape(title or "CheckMate")
     if plain:
         body = f"<pre class='plain'>{html.escape(text or '')}</pre>"
     else:
         body = markdown_to_body_html(text or "", for_dialog=False)
+    tab_script = _WEBVIEW_TAB_EXIT_SCRIPT if tab_exit else ""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -276,9 +284,62 @@ def markdown_to_browser_page(
 </head>
 <body>
 {body}
+{tab_script}
 </body>
 </html>
 """
+
+
+# Custom scheme handled by the dialog WebView NAVIGATING handler (vetoed).
+_WEBVIEW_TAB_EXIT_SCRIPT = """
+<script>
+(function () {
+  function focusables() {
+    return Array.prototype.slice.call(document.querySelectorAll(
+      'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    )).filter(function (el) {
+      if (el.disabled) return false;
+      if (el.getAttribute('aria-hidden') === 'true') return false;
+      var rects = el.getClientRects();
+      return rects && rects.length > 0;
+    });
+  }
+  function leave(prev) {
+    window.location.href = prev
+      ? 'checkmate://focus-prev'
+      : 'checkmate://focus-next';
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Tab') return;
+    // Always-available escape hatch while inside the WebView document.
+    if (e.ctrlKey) {
+      e.preventDefault();
+      leave(!!e.shiftKey);
+      return;
+    }
+    var list = focusables();
+    var active = document.activeElement;
+    var onChrome = !active
+      || active === document.body
+      || active === document.documentElement;
+    if (!list.length) {
+      e.preventDefault();
+      leave(!!e.shiftKey);
+      return;
+    }
+    if (!e.shiftKey && active === list[list.length - 1]) {
+      e.preventDefault();
+      leave(false);
+      return;
+    }
+    if (e.shiftKey && (active === list[0] || onChrome)) {
+      e.preventDefault();
+      leave(true);
+    }
+  }, true);
+})();
+</script>
+""".strip()
 
 
 def append_followup_markdown(
