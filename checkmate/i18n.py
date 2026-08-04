@@ -124,6 +124,50 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "&File": "&Fichier",
         "Select &file…\tCtrl+O": "Sélectionner un &fichier…\tCtrl+O",
         "Select f&older…\tCtrl+Shift+O": "Sélectionner un d&ossier…\tCtrl+Shift+O",
+        "Re&name / Save a copy…\tCtrl+Shift+R": (
+            "Re&nommer / Enregistrer une copie…\tCtrl+Shift+R"
+        ),
+        "Rename / Save a copy": "Renommer / Enregistrer une copie",
+        "Save a copy with a new name or location "
+        "(the original file is left unchanged)": (
+            "Enregistrer une copie sous un nouveau nom ou emplacement "
+            "(le fichier d’origine est conservé)"
+        ),
+        "Select the parent folder for the copy "
+        "(the original folder is left unchanged)": (
+            "Sélectionner le dossier parent pour la copie "
+            "(le dossier d’origine est conservé)"
+        ),
+        "Folder name for the copy:": "Nom du dossier pour la copie :",
+        "Enter a folder name.": "Saisissez un nom de dossier.",
+        "Open a publication file or folder first.": (
+            "Ouvrez d’abord un fichier ou un dossier de publication."
+        ),
+        "Nothing to copy": "Rien à copier",
+        "Choose a different name or location.": (
+            "Choisissez un autre nom ou emplacement."
+        ),
+        "A folder already exists at:\n{path}": (
+            "Un dossier existe déjà à l’emplacement :\n{path}"
+        ),
+        "Could not save a copy:\n{error}": (
+            "Impossible d’enregistrer une copie :\n{error}"
+        ),
+        "Saved a copy to {path}": "Copie enregistrée dans {path}",
+        "A check is already running. Wait for it to finish, "
+        "then try again.": (
+            "Une vérification est déjà en cours. Attendez qu’elle se termine, "
+            "puis réessayez."
+        ),
+        "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|All files (*.*)|*.*": (
+            "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|Tous les fichiers (*.*)|*.*"
+        ),
+        "EPUB (*.epub)|*.epub;*.EPUB|All files (*.*)|*.*": (
+            "EPUB (*.epub)|*.epub;*.EPUB|Tous les fichiers (*.*)|*.*"
+        ),
+        "PDF (*.pdf)|*.pdf;*.PDF|All files (*.*)|*.*": (
+            "PDF (*.pdf)|*.pdf;*.PDF|Tous les fichiers (*.*)|*.*"
+        ),
         "&Report": "&Rapport",
         "View &text report\tCtrl+T": "Afficher le rapport &texte\tCtrl+T",
         "Save &text report…\tCtrl+Shift+S": (
@@ -757,6 +801,50 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "&File": "&Archivo",
         "Select &file…\tCtrl+O": "Seleccionar &archivo…\tCtrl+O",
         "Select f&older…\tCtrl+Shift+O": "Seleccionar &carpeta…\tCtrl+Shift+O",
+        "Re&name / Save a copy…\tCtrl+Shift+R": (
+            "Re&nombrar / Guardar una copia…\tCtrl+Shift+R"
+        ),
+        "Rename / Save a copy": "Renombrar / Guardar una copia",
+        "Save a copy with a new name or location "
+        "(the original file is left unchanged)": (
+            "Guardar una copia con un nombre o ubicación nuevos "
+            "(el archivo original no se modifica)"
+        ),
+        "Select the parent folder for the copy "
+        "(the original folder is left unchanged)": (
+            "Seleccionar la carpeta principal para la copia "
+            "(la carpeta original no se modifica)"
+        ),
+        "Folder name for the copy:": "Nombre de carpeta para la copia:",
+        "Enter a folder name.": "Introduzca un nombre de carpeta.",
+        "Open a publication file or folder first.": (
+            "Abra primero un archivo o carpeta de publicación."
+        ),
+        "Nothing to copy": "Nada que copiar",
+        "Choose a different name or location.": (
+            "Elija un nombre o una ubicación distintos."
+        ),
+        "A folder already exists at:\n{path}": (
+            "Ya existe una carpeta en:\n{path}"
+        ),
+        "Could not save a copy:\n{error}": (
+            "No se pudo guardar una copia:\n{error}"
+        ),
+        "Saved a copy to {path}": "Copia guardada en {path}",
+        "A check is already running. Wait for it to finish, "
+        "then try again.": (
+            "Ya hay una comprobación en curso. Espere a que termine "
+            "e inténtelo de nuevo."
+        ),
+        "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|All files (*.*)|*.*": (
+            "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|Todos los archivos (*.*)|*.*"
+        ),
+        "EPUB (*.epub)|*.epub;*.EPUB|All files (*.*)|*.*": (
+            "EPUB (*.epub)|*.epub;*.EPUB|Todos los archivos (*.*)|*.*"
+        ),
+        "PDF (*.pdf)|*.pdf;*.PDF|All files (*.*)|*.*": (
+            "PDF (*.pdf)|*.pdf;*.PDF|Todos los archivos (*.*)|*.*"
+        ),
         "&Report": "&Informe",
         "View &text report\tCtrl+T": "Ver informe de &texto\tCtrl+T",
         "Save &text report…\tCtrl+Shift+S": (
@@ -1389,6 +1477,50 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "&File": "&Datei",
         "Select &file…\tCtrl+O": "&Datei auswählen…\tCtrl+O",
         "Select f&older…\tCtrl+Shift+O": "&Ordner auswählen…\tCtrl+Shift+O",
+        "Re&name / Save a copy…\tCtrl+Shift+R": (
+            "Umbe&nennen / Kopie speichern…\tCtrl+Shift+R"
+        ),
+        "Rename / Save a copy": "Umbenennen / Kopie speichern",
+        "Save a copy with a new name or location "
+        "(the original file is left unchanged)": (
+            "Kopie unter neuem Namen oder Speicherort speichern "
+            "(die Originaldatei bleibt unverändert)"
+        ),
+        "Select the parent folder for the copy "
+        "(the original folder is left unchanged)": (
+            "Übergeordneten Ordner für die Kopie wählen "
+            "(der Originalordner bleibt unverändert)"
+        ),
+        "Folder name for the copy:": "Ordnername für die Kopie:",
+        "Enter a folder name.": "Geben Sie einen Ordnernamen ein.",
+        "Open a publication file or folder first.": (
+            "Öffnen Sie zuerst eine Publikationsdatei oder einen Ordner."
+        ),
+        "Nothing to copy": "Nichts zu kopieren",
+        "Choose a different name or location.": (
+            "Wählen Sie einen anderen Namen oder Speicherort."
+        ),
+        "A folder already exists at:\n{path}": (
+            "An diesem Pfad existiert bereits ein Ordner:\n{path}"
+        ),
+        "Could not save a copy:\n{error}": (
+            "Kopie konnte nicht gespeichert werden:\n{error}"
+        ),
+        "Saved a copy to {path}": "Kopie gespeichert unter {path}",
+        "A check is already running. Wait for it to finish, "
+        "then try again.": (
+            "Eine Prüfung läuft bereits. Warten Sie, bis sie beendet ist, "
+            "und versuchen Sie es erneut."
+        ),
+        "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|All files (*.*)|*.*": (
+            "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|Alle Dateien (*.*)|*.*"
+        ),
+        "EPUB (*.epub)|*.epub;*.EPUB|All files (*.*)|*.*": (
+            "EPUB (*.epub)|*.epub;*.EPUB|Alle Dateien (*.*)|*.*"
+        ),
+        "PDF (*.pdf)|*.pdf;*.PDF|All files (*.*)|*.*": (
+            "PDF (*.pdf)|*.pdf;*.PDF|Alle Dateien (*.*)|*.*"
+        ),
         "&Report": "&Bericht",
         "View &text report\tCtrl+T": "&Textbericht anzeigen\tCtrl+T",
         "Save &text report…\tCtrl+Shift+S": (
@@ -2021,6 +2153,50 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "&File": "&Ficheiro",
         "Select &file…\tCtrl+O": "Selecionar &ficheiro…\tCtrl+O",
         "Select f&older…\tCtrl+Shift+O": "Selecionar &pasta…\tCtrl+Shift+O",
+        "Re&name / Save a copy…\tCtrl+Shift+R": (
+            "Mudar o &nome / Guardar uma cópia…\tCtrl+Shift+R"
+        ),
+        "Rename / Save a copy": "Mudar o nome / Guardar uma cópia",
+        "Save a copy with a new name or location "
+        "(the original file is left unchanged)": (
+            "Guardar uma cópia com um novo nome ou localização "
+            "(o ficheiro original fica inalterado)"
+        ),
+        "Select the parent folder for the copy "
+        "(the original folder is left unchanged)": (
+            "Selecionar a pasta principal para a cópia "
+            "(a pasta original fica inalterada)"
+        ),
+        "Folder name for the copy:": "Nome da pasta para a cópia:",
+        "Enter a folder name.": "Introduza um nome de pasta.",
+        "Open a publication file or folder first.": (
+            "Abra primeiro um ficheiro ou pasta de publicação."
+        ),
+        "Nothing to copy": "Nada para copiar",
+        "Choose a different name or location.": (
+            "Escolha um nome ou localização diferentes."
+        ),
+        "A folder already exists at:\n{path}": (
+            "Já existe uma pasta em:\n{path}"
+        ),
+        "Could not save a copy:\n{error}": (
+            "Não foi possível guardar uma cópia:\n{error}"
+        ),
+        "Saved a copy to {path}": "Cópia guardada em {path}",
+        "A check is already running. Wait for it to finish, "
+        "then try again.": (
+            "Já está a decorrer uma verificação. Aguarde que termine "
+            "e tente novamente."
+        ),
+        "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|All files (*.*)|*.*": (
+            "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|Todos os ficheiros (*.*)|*.*"
+        ),
+        "EPUB (*.epub)|*.epub;*.EPUB|All files (*.*)|*.*": (
+            "EPUB (*.epub)|*.epub;*.EPUB|Todos os ficheiros (*.*)|*.*"
+        ),
+        "PDF (*.pdf)|*.pdf;*.PDF|All files (*.*)|*.*": (
+            "PDF (*.pdf)|*.pdf;*.PDF|Todos os ficheiros (*.*)|*.*"
+        ),
         "&Report": "&Relatório",
         "View &text report\tCtrl+T": "Ver relatório de &texto\tCtrl+T",
         "Save &text report…\tCtrl+Shift+S": (
