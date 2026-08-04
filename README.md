@@ -42,10 +42,10 @@ support on Windows, macOS, and Linux.
   unlock stay in memory only). Validation itself stays offline. Requests show
   a cancellable progress dialog, check the provider connection first, and
   write diagnostics to the app log (**Help → Open debugging log…**).
-- **AI overview** (same FIDO AI gate): from the **Report** menu (or **Report…**
-  button), ask for a whole-report briefing — themes, priorities, and next steps
-  based on the unique issue codes (not a full file dump). View, save, or copy
-  the result like other AI replies.
+- **AI overview** (same FIDO AI gate): when available, the first item in the
+  **Report** menu (or **Report…** button). Asks for a whole-report briefing —
+  themes, priorities, and next steps based on the unique issue codes (not a
+  full file dump). View, save, or copy the result like other AI replies.
 - **Fix with AI** (EPUB and eBraille only, when FIDO AI settings are present):
   from the same issue details dialog, ask for a minimal proposed markup patch,
   preview before/after, then **Apply fix** to the exploded folder or packaged
@@ -160,6 +160,7 @@ versions and Java information.
 | `Ctrl+Shift+S` | Save text report |
 | `Ctrl+H` | View HTML report in browser |
 | `Ctrl+S` | Save HTML report |
+| `Ctrl+Shift+A` | AI overview (when AI is available) |
 | `Ctrl+Shift+C` | Copy summary |
 | `Ctrl+Shift+N` | Clear results |
 | `Ctrl+L` | View full log |
