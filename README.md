@@ -130,7 +130,10 @@ uv run checkmate
 ## Using the app
 
 1. **Select file…** or **Select folder…**, or **drag and drop** a publication
-   onto the window — checking starts automatically. On Windows you can also
+   onto the window — checking starts automatically. Use **File → Rename / Save a
+   copy…** (`Ctrl+Shift+R`) to copy the open publication under a new name or
+   folder (the original is left unchanged; CheckMate then switches to the copy).
+   On Windows you can also
    right-click an `.ebrl`, `.epub`, or `.pdf` → **Validate with CheckMate**,
    or **Open with** → CheckMate. On macOS, use Finder **Open With** for a
    packaged `.app`.
@@ -155,6 +158,7 @@ versions and Java information.
 |---|---|
 | `Ctrl+O` | Select file |
 | `Ctrl+Shift+O` | Select folder |
+| `Ctrl+Shift+R` | Rename / Save a copy of the open publication |
 | `F5` | Re-check current publication |
 | `Ctrl+T` | View text report |
 | `Ctrl+Shift+S` | Save text report |

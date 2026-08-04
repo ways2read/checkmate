@@ -39,7 +39,7 @@ from .paths import (
     application_dir,
     is_frozen,
 )
-from .publication import is_checkable_path
+from .publication import copy_publication, is_checkable_path, same_publication_path
 from .report_export import format_text_report, report_title, save_report
 from .settings import read_settings, update_settings
 from .updater import (
@@ -2113,6 +2113,9 @@ class MainFrame(wx.Frame):
         self.menu_open_folder = file_menu.Append(
             wx.ID_ANY, _("Select f&older…\tCtrl+Shift+O")
         )
+        self.menu_save_copy = file_menu.Append(
+            wx.ID_ANY, _("Re&name / Save a copy…\tCtrl+Shift+R")
+        )
         file_menu.AppendSeparator()
         self.menu_exit = file_menu.Append(wx.ID_EXIT, _("E&xit\tEsc"))
         menubar.Append(file_menu, _("&File"))
@@ -2238,6 +2241,7 @@ class MainFrame(wx.Frame):
     def _bind_menus(self) -> None:
         self.Bind(wx.EVT_MENU, self.on_browse_file, self.menu_open_file)
         self.Bind(wx.EVT_MENU, self.on_browse_folder, self.menu_open_folder)
+        self.Bind(wx.EVT_MENU, self.on_save_copy, self.menu_save_copy)
         self.Bind(wx.EVT_MENU, self.on_view_text_report, self.menu_view_text)
         self.Bind(wx.EVT_MENU, self.on_save_text_report, self.menu_save_text)
         self.Bind(wx.EVT_MENU, self.on_view_html_report, self.menu_view_html)
@@ -2465,6 +2469,9 @@ class MainFrame(wx.Frame):
         self.select_file_btn.Enable(not busy)
         self.select_folder_btn.Enable(not busy)
         self.path_ctrl.Enable(not busy)
+        menu_save = getattr(self, "menu_save_copy", None)
+        if menu_save is not None:
+            menu_save.Enable(not busy)
 
     def _current_path(self) -> Path | None:
         text = self.path_ctrl.GetValue().strip().strip('"')
@@ -2756,6 +2763,153 @@ class MainFrame(wx.Frame):
                 return
             self.path_ctrl.SetValue(dlg.GetPath())
             self.on_check(None)
+
+    def _save_copy_file_wildcard(self, source: Path) -> str:
+        """FileDialog wildcard preferring the source extension."""
+        ext = source.suffix.lower()
+        if ext == ".ebrl":
+            return _("eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|All files (*.*)|*.*")
+        if ext == ".epub":
+            return _("EPUB (*.epub)|*.epub;*.EPUB|All files (*.*)|*.*")
+        if ext == ".pdf":
+            return _("PDF (*.pdf)|*.pdf;*.PDF|All files (*.*)|*.*")
+        return _(
+            "Publications (*.ebrl;*.epub;*.pdf)|"
+            "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
+            "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
+            "EPUB (*.epub)|*.epub;*.EPUB|"
+            "PDF (*.pdf)|*.pdf;*.PDF|"
+            "All files (*.*)|*.*"
+        )
+
+    def _ask_save_copy_destination(self, source: Path) -> Path | None:
+        """Prompt for a new file or folder path; None if cancelled."""
+        if source.is_dir():
+            with wx.DirDialog(
+                self,
+                _(
+                    "Select the parent folder for the copy "
+                    "(the original folder is left unchanged)"
+                ),
+                defaultPath=str(source.parent),
+                style=wx.DD_DEFAULT_STYLE,
+            ) as parent_dlg:
+                if parent_dlg.ShowModal() != wx.ID_OK:
+                    return None
+                parent = Path(parent_dlg.GetPath())
+            with wx.TextEntryDialog(
+                self,
+                _("Folder name for the copy:"),
+                _("Rename / Save a copy"),
+                value=source.name,
+            ) as name_dlg:
+                if name_dlg.ShowModal() != wx.ID_OK:
+                    return None
+                name = name_dlg.GetValue().strip()
+            if not name:
+                wx.MessageBox(
+                    _("Enter a folder name."),
+                    _("Rename / Save a copy"),
+                    wx.OK | wx.ICON_INFORMATION,
+                    self,
+                )
+                return None
+            return parent / name
+
+        with wx.FileDialog(
+            self,
+            _(
+                "Save a copy with a new name or location "
+                "(the original file is left unchanged)"
+            ),
+            defaultDir=str(source.parent),
+            defaultFile=source.name,
+            wildcard=self._save_copy_file_wildcard(source),
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        ) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return None
+            dest = Path(dlg.GetPath())
+            if not dest.suffix and source.suffix:
+                dest = dest.with_suffix(source.suffix)
+            return dest
+
+    def on_save_copy(self, _event: wx.CommandEvent) -> None:
+        """Copy the open publication to a new name/location and switch to it."""
+        if self._busy:
+            wx.MessageBox(
+                _(
+                    "A check is already running. Wait for it to finish, "
+                    "then try again."
+                ),
+                _("Busy"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        source = self._current_path()
+        if source is None:
+            wx.MessageBox(
+                _("Open a publication file or folder first."),
+                _("Nothing to copy"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            self._focus_select_button()
+            return
+        if not source.exists():
+            wx.MessageBox(
+                _("Path not found:\n{path}", path=source),
+                _("Invalid path"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+
+        dest = self._ask_save_copy_destination(source)
+        if dest is None:
+            return
+        if same_publication_path(source, dest):
+            wx.MessageBox(
+                _("Choose a different name or location."),
+                _("Rename / Save a copy"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        if source.is_dir() and dest.exists():
+            wx.MessageBox(
+                _("A folder already exists at:\n{path}", path=dest),
+                _("Rename / Save a copy"),
+                wx.OK | wx.ICON_WARNING,
+                self,
+            )
+            return
+
+        try:
+            copy_publication(source, dest)
+        except OSError as exc:
+            wx.MessageBox(
+                _("Could not save a copy:\n{error}", error=exc),
+                _("Rename / Save a copy"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+        except ValueError as exc:
+            wx.MessageBox(
+                _("Could not save a copy:\n{error}", error=exc),
+                _("Rename / Save a copy"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+
+        self.path_ctrl.SetValue(str(dest))
+        if self._last_result is not None:
+            self._last_result.target_path = str(dest)
+        self.SetStatusText(_("Saved a copy to {path}", path=dest))
+        wx.CallLater(4000, self._update_status_bar)
 
     def on_check(self, _event: wx.CommandEvent | None) -> None:
         if self._busy:

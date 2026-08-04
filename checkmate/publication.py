@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import xml.etree.ElementTree as ET
 from enum import Enum
 from pathlib import Path
@@ -138,3 +139,41 @@ def is_checkable_path(path: Path) -> bool:
 
         return pipeline_usable()
     return True
+
+
+def same_publication_path(left: Path, right: Path) -> bool:
+    """True when both paths refer to the same filesystem location."""
+    try:
+        return left.expanduser().resolve() == right.expanduser().resolve()
+    except OSError:
+        return (
+            left.expanduser().absolute() == right.expanduser().absolute()
+        )
+
+
+def copy_publication(source: Path, destination: Path) -> Path:
+    """
+    Copy a packaged publication file or exploded folder to *destination*.
+
+    The original is left unchanged. Returns *destination*. Raises
+    ``FileNotFoundError``, ``FileExistsError``, or ``ValueError`` on failure.
+    """
+    source = Path(source).expanduser()
+    destination = Path(destination).expanduser()
+    if not source.exists():
+        raise FileNotFoundError(str(source))
+    if same_publication_path(source, destination):
+        raise ValueError("source and destination are the same path")
+
+    if source.is_file():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        return destination
+
+    if source.is_dir():
+        if destination.exists():
+            raise FileExistsError(str(destination))
+        shutil.copytree(source, destination)
+        return destination
+
+    raise ValueError(f"not a file or folder: {source}")
