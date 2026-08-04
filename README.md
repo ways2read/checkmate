@@ -458,10 +458,6 @@ uv run python scripts/package.py --clean
 iscc installer\CheckMate.iss
 ```
 
-CI can also build the installer: **Actions → Windows installer → Run workflow**
-(or push to `main` / a `cursor/**` branch). Download the
-`CheckMate-windows-setup` artifact when the job finishes.
-
 Output: `installer/Output/CheckMate-<version>-setup.exe`
 
 The installer:
