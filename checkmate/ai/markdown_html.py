@@ -232,6 +232,7 @@ def markdown_to_browser_page(
     else:
         body = markdown_to_body_html(text or "", for_dialog=False)
     tab_script = _WEBVIEW_TAB_EXIT_SCRIPT if tab_exit else ""
+    body_attrs = ' tabindex="-1"' if tab_exit else ""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -282,7 +283,7 @@ def markdown_to_browser_page(
   .plain {{ white-space: pre-wrap; }}
 </style>
 </head>
-<body>
+<body{body_attrs}>
 {body}
 {tab_script}
 </body>
