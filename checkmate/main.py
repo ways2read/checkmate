@@ -276,26 +276,43 @@ def _present_progress_dialog(dlg: wx.Window, message: str) -> None:
     try:
         if hasattr(dlg, "Pulse"):
             dlg.Pulse(message)  # type: ignore[attr-defined]
-    except RuntimeError:
+    except Exception:
         pass
     try:
         dlg.Raise()
         dlg.Show(True)
-    except RuntimeError:
+    except Exception:
         return
     _win_force_foreground(dlg)
-    # Interactive child focus makes NVDA announce the dialog; frame-only focus
-    # often produces silence.
+
+    def _try_focus(window: wx.Window) -> bool:
+        try:
+            if not window or not window.GetHandle():
+                return False
+            window.SetFocus()
+            return True
+        except Exception:
+            # MSW ProgressDialog children can report as focusable while their
+            # HWND is still invalid (wxAssertionError from SetFocus).
+            return False
+
+    # Prefer an interactive child so NVDA announces the dialog; frame-only
+    # focus often produces silence. Never let focus failures abort Explain.
     try:
         focused = False
         for child in dlg.GetChildren():
-            if isinstance(child, wx.Window) and child.AcceptsFocusFromKeyboard():
-                child.SetFocus()
+            if not isinstance(child, wx.Window):
+                continue
+            try:
+                wants = child.AcceptsFocusFromKeyboard()
+            except Exception:
+                continue
+            if wants and _try_focus(child):
                 focused = True
                 break
         if not focused:
-            dlg.SetFocus()
-    except RuntimeError:
+            _try_focus(dlg)
+    except Exception:
         pass
     try:
         wx.SafeYield(dlg)
