@@ -16,6 +16,7 @@ import requests
 from packaging.version import InvalidVersion, Version
 
 from .paths import (
+    BUNDLED_VERSION_FILE,
     CHECKER_RELEASES_API,
     CHECKER_RELEASES_PAGE,
     EPUBCHECK_RELEASES_API,
@@ -23,7 +24,6 @@ from .paths import (
     VERAPDF_DOWNLOAD_PAGE,
     VERAPDF_INSTALLER_ZIP_URL,
     VERAPDF_RELEASES_PAGE,
-    BUNDLED_VERSION_FILE,
     bundled_epubcheck_version_file,
     bundled_verapdf_version_file,
     bundled_version_file,
