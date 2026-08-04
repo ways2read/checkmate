@@ -438,9 +438,10 @@ bundled copies in the install folder are not modified.
 
 ### Windows installer (Inno Setup)
 
-Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php). Keep
-`MyAppVersion` in `installer/CheckMate.iss` in sync with
-`pyproject.toml` / `checkmate/__init__.py`.
+Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php) and
+[uv](https://docs.astral.sh/uv/). Keep `MyAppVersion` in
+`installer/CheckMate.iss` in sync with `pyproject.toml` /
+`checkmate/__init__.py`.
 
 One-shot (packages the app, then compiles the setup):
 
@@ -456,6 +457,10 @@ uv run python scripts/package.py --clean
 # Then compile with Inno Setup Compiler, or:
 iscc installer\CheckMate.iss
 ```
+
+CI can also build the installer: **Actions → Windows installer → Run workflow**
+(or push to `main` / a `cursor/**` branch). Download the
+`CheckMate-windows-setup` artifact when the job finishes.
 
 Output: `installer/Output/CheckMate-<version>-setup.exe`
 
