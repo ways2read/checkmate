@@ -118,9 +118,11 @@ def litellm_available() -> bool:
 
 def preload_litellm() -> tuple[bool, str]:
     """
-    Import litellm on the calling thread (prefer the UI thread).
+    Import litellm on the calling thread (UI or worker).
 
-    Returns ``(ok, detail)``. Safe to call more than once.
+    Prefer a worker thread when a progress dialog is visible so the UI can
+    paint and screen readers can announce it. Returns ``(ok, detail)``.
+    Safe to call more than once.
     """
     try:
         _get_litellm()

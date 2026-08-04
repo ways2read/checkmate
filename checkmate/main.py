@@ -271,6 +271,41 @@ def _win_force_foreground(window: wx.Window) -> None:
         pass
 
 
+def _present_progress_dialog(dlg: wx.Window, message: str) -> None:
+    """Pulse, raise, and focus a ProgressDialog so screen readers announce it."""
+    try:
+        if hasattr(dlg, "Pulse"):
+            dlg.Pulse(message)  # type: ignore[attr-defined]
+    except RuntimeError:
+        pass
+    try:
+        dlg.Raise()
+        dlg.Show(True)
+    except RuntimeError:
+        return
+    _win_force_foreground(dlg)
+    # Interactive child focus makes NVDA announce the dialog; frame-only focus
+    # often produces silence.
+    try:
+        focused = False
+        for child in dlg.GetChildren():
+            if isinstance(child, wx.Window) and child.AcceptsFocusFromKeyboard():
+                child.SetFocus()
+                focused = True
+                break
+        if not focused:
+            dlg.SetFocus()
+    except RuntimeError:
+        pass
+    try:
+        wx.SafeYield(dlg)
+    except Exception:
+        try:
+            wx.Yield()
+        except Exception:
+            pass
+
+
 def _win_webview_document_hwnd(root_hwnd: int) -> int | None:
     """
     Inner document HWND for Edge WebView2 / IE (needed for screen-reader focus).
@@ -1332,8 +1367,17 @@ class IssueDetailDialog(wx.Dialog):
 
         wx.CallAfter(update)
 
+    def _present_ai_progress(self, message: str) -> None:
+        """Paint the progress dialog and give it focus for screen readers."""
+        dlg = self._ai_progress
+        if dlg is None:
+            return
+        _present_progress_dialog(dlg, message)
+
     def _open_ai_progress(self, title: str, message: str) -> threading.Event:
-        self._close_ai_progress()
+        # Closing a previous dialog must not reclaim parent focus — that steals
+        # activation from the new progress window before screen readers hear it.
+        self._close_ai_progress(reclaim_focus=False)
         cancel = threading.Event()
         self._ai_cancel = cancel
         self._ai_progress = wx.ProgressDialog(
@@ -1343,6 +1387,7 @@ class IssueDetailDialog(wx.Dialog):
             parent=self,
             style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
         )
+        self._present_ai_progress(message)
         self._ai_progress_timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self._on_ai_progress_timer, self._ai_progress_timer)
         self._ai_progress_timer.Start(200)
@@ -1363,12 +1408,18 @@ class IssueDetailDialog(wx.Dialog):
                 dlg.Pulse(_("Cancelling…"))
             except RuntimeError:
                 pass
-            self._close_ai_progress()
+            self._close_ai_progress(reclaim_focus=True)
             self._set_busy(False)
             if self._show_ai:
                 self.ai_status.SetLabel(_("Cancelled."))
 
-    def _close_ai_progress(self) -> None:
+    def _close_ai_progress(self, *, reclaim_focus: bool = True) -> None:
+        # Bump generation so a deferred reclaim from an older close cannot steal
+        # focus from a newly opened progress dialog.
+        self._ai_progress_reclaim_gen = (
+            int(getattr(self, "_ai_progress_reclaim_gen", 0)) + 1
+        )
+        reclaim_gen = self._ai_progress_reclaim_gen
         timer = self._ai_progress_timer
         if timer is not None:
             try:
@@ -1384,9 +1435,15 @@ class IssueDetailDialog(wx.Dialog):
                 dlg.Destroy()
             except RuntimeError:
                 pass
+            if not reclaim_focus:
+                return
             # Modal progress teardown often leaves no foreground window; reclaim
             # activation for this dialog so later SetFocus into the WebView sticks.
             def _reclaim() -> None:
+                if reclaim_gen != getattr(self, "_ai_progress_reclaim_gen", 0):
+                    return
+                if getattr(self, "_ai_progress", None) is not None:
+                    return
                 try:
                     if not self:
                         return
@@ -1398,6 +1455,17 @@ class IssueDetailDialog(wx.Dialog):
             wx.CallAfter(_reclaim)
             wx.CallLater(100, _reclaim)
 
+    def _fail_ai_libraries(self, detail: str) -> None:
+        """UI-thread handler when LiteLLM preload fails in a worker."""
+        self._close_ai_progress(reclaim_focus=True)
+        self._set_busy(False)
+        from .ai.explain import error_message_for_key
+
+        msg = error_message_for_key("no_litellm", detail=detail)
+        if hasattr(self, "ai_status"):
+            self.ai_status.SetLabel(_("Could not load AI libraries."))
+        wx.MessageBox(msg, _("Error"), wx.OK | wx.ICON_ERROR, self)
+
     def _on_explain(self, _event: wx.Event) -> None:
         if self._busy:
             return
@@ -1407,15 +1475,22 @@ class IssueDetailDialog(wx.Dialog):
             _("Explain with AI"), _("Loading AI libraries…")
         )
         self._set_busy(True, _("Loading AI libraries…"))
-        if not self._preload_ai_libraries():
-            return
         issue = self._issue
         result = self._check_result
         status_cb = self._ai_status_callback
 
         def work() -> None:
             from .ai.explain import ExplainResult, explain_issue
+            from .ai.litellm_client import preload_litellm
 
+            # Keep preload off the UI thread so the progress dialog can paint,
+            # pulse, and be announced by screen readers.
+            ok, detail = preload_litellm()
+            if not ok:
+                wx.CallAfter(self._fail_ai_libraries, detail)
+                return
+            if cancel.is_set():
+                return
             try:
                 out = explain_issue(
                     issue,
@@ -1435,23 +1510,6 @@ class IssueDetailDialog(wx.Dialog):
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _preload_ai_libraries(self) -> bool:
-        """Import LiteLLM on the UI thread before starting a worker."""
-        from .ai.litellm_client import preload_litellm
-
-        ok, detail = preload_litellm()
-        if ok:
-            return True
-        self._close_ai_progress()
-        self._set_busy(False)
-        from .ai.explain import error_message_for_key
-
-        msg = error_message_for_key("no_litellm", detail=detail)
-        if hasattr(self, "ai_status"):
-            self.ai_status.SetLabel(_("Could not load AI libraries."))
-        wx.MessageBox(msg, _("Error"), wx.OK | wx.ICON_ERROR, self)
-        return False
-
     def _on_fix(self, _event: wx.Event) -> None:
         if self._busy or not self._show_fix:
             return
@@ -1459,15 +1517,20 @@ class IssueDetailDialog(wx.Dialog):
         self._set_apply_fix_enabled(False)
         cancel = self._open_ai_progress(_("Fix with AI"), _("Loading AI libraries…"))
         self._set_busy(True, _("Loading AI libraries…"))
-        if not self._preload_ai_libraries():
-            return
         issue = self._issue
         result = self._check_result
         status_cb = self._ai_status_callback
 
         def work() -> None:
             from .ai.fix import FixResult, propose_fix
+            from .ai.litellm_client import preload_litellm
 
+            ok, detail = preload_litellm()
+            if not ok:
+                wx.CallAfter(self._fail_ai_libraries, detail)
+                return
+            if cancel.is_set():
+                return
             try:
                 out = propose_fix(
                     issue,
@@ -1494,20 +1557,29 @@ class IssueDetailDialog(wx.Dialog):
             return
         cancel = self._open_ai_progress(_("Follow-up"), _("Loading AI libraries…"))
         self._set_busy(True, _("Loading AI libraries…"))
-        if not self._preload_ai_libraries():
-            return
-        self._set_busy(True, _("Thinking…"))
-        if self._ai_progress is not None:
-            try:
-                self._ai_progress.Pulse(_("Thinking…"))
-            except RuntimeError:
-                pass
         session = self._session
         status_cb = self._ai_status_callback
 
         def work() -> None:
             from .ai.explain import ExplainResult, ask_followup
+            from .ai.litellm_client import preload_litellm
 
+            ok, detail = preload_litellm()
+            if not ok:
+                wx.CallAfter(self._fail_ai_libraries, detail)
+                return
+            if cancel.is_set():
+                return
+
+            def _thinking() -> None:
+                if self._ai_progress is not None:
+                    try:
+                        self._ai_progress.Pulse(_("Thinking…"))
+                    except RuntimeError:
+                        pass
+                self._set_busy(True, _("Thinking…"))
+
+            wx.CallAfter(_thinking)
             try:
                 out = ask_followup(
                     session,
@@ -3497,37 +3569,45 @@ class MainFrame(wx.Frame):
             parent=self,
             style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
         )
+        _present_progress_dialog(
+            self._overview_progress, _("Loading AI libraries…")
+        )
         self._overview_progress_timer = wx.Timer(self)
         self.Bind(
             wx.EVT_TIMER, self._on_overview_progress_timer, self._overview_progress_timer
         )
         self._overview_progress_timer.Start(200)
-
-        from .ai.litellm_client import preload_litellm
-
-        ok, detail = preload_litellm()
-        if not ok:
-            self._close_overview_progress()
-            from .ai.explain import error_message_for_key
-
-            wx.MessageBox(
-                error_message_for_key("no_litellm", detail=detail),
-                _("AI overview"),
-                wx.OK | wx.ICON_ERROR,
-                self,
-            )
-            return
-
-        try:
-            self._overview_progress.Pulse(_("Checking AI connection…"))
-        except RuntimeError:
-            pass
         status_cb = self._overview_status_callback
 
         def work() -> None:
-            from .ai.explain import ExplainResult
+            from .ai.explain import ExplainResult, error_message_for_key
+            from .ai.litellm_client import preload_litellm
             from .ai.overview import explain_overview
 
+            ok, detail = preload_litellm()
+            if not ok:
+                def fail() -> None:
+                    self._close_overview_progress()
+                    wx.MessageBox(
+                        error_message_for_key("no_litellm", detail=detail),
+                        _("AI overview"),
+                        wx.OK | wx.ICON_ERROR,
+                        self,
+                    )
+
+                wx.CallAfter(fail)
+                return
+            if cancel.is_set():
+                return
+
+            def _checking() -> None:
+                if self._overview_progress is not None:
+                    try:
+                        self._overview_progress.Pulse(_("Checking AI connection…"))
+                    except RuntimeError:
+                        pass
+
+            wx.CallAfter(_checking)
             try:
                 out = explain_overview(
                     result,
