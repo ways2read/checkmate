@@ -122,6 +122,7 @@ def _create_ai_html_view(parent: wx.Window) -> tuple[wx.Window, bool]:
                 view.EnableContextMenu(True)
             except Exception:
                 pass
+            _ensure_win_tab_stop(view)
             return view, True
 
     text = wx.TextCtrl(
@@ -147,7 +148,7 @@ class _FocusableReadOnlyText(wx.TextCtrl):
 
 
 def _ensure_win_tab_stop(window: wx.Window) -> None:
-    """Force WS_TABSTOP on MSW — TE_READONLY edits often omit it."""
+    """Force WS_TABSTOP on MSW — TE_READONLY edits / WebView often omit it."""
     if sys.platform != "win32":
         return
     try:
@@ -165,6 +166,143 @@ def _ensure_win_tab_stop(window: wx.Window) -> None:
         user32.SetWindowLongW(hwnd, gwl_style, style | ws_tabstop)
     except Exception:
         pass
+
+
+def _win_clear_tab_stop(window: wx.Window) -> None:
+    """Remove WS_TABSTOP so a host panel does not sit in the Tab cycle."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        hwnd = int(window.GetHandle())
+        if not hwnd:
+            return
+        gwl_style = -16
+        ws_tabstop = 0x00010000
+        user32 = ctypes.windll.user32
+        style = int(user32.GetWindowLongW(hwnd, gwl_style))
+        if not (style & ws_tabstop):
+            return
+        user32.SetWindowLongW(hwnd, gwl_style, style & ~ws_tabstop)
+    except Exception:
+        pass
+
+
+def _win_webview_document_hwnd(root_hwnd: int) -> int | None:
+    """
+    Inner document HWND for Edge WebView2 / IE (needed for screen-reader focus).
+
+    NVDA expects focus on ``Chrome_RenderWidgetHostHWND`` / ``Internet Explorer_Server``,
+    not only the outer wx WebView wrapper.
+    """
+    if sys.platform != "win32" or not root_hwnd:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        targets = {
+            "Chrome_RenderWidgetHostHWND",
+            "Internet Explorer_Server",
+        }
+        found: list[int] = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def _enum(hwnd: int, _lparam: int) -> bool:
+            buf = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, buf, 256)
+            if buf.value in targets:
+                found.append(int(hwnd))
+                return False  # stop enumeration
+            return True
+
+        # EnumChildWindows walks all descendants.
+        user32.EnumChildWindows(int(root_hwnd), _enum, 0)
+        return found[0] if found else None
+    except Exception:
+        return None
+
+
+def _focus_ai_html_view(
+    view: wx.Window,
+    *,
+    is_webview: bool,
+    retries: int = 10,
+) -> None:
+    """
+    Put keyboard focus into the AI HTML pane (and its document HWND on Windows).
+    """
+    try:
+        if not view:
+            return
+    except RuntimeError:
+        return
+    try:
+        view.SetFocus()
+    except RuntimeError:
+        return
+    if not is_webview:
+        if hasattr(view, "SetInsertionPoint"):
+            try:
+                view.SetInsertionPoint(0)
+            except RuntimeError:
+                pass
+        return
+
+    _ensure_win_tab_stop(view)
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        outer = int(view.GetHandle() or 0)
+        doc = _win_webview_document_hwnd(outer)
+        if doc:
+            # Refocus the wx wrapper once the document HWND exists (propagates
+            # into Edge), then focus the document itself for screen readers.
+            try:
+                view.SetFocus()
+            except RuntimeError:
+                pass
+            ctypes.windll.user32.SetFocus(doc)
+            return
+    except Exception:
+        pass
+    if retries > 0:
+        wx.CallLater(
+            50,
+            lambda v=view, n=retries: _focus_ai_html_view(
+                v, is_webview=True, retries=n - 1
+            ),
+        )
+
+
+def _wire_ai_html_host(
+    host: wx.Window,
+    view: wx.Window,
+    *,
+    is_webview: bool,
+) -> None:
+    """Host panel must not steal Tab; forward accidental focus to the view."""
+    _win_clear_tab_stop(host)
+    _ensure_win_tab_stop(view)
+
+    def _on_host_focus(_event: wx.FocusEvent) -> None:
+        _focus_ai_html_view(view, is_webview=is_webview, retries=6)
+
+    host.Bind(wx.EVT_SET_FOCUS, _on_host_focus)
+
+
+class _AiHtmlHostPanel(wx.Panel):
+    """Deferred WebView container — never keeps keyboard focus itself."""
+
+    def AcceptsFocus(self) -> bool:  # noqa: N802 — wx override
+        return False
+
+    def AcceptsFocusFromKeyboard(self) -> bool:  # noqa: N802 — wx override
+        return False
 
 
 def _macos_make_first_responder(window: wx.Window) -> bool:
@@ -487,7 +625,7 @@ class IssueDetailDialog(wx.Dialog):
             ai_sizer.Add(self.ai_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
 
             # Placeholder — Edge/WebKit WebView creation is slow; finish after show.
-            self._ai_output_host = wx.Panel(self, name=_("AI explanation"))
+            self._ai_output_host = _AiHtmlHostPanel(self, name=_("AI explanation"))
             self._ai_output_host.SetMinSize((-1, 240))
             host_sizer = wx.BoxSizer(wx.VERTICAL)
             self._ai_loading_label = wx.StaticText(
@@ -495,6 +633,7 @@ class IssueDetailDialog(wx.Dialog):
             )
             host_sizer.Add(self._ai_loading_label, 0, wx.ALL, 8)
             self._ai_output_host.SetSizer(host_sizer)
+            _win_clear_tab_stop(self._ai_output_host)
             ai_sizer.Add(
                 self._ai_output_host, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6
             )
@@ -627,8 +766,13 @@ class IssueDetailDialog(wx.Dialog):
         self.ai_output = view
         self._ai_output_is_webview = is_webview
         self._ai_view_realized = True
+        _wire_ai_html_host(host, view, is_webview=is_webview)
         host.Layout()
         self.Layout()
+        # Edge document HWND appears asynchronously — refresh tab-stop shortly after.
+        if is_webview:
+            wx.CallLater(100, lambda v=view: _ensure_win_tab_stop(v))
+            wx.CallLater(300, lambda v=view: _ensure_win_tab_stop(v))
 
         self.explain_btn.Enable(not self._busy)
         if self._show_fix:
@@ -722,6 +866,10 @@ class IssueDetailDialog(wx.Dialog):
     def _on_ai_webview_loaded(self, event) -> None:
         """After SetPage, move focus into the WebView for screen-reader review."""
         event.Skip()
+        try:
+            _ensure_win_tab_stop(self.ai_output)
+        except RuntimeError:
+            pass
         if not self._ai_focus_after_load:
             return
         self._ai_focus_after_load = False
@@ -746,23 +894,17 @@ class IssueDetailDialog(wx.Dialog):
     def _focus_ai_output_now(self) -> None:
         if not self._show_ai or not getattr(self, "_ai_view_realized", False):
             return
-        try:
-            self.ai_output.SetFocus()
-        except RuntimeError:
-            return
-        if not self._ai_output_is_webview and hasattr(
-            self.ai_output, "SetInsertionPoint"
-        ):
-            try:
-                self.ai_output.SetInsertionPoint(0)
-            except RuntimeError:
-                pass
+        _focus_ai_html_view(
+            self.ai_output,
+            is_webview=bool(self._ai_output_is_webview),
+        )
 
     def _schedule_ai_output_focus(self) -> None:
         """Focus the AI pane after progress UI teardown (and WebView load)."""
         # ProgressDialog destroy often steals focus; defer past that.
         wx.CallAfter(self._focus_ai_output_now)
         wx.CallLater(120, self._focus_ai_output_now)
+        wx.CallLater(350, self._focus_ai_output_now)
 
     def _set_ai_content(
         self,
@@ -1292,7 +1434,7 @@ class AiOverviewDialog(wx.Dialog):
             summary.Wrap(680)
             root.Add(summary, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
 
-        self._ai_output_host = wx.Panel(self, name=_("AI overview"))
+        self._ai_output_host = _AiHtmlHostPanel(self, name=_("AI overview"))
         self._ai_output_host.SetMinSize((-1, 360))
         host_sizer = wx.BoxSizer(wx.VERTICAL)
         self._ai_loading_label = wx.StaticText(
@@ -1300,6 +1442,7 @@ class AiOverviewDialog(wx.Dialog):
         )
         host_sizer.Add(self._ai_loading_label, 0, wx.ALL, 8)
         self._ai_output_host.SetSizer(host_sizer)
+        _win_clear_tab_stop(self._ai_output_host)
         self.ai_output = self._ai_output_host
         root.Add(self._ai_output_host, 1, wx.EXPAND | wx.ALL, 12)
 
@@ -1357,8 +1500,12 @@ class AiOverviewDialog(wx.Dialog):
         self.ai_output = view
         self._ai_output_is_webview = is_webview
         self._ai_view_realized = True
+        _wire_ai_html_host(host, view, is_webview=is_webview)
         host.Layout()
         self.Layout()
+        if is_webview:
+            wx.CallLater(100, lambda v=view: _ensure_win_tab_stop(v))
+            wx.CallLater(300, lambda v=view: _ensure_win_tab_stop(v))
         self._paint_content(focus=True)
 
     def _on_webview_navigating(self, event) -> None:
@@ -1374,17 +1521,22 @@ class AiOverviewDialog(wx.Dialog):
 
     def _on_webview_loaded(self, event) -> None:
         event.Skip()
+        try:
+            _ensure_win_tab_stop(self.ai_output)
+        except RuntimeError:
+            pass
         if not self._ai_focus_after_load:
             return
         self._ai_focus_after_load = False
         wx.CallAfter(self._focus_output)
         wx.CallLater(120, self._focus_output)
+        wx.CallLater(350, self._focus_output)
 
     def _focus_output(self) -> None:
-        try:
-            self.ai_output.SetFocus()
-        except RuntimeError:
-            return
+        _focus_ai_html_view(
+            self.ai_output,
+            is_webview=bool(self._ai_output_is_webview),
+        )
 
     def _dialog_html(self) -> str:
         from .ai.markdown_html import markdown_to_browser_page

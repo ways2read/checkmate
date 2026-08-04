@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..epub_package import ApplyResult, apply_text_replacement, read_member_text
-from ..i18n import _, get_language
+from ..i18n import _, get_language, language_display_name
 from ..models import CheckResult, Issue
 from .context import gather_issue_context, parse_issue_location
 from .litellm_client import (
@@ -60,13 +60,7 @@ class FixResult:
 
 
 def _language_name() -> str:
-    return {
-        "en": "English",
-        "fr": "French",
-        "es": "Spanish",
-        "de": "German",
-        "pt": "Portuguese",
-    }.get(get_language(), "English")
+    return language_display_name()
 
 
 def build_fix_system_prompt() -> str:

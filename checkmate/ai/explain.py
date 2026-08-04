@@ -7,7 +7,7 @@ import threading
 from dataclasses import dataclass
 from typing import Callable
 
-from ..i18n import _, get_language
+from ..i18n import _, get_language, language_display_name
 from ..models import CheckResult, Issue
 from .context import gather_issue_context
 from .litellm_client import ensure_credentials_ready, litellm_available
@@ -28,13 +28,7 @@ class ExplainResult:
 
 
 def _language_name() -> str:
-    return {
-        "en": "English",
-        "fr": "French",
-        "es": "Spanish",
-        "de": "German",
-        "pt": "Portuguese",
-    }.get(get_language(), "English")
+    return language_display_name()
 
 
 def _section_headings() -> tuple[str, str, str, str, str]:

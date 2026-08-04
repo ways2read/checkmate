@@ -59,8 +59,10 @@ support on Windows, macOS, and Linux.
   reports embed an EPUB/eBraille cover image when present, or the first page
   of a PDF; **Clear results** returns to the launch state
 - Status bar shows installed checker versions, and Ace / Pipeline when detected
-- UI languages: English, Français, Español, Deutsch, Português (remembered;
-  first run follows the OS language when supported)
+- UI languages: English, Français, Español, Deutsch, Português, Dansk,
+  Nederlands, Suomi, हिन्दी, Norsk, Русский, Svenska (remembered;
+  first run follows the OS language when supported; AI replies follow
+  the selected language)
 - Downloads eBraille Checker and EPUBCheck on first run when not bundled;
   downloads veraPDF on first PDF check when not bundled
 - In-app update check for all tools; updates install to application data and
@@ -205,7 +207,8 @@ executable (or inside the `.app` bundle on macOS).
   (headings, lists, links) for screen readers; falls back to a Markdown text
   field if no webview backend is available (`HtmlWindow` is not used)
 - Accessible name includes the verdict text; the window title also appends it
-- **Language** menu: English, Français, Español, Deutsch, Português
+- **Language** menu: English, Français, Español, Deutsch, Português, Dansk,
+  Nederlands, Suomi, हिन्दी, Norsk, Русский, Svenska
 - Severity and pass/fail are always in text; result colour is only a visual cue
 
 Designed for use with NVDA, JAWS, Narrator, and VoiceOver. Feedback on
@@ -321,7 +324,8 @@ checkmate/
     java_util.py       # Locate Java (bundled or PATH)
     models.py          # Verdict and issue models
     report_export.py   # Text / HTML report export
-    i18n.py            # UI translations
+    i18n.py            # UI language registry + core translations
+    i18n_extra.py      # Additional language catalogs (da/nl/fi/hi/nb/ru/sv)
     settings.py        # Persisted preferences
     paths.py           # App data and bundle locations
     subprocess_util.py # Quiet subprocess helpers (Windows)

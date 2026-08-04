@@ -1,4 +1,4 @@
-"""UI language support (English, French, Spanish, German, Portuguese)."""
+"""UI language support for CheckMate."""
 
 from __future__ import annotations
 
@@ -10,6 +10,13 @@ LANG_FR = "fr"
 LANG_ES = "es"
 LANG_DE = "de"
 LANG_PT = "pt"
+LANG_DA = "da"
+LANG_NL = "nl"
+LANG_FI = "fi"
+LANG_HI = "hi"
+LANG_NB = "nb"  # Norwegian Bokmål (OS "no" locales map here)
+LANG_RU = "ru"
+LANG_SV = "sv"
 
 LANGUAGES: dict[str, str] = {
     LANG_EN: "English",
@@ -17,6 +24,29 @@ LANGUAGES: dict[str, str] = {
     LANG_ES: "Español",
     LANG_DE: "Deutsch",
     LANG_PT: "Português",
+    LANG_DA: "Dansk",
+    LANG_NL: "Nederlands",
+    LANG_FI: "Suomi",
+    LANG_HI: "हिन्दी",
+    LANG_NB: "Norsk",
+    LANG_RU: "Русский",
+    LANG_SV: "Svenska",
+}
+
+# English names for AI prompts (must cover every LANGUAGES code).
+LANGUAGE_DISPLAY_NAMES: dict[str, str] = {
+    LANG_EN: "English",
+    LANG_FR: "French",
+    LANG_ES: "Spanish",
+    LANG_DE: "German",
+    LANG_PT: "Portuguese",
+    LANG_DA: "Danish",
+    LANG_NL: "Dutch",
+    LANG_FI: "Finnish",
+    LANG_HI: "Hindi",
+    LANG_NB: "Norwegian",
+    LANG_RU: "Russian",
+    LANG_SV: "Swedish",
 }
 
 DEFAULT_LANGUAGE = LANG_EN
@@ -2555,6 +2585,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
     },
 }
 
+# Danish, Dutch, Finnish, Hindi, Norwegian, Russian, Swedish
+from .i18n_extra import EXTRA_TRANSLATIONS
+
+_TRANSLATIONS.update(EXTRA_TRANSLATIONS)
+
 _current_language = DEFAULT_LANGUAGE
 
 
@@ -2579,6 +2614,13 @@ def detect_os_language() -> str:
                 0x0A: LANG_ES,  # Spanish
                 0x07: LANG_DE,  # German
                 0x16: LANG_PT,  # Portuguese
+                0x06: LANG_DA,  # Danish
+                0x13: LANG_NL,  # Dutch
+                0x0B: LANG_FI,  # Finnish
+                0x39: LANG_HI,  # Hindi
+                0x14: LANG_NB,  # Norwegian → Bokmål
+                0x19: LANG_RU,  # Russian
+                0x1D: LANG_SV,  # Swedish
             }
             if primary in win_map:
                 return win_map[primary]
@@ -2639,6 +2681,21 @@ def detect_os_language() -> str:
             return LANG_DE
         if code.startswith("pt"):
             return LANG_PT
+        if code.startswith("da"):
+            return LANG_DA
+        if code.startswith("nl"):
+            return LANG_NL
+        if code.startswith("fi"):
+            return LANG_FI
+        if code.startswith("hi"):
+            return LANG_HI
+        # Norwegian: nb (Bokmål), nn (Nynorsk), no (macrolanguage) → nb catalog
+        if code.startswith("nb") or code.startswith("nn") or code.startswith("no"):
+            return LANG_NB
+        if code.startswith("ru"):
+            return LANG_RU
+        if code.startswith("sv"):
+            return LANG_SV
         if code.startswith("en"):
             return LANG_EN
 
@@ -2672,6 +2729,12 @@ def get_language() -> str:
 
 def set_language(lang: str) -> None:
     save_language(lang)
+
+
+def language_display_name(lang: str | None = None) -> str:
+    """English language name for AI prompts (based on UI language)."""
+    code = lang if lang is not None else _current_language
+    return LANGUAGE_DISPLAY_NAMES.get(code, "English")
 
 
 def _(message: str, **kwargs: object) -> str:

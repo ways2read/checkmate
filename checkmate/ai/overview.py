@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from typing import Callable
 
-from ..i18n import _, get_language
+from ..i18n import _, get_language, language_display_name
 from ..models import CheckResult, Issue, Severity
 from .explain import ExplainResult
 from .litellm_client import (
@@ -58,13 +58,7 @@ def _merge_continuation(first: str, second: str) -> str:
 
 
 def _language_name() -> str:
-    return {
-        "en": "English",
-        "fr": "French",
-        "es": "Spanish",
-        "de": "German",
-        "pt": "Portuguese",
-    }.get(get_language(), "English")
+    return language_display_name()
 
 
 def _section_headings() -> tuple[str, str, str, str, str]:
