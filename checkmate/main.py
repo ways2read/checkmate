@@ -403,14 +403,18 @@ def _win_focus_is_webview_document(view: wx.Window) -> bool:
     return bool(doc) and _win_get_focus_hwnd() == doc
 
 
-# Nudge DOM keyboard focus. Win32 SetFocus on Chrome_RenderWidgetHostHWND alone
-# often leaves Edge without a focused element until the user clicks.
+# Nudge DOM keyboard focus only when nothing in the page is focused yet.
+# Re-focusing the first link on every activate caused an announce/focus loop.
 _WEBVIEW_ACTIVATE_DOM_JS = """
 (function () {
   try {
     var body = document.body;
-    if (body && body.tabIndex < 0) { /* keep existing */ }
-    else if (body) { body.tabIndex = -1; }
+    if (body && !(body.tabIndex < 0)) { body.tabIndex = -1; }
+    var active = document.activeElement;
+    var onChrome = !active
+      || active === body
+      || active === document.documentElement;
+    if (!onChrome) { return 'kept'; }
     var el = document.querySelector(
       'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
     );
@@ -460,9 +464,9 @@ def _focus_ai_html_view(
     Put keyboard focus into the AI HTML pane (and its document HWND on Windows).
 
     Returns True when activation was attempted successfully enough to stop
-    retrying. Edge WebView2 needs both Win32 focus and a DOM focus target —
-    SetFocus on the render HWND alone often looks focused until Tab/typing
-    fails, which is why a click seemed required.
+    retrying. Edge needs Win32 focus plus a DOM focus target; avoid calling
+    ``view.SetFocus()`` when the document already has focus (that re-enters
+    SET_FOCUS handlers and loops).
     """
     try:
         if not view:
@@ -482,11 +486,13 @@ def _focus_ai_html_view(
                 pass
         return True
 
-    # Always activate the wx WebView first so the backend controller wakes up.
-    try:
-        view.SetFocus()
-    except RuntimeError:
-        return False
+    already_doc = sys.platform == "win32" and _win_focus_is_webview_document(view)
+
+    if not already_doc:
+        try:
+            view.SetFocus()
+        except RuntimeError:
+            return False
 
     if sys.platform != "win32":
         _webview_run_script(view, _WEBVIEW_ACTIVATE_DOM_JS)
@@ -498,8 +504,9 @@ def _focus_ai_html_view(
         outer = int(view.GetHandle() or 0)
         doc = _win_webview_document_hwnd(outer)
         if doc:
-            ctypes.windll.user32.SetFocus(doc)
-            # DOM focus is what makes Tab/typing work without a mouse click.
+            if not already_doc:
+                ctypes.windll.user32.SetFocus(doc)
+            # Only focuses body/first link when the page has no active element.
             _webview_run_script(view, _WEBVIEW_ACTIVATE_DOM_JS)
             return True
     except Exception:
@@ -507,14 +514,13 @@ def _focus_ai_html_view(
 
     if retries > 0:
         wx.CallLater(
-            80,
+            100,
             lambda v=view, n=retries: _focus_ai_html_view(
                 v, is_webview=True, retries=n - 1
             ),
         )
         return False
 
-    # Last resort: chrome focus + DOM nudge even if the document HWND is late.
     _webview_run_script(view, _WEBVIEW_ACTIVATE_DOM_JS)
     return False
 
@@ -579,19 +585,18 @@ def _wire_ai_html_host(
     focusing = {"busy": False}
 
     def _push_focus() -> None:
+        # Guard stays up until after nested CallAfter handlers from view.SetFocus
+        # run; otherwise SET_FOCUS → CallAfter(_push_focus) loops forever.
         if focusing["busy"]:
             return
         focusing["busy"] = True
         try:
-            # Always activate (including DOM focus). Win32 doc HWND alone is not
-            # enough for Edge keyboard input after Tab from another control.
-            _focus_ai_html_view(view, is_webview=is_webview, retries=4)
+            _focus_ai_html_view(view, is_webview=is_webview, retries=2)
         finally:
-            focusing["busy"] = False
+            wx.CallAfter(lambda: focusing.__setitem__("busy", False))
 
     def _on_host_focus(event: wx.FocusEvent) -> None:
         event.Skip()
-        # Defer so wx finishes its focus change before we enter the document.
         wx.CallAfter(_push_focus)
 
     host.Bind(wx.EVT_SET_FOCUS, _on_host_focus)
@@ -599,7 +604,6 @@ def _wire_ai_html_host(
     if is_webview:
         def _on_view_focus(event: wx.FocusEvent) -> None:
             event.Skip()
-            # Tab/click landed on the WebView chrome — activate the document.
             wx.CallAfter(_push_focus)
 
         view.Bind(wx.EVT_SET_FOCUS, _on_view_focus)
@@ -623,6 +627,7 @@ class _AiHtmlHostPanel(wx.Panel):
         self._ai_view: wx.Window | None = None
         self._ai_is_webview = False
         self._accept_kbd_focus = False
+        self._focus_gate_busy = False
 
     def bind_ai_view(self, view: wx.Window, *, is_webview: bool) -> None:
         self._ai_view = view
@@ -647,10 +652,19 @@ class _AiHtmlHostPanel(wx.Panel):
         """Tab navigation lands here; push into the WebView document."""
         view = self._ai_view
         if view is not None and self._ai_is_webview:
-            # Defer past wx finishing Tab navigation into this gate.
-            wx.CallAfter(
-                _focus_ai_html_view, view, is_webview=True, retries=4
-            )
+            if self._focus_gate_busy:
+                return
+            self._focus_gate_busy = True
+
+            def _go() -> None:
+                try:
+                    _focus_ai_html_view(view, is_webview=True, retries=2)
+                finally:
+                    wx.CallAfter(
+                        lambda: setattr(self, "_focus_gate_busy", False)
+                    )
+
+            wx.CallAfter(_go)
             return
         if view is not None:
             try:
