@@ -2118,6 +2118,12 @@ class MainFrame(wx.Frame):
         menubar.Append(file_menu, _("&File"))
 
         report_menu = wx.Menu()
+        self.menu_ai_overview = None
+        if fido_settings_present():
+            self.menu_ai_overview = report_menu.Append(
+                wx.ID_ANY, _("AI &overview…\tCtrl+Shift+A")
+            )
+            report_menu.AppendSeparator()
         self.menu_view_text = report_menu.Append(
             wx.ID_ANY, _("View &text report\tCtrl+T")
         )
@@ -2131,12 +2137,6 @@ class MainFrame(wx.Frame):
         self.menu_save_html = report_menu.Append(
             wx.ID_SAVEAS, _("Save &HTML report…\tCtrl+S")
         )
-        self.menu_ai_overview = None
-        if fido_settings_present():
-            report_menu.AppendSeparator()
-            self.menu_ai_overview = report_menu.Append(
-                wx.ID_ANY, _("AI &overview…\tCtrl+Shift+A")
-            )
         report_menu.AppendSeparator()
         self.menu_copy = report_menu.Append(
             wx.ID_COPY, _("&Copy summary\tCtrl+Shift+C")
@@ -3018,15 +3018,15 @@ class MainFrame(wx.Frame):
 
     def on_report_button(self, _event: wx.CommandEvent) -> None:
         menu = wx.Menu()
+        overview_item = None
+        if fido_settings_present():
+            overview_item = menu.Append(wx.ID_ANY, _("AI &overview…\tCtrl+Shift+A"))
+            menu.AppendSeparator()
         view_text = menu.Append(wx.ID_ANY, _("View &text report\tCtrl+T"))
         save_text = menu.Append(wx.ID_ANY, _("Save &text report…\tCtrl+Shift+S"))
         menu.AppendSeparator()
         view_html = menu.Append(wx.ID_ANY, _("View &HTML report in browser\tCtrl+H"))
         save_html = menu.Append(wx.ID_ANY, _("Save &HTML report…\tCtrl+S"))
-        overview_item = None
-        if fido_settings_present():
-            menu.AppendSeparator()
-            overview_item = menu.Append(wx.ID_ANY, _("AI &overview…\tCtrl+Shift+A"))
         menu.AppendSeparator()
         copy_item = menu.Append(wx.ID_ANY, _("&Copy summary\tCtrl+Shift+C"))
         clear_item = menu.Append(wx.ID_ANY, _("C&lear results\tCtrl+Shift+N"))
