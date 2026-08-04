@@ -122,7 +122,8 @@ def _create_ai_html_view(parent: wx.Window) -> tuple[wx.Window, bool]:
                 view.EnableContextMenu(True)
             except Exception:
                 pass
-            _ensure_win_tab_stop(view)
+            # Tab-stop ownership is decided in ``_wire_ai_html_host`` (host gate
+            # for WebView; the view itself for the TextCtrl fallback).
             return view, True
 
     text = wx.TextCtrl(
@@ -189,6 +190,27 @@ def _win_clear_tab_stop(window: wx.Window) -> None:
         pass
 
 
+def _win_ensure_control_parent(window: wx.Window) -> None:
+    """Ensure WS_EX_CONTROLPARENT so dialog Tab traversal enters this container."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        hwnd = int(window.GetHandle())
+        if not hwnd:
+            return
+        gwl_exstyle = -20
+        ws_ex_controlparent = 0x00010000
+        user32 = ctypes.windll.user32
+        ex = int(user32.GetWindowLongW(hwnd, gwl_exstyle))
+        if ex & ws_ex_controlparent:
+            return
+        user32.SetWindowLongW(hwnd, gwl_exstyle, ex | ws_ex_controlparent)
+    except Exception:
+        pass
+
+
 def _win_webview_document_hwnd(root_hwnd: int) -> int | None:
     """
     Inner document HWND for Edge WebView2 / IE (needed for screen-reader focus).
@@ -251,7 +273,6 @@ def _focus_ai_html_view(
                 pass
         return
 
-    _ensure_win_tab_stop(view)
     if sys.platform != "win32":
         return
     try:
@@ -279,30 +300,112 @@ def _focus_ai_html_view(
         )
 
 
+def _refresh_ai_html_tab_stops(
+    host: wx.Window,
+    view: wx.Window,
+    *,
+    is_webview: bool,
+) -> None:
+    """
+    Keep a single dialog Tab stop for the AI HTML pane.
+
+    Edge WebView2's outer HWND often accepts dialog focus without activating the
+    document, so Tab appears to skip the pane on the way back. The host panel is
+    the stable WS_TABSTOP; focus is then forwarded into the document HWND.
+    """
+    _win_ensure_control_parent(host)
+    if is_webview:
+        _ensure_win_tab_stop(host)
+        _win_clear_tab_stop(view)
+    else:
+        _win_clear_tab_stop(host)
+        _ensure_win_tab_stop(view)
+
+
 def _wire_ai_html_host(
     host: wx.Window,
     view: wx.Window,
     *,
     is_webview: bool,
 ) -> None:
-    """Host panel must not steal Tab; forward accidental focus to the view."""
-    _win_clear_tab_stop(host)
-    _ensure_win_tab_stop(view)
+    """
+    Put the AI HTML pane in the Tab cycle and forward focus into the real view.
 
-    def _on_host_focus(_event: wx.FocusEvent) -> None:
-        _focus_ai_html_view(view, is_webview=is_webview, retries=6)
+    For WebView, the host is the Tab gate (see ``_refresh_ai_html_tab_stops``).
+    For the TextCtrl fallback, the text control itself remains the Tab stop.
+    """
+    if isinstance(host, _AiHtmlHostPanel):
+        host.bind_ai_view(view, is_webview=is_webview)
+    _refresh_ai_html_tab_stops(host, view, is_webview=is_webview)
+
+    focusing = {"busy": False}
+
+    def _push_focus() -> None:
+        if focusing["busy"]:
+            return
+        focusing["busy"] = True
+        try:
+            _focus_ai_html_view(view, is_webview=is_webview, retries=6)
+        finally:
+            focusing["busy"] = False
+
+    def _on_host_focus(event: wx.FocusEvent) -> None:
+        event.Skip()
+        # Defer so wx finishes its focus change before we enter the document.
+        wx.CallAfter(_push_focus)
 
     host.Bind(wx.EVT_SET_FOCUS, _on_host_focus)
 
+    if is_webview:
+        def _on_view_focus(event: wx.FocusEvent) -> None:
+            event.Skip()
+            # Tab/click landed on the WebView chrome — activate the document.
+            wx.CallAfter(_push_focus)
+
+        view.Bind(wx.EVT_SET_FOCUS, _on_view_focus)
+
 
 class _AiHtmlHostPanel(wx.Panel):
-    """Deferred WebView container — never keeps keyboard focus itself."""
+    """
+    Deferred WebView container.
+
+    Before the view exists it stays out of the Tab cycle. Once wired for a
+    WebView it becomes the dialog Tab stop and forwards keyboard focus into the
+    Edge/WebKit document (so Tab can return after leaving the pane).
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._ai_view: wx.Window | None = None
+        self._ai_is_webview = False
+        self._accept_kbd_focus = False
+
+    def bind_ai_view(self, view: wx.Window, *, is_webview: bool) -> None:
+        self._ai_view = view
+        self._ai_is_webview = bool(is_webview)
+        # WebView: host is the Tab gate. Text fallback: child TextCtrl is.
+        self._accept_kbd_focus = bool(is_webview)
+        _refresh_ai_html_tab_stops(self, view, is_webview=self._ai_is_webview)
 
     def AcceptsFocus(self) -> bool:  # noqa: N802 — wx override
-        return False
+        return self._accept_kbd_focus
 
     def AcceptsFocusFromKeyboard(self) -> bool:  # noqa: N802 — wx override
-        return False
+        return self._accept_kbd_focus
+
+    def SetFocusFromKbd(self) -> None:  # noqa: N802 — wx override
+        """Tab navigation lands here; push into the WebView document."""
+        view = self._ai_view
+        if view is not None and self._ai_is_webview:
+            _focus_ai_html_view(view, is_webview=True, retries=6)
+            return
+        if view is not None:
+            try:
+                view.SetFocus()
+            except RuntimeError:
+                pass
+            return
+        super().SetFocusFromKbd()
 
 
 def _macos_make_first_responder(window: wx.Window) -> bool:
@@ -769,10 +872,20 @@ class IssueDetailDialog(wx.Dialog):
         _wire_ai_html_host(host, view, is_webview=is_webview)
         host.Layout()
         self.Layout()
-        # Edge document HWND appears asynchronously — refresh tab-stop shortly after.
+        # Edge recreates child HWNDs asynchronously — keep host as the Tab gate.
         if is_webview:
-            wx.CallLater(100, lambda v=view: _ensure_win_tab_stop(v))
-            wx.CallLater(300, lambda v=view: _ensure_win_tab_stop(v))
+            wx.CallLater(
+                100,
+                lambda h=host, v=view: _refresh_ai_html_tab_stops(
+                    h, v, is_webview=True
+                ),
+            )
+            wx.CallLater(
+                300,
+                lambda h=host, v=view: _refresh_ai_html_tab_stops(
+                    h, v, is_webview=True
+                ),
+            )
 
         self.explain_btn.Enable(not self._busy)
         if self._show_fix:
@@ -866,8 +979,12 @@ class IssueDetailDialog(wx.Dialog):
     def _on_ai_webview_loaded(self, event) -> None:
         """After SetPage, move focus into the WebView for screen-reader review."""
         event.Skip()
+        host = getattr(self, "_ai_output_host", None)
         try:
-            _ensure_win_tab_stop(self.ai_output)
+            if host is not None:
+                _refresh_ai_html_tab_stops(
+                    host, self.ai_output, is_webview=True
+                )
         except RuntimeError:
             pass
         if not self._ai_focus_after_load:
@@ -1504,8 +1621,18 @@ class AiOverviewDialog(wx.Dialog):
         host.Layout()
         self.Layout()
         if is_webview:
-            wx.CallLater(100, lambda v=view: _ensure_win_tab_stop(v))
-            wx.CallLater(300, lambda v=view: _ensure_win_tab_stop(v))
+            wx.CallLater(
+                100,
+                lambda h=host, v=view: _refresh_ai_html_tab_stops(
+                    h, v, is_webview=True
+                ),
+            )
+            wx.CallLater(
+                300,
+                lambda h=host, v=view: _refresh_ai_html_tab_stops(
+                    h, v, is_webview=True
+                ),
+            )
         self._paint_content(focus=True)
 
     def _on_webview_navigating(self, event) -> None:
@@ -1521,8 +1648,12 @@ class AiOverviewDialog(wx.Dialog):
 
     def _on_webview_loaded(self, event) -> None:
         event.Skip()
+        host = getattr(self, "_ai_output_host", None)
         try:
-            _ensure_win_tab_stop(self.ai_output)
+            if host is not None:
+                _refresh_ai_html_tab_stops(
+                    host, self.ai_output, is_webview=True
+                )
         except RuntimeError:
             pass
         if not self._ai_focus_after_load:

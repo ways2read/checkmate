@@ -205,7 +205,9 @@ executable (or inside the `.app` bundle on macOS).
   announce it; arrow keys then allow line/character review
 - **Explain with AI** prefers an Edge/WebKit `WebView` so the reply is real HTML
   (headings, lists, links) for screen readers; falls back to a Markdown text
-  field if no webview backend is available (`HtmlWindow` is not used)
+  field if no webview backend is available (`HtmlWindow` is not used). The
+  details/overview dialogs keep the WebView in the Tab cycle so focus can
+  return after leaving the pane.
 - Accessible name includes the verdict text; the window title also appends it
 - **Language** menu: English, Français, Español, Deutsch, Português, Dansk,
   Nederlands, Suomi, हिन्दी, Norsk, Русский, Svenska
