@@ -92,6 +92,53 @@ def _internal_dir_for_output(output: Path) -> Path | None:
     return None
 
 
+def _ensure_webview2_loader(output: Path) -> None:
+    """
+    Copy WebView2Loader.dll into the frozen app.
+
+    PyInstaller often ships ``wxmsw*_webview*.dll`` but omits
+    ``WebView2Loader.dll``. Without it, ``IsBackendAvailable(Edge)`` is false
+    and the UI would fall back to IE (or TextCtrl). Edge needs this loader
+    beside the wx package (and on PATH / next to the exe is also fine).
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import wx
+    except ImportError:
+        print(
+            "Warning: wx not importable; skipping WebView2Loader.dll bundle",
+            file=sys.stderr,
+        )
+        return
+
+    src = Path(wx.__file__).resolve().parent / "WebView2Loader.dll"
+    if not src.is_file():
+        print(f"Warning: WebView2Loader.dll not found at {src}", file=sys.stderr)
+        return
+
+    internal = _internal_dir_for_output(output)
+    if internal is None:
+        print(
+            "Warning: could not locate _internal for WebView2Loader.dll",
+            file=sys.stderr,
+        )
+        return
+
+    destinations = [
+        internal / "wx" / "WebView2Loader.dll",
+        internal / "WebView2Loader.dll",
+    ]
+    # Also next to CheckMate.exe — some loaders resolve by exe directory.
+    if output.is_dir():
+        destinations.append(output / "WebView2Loader.dll")
+
+    for dest in destinations:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        print(f"Bundled WebView2Loader.dll -> {dest}")
+
+
 def _bundle_tiktoken_support(output: Path) -> None:
     """
     Ship tiktoken BPE cache so LiteLLM import does not download encodings.
@@ -386,6 +433,9 @@ def build(
     output = _resolve_output(dist_dir, onefile)
 
     if not onefile:
+        print()
+        print("Bundling WebView2 loader (Edge backend)...")
+        _ensure_webview2_loader(output)
         print()
         print("Bundling tiktoken encodings / plugins...")
         _bundle_tiktoken_support(output)

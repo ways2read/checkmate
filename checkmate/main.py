@@ -75,7 +75,8 @@ def _create_ai_html_view(parent: wx.Window) -> tuple[wx.Window, bool]:
     readers can browse. Fall back to a read-only TextCtrl when no backend works.
 
     ``wx.html.HtmlWindow`` is avoided: it has poor accessibility and can trap
-    focus / Escape inside modal dialogs.
+    focus / Escape inside modal dialogs. Escape/Tab exit are handled in-page via
+    ``checkmate://`` navigations so WebView2 cannot swallow those keys.
     """
     try:
         import wx.html2 as html2
@@ -85,12 +86,10 @@ def _create_ai_html_view(parent: wx.Window) -> tuple[wx.Window, bool]:
     if html2 is not None:
         backends: list[object] = []
         if sys.platform == "win32":
-            backends.extend(
-                [
-                    getattr(html2, "WebViewBackendEdge", None),
-                    getattr(html2, "WebViewBackendIE", None),
-                ]
-            )
+            # Edge/WebView2 only — do not fall back to IE. The IE backend's
+            # RunScriptAsync is a stub that only logs "RunScriptAsync not
+            # supported" (shown as a wx error dialog), and IE a11y is poor.
+            backends.append(getattr(html2, "WebViewBackendEdge", None))
         else:
             backends.append(getattr(html2, "WebViewBackendWebKit", None))
         backends.append(None)  # platform default
@@ -104,6 +103,17 @@ def _create_ai_html_view(parent: wx.Window) -> tuple[wx.Window, bool]:
                     continue
             try:
                 if backend is None:
+                    # On Windows, skip the anonymous default if it would be IE.
+                    if sys.platform == "win32":
+                        edge = getattr(html2, "WebViewBackendEdge", None)
+                        if edge is not None and hasattr(
+                            html2.WebView, "IsBackendAvailable"
+                        ):
+                            try:
+                                if not html2.WebView.IsBackendAvailable(edge):
+                                    continue
+                            except Exception:
+                                continue
                     view = html2.WebView.New(parent)
                 else:
                     view = html2.WebView.New(parent, backend=backend)
@@ -117,13 +127,11 @@ def _create_ai_html_view(parent: wx.Window) -> tuple[wx.Window, bool]:
                     view.SetAccessibleName(_("AI explanation"))
                 except Exception:
                     pass
-            # Keep keyboard focus usable; do not open a new window for target=_blank.
             try:
                 view.EnableContextMenu(True)
             except Exception:
                 pass
-            # Tab-stop ownership is decided in ``_wire_ai_html_host`` (host gate
-            # for WebView; the view itself for the TextCtrl fallback).
+            # Tab-stop ownership is decided in ``_wire_ai_html_host``.
             return view, True
 
     text = wx.TextCtrl(
@@ -135,6 +143,7 @@ def _create_ai_html_view(parent: wx.Window) -> tuple[wx.Window, bool]:
         | wx.BORDER_SUNKEN,
         name=_("AI explanation"),
     )
+    _ensure_win_tab_stop(text)
     return text, False
 
 
@@ -271,24 +280,43 @@ def _win_force_foreground(window: wx.Window) -> None:
         pass
 
 
-def _webview_tab_exit_direction(url: str) -> str | None:
-    """Return 'next' / 'prev' for checkmate:// focus-exit URLs, else None."""
+def _webview_host_action(url: str) -> str | None:
+    """
+    Return host action for in-page ``checkmate://`` navigations, else None.
+
+    ``next`` / ``prev`` move dialog focus out of the WebView; ``close`` closes
+    the modal. Edge may append a slash or empty path segment.
+    """
     u = (url or "").strip().lower()
-    # Edge may append a slash or empty path segment.
     if u.startswith("checkmate://focus-next"):
         return "next"
     if u.startswith("checkmate://focus-prev"):
         return "prev"
+    if u.startswith("checkmate://close"):
+        return "close"
     return None
 
 
 def _try_set_focus(window: wx.Window | None) -> bool:
+    """
+    Focus a wx control, stealing Win32 focus from an Edge document HWND if needed.
+
+    Plain ``SetFocus()`` often fails to pull keyboard focus out of
+    ``Chrome_RenderWidgetHostHWND``; dialog-manager + ``user32.SetFocus`` do.
+    """
     if window is None:
         return False
     try:
         if not window or not window.IsEnabled() or not window.IsShown():
             return False
+        _win_dialog_focus_hwnd(window)
         window.SetFocus()
+        if sys.platform == "win32":
+            import ctypes
+
+            hwnd = int(window.GetHandle() or 0)
+            if hwnd:
+                ctypes.windll.user32.SetFocus(hwnd)
         return True
     except Exception:
         return False
@@ -626,25 +654,31 @@ def _webview_activate_dom_js(direction: str) -> str:
 
 def _webview_run_script(view: wx.Window, script: str) -> bool:
     """Run JavaScript in a wx.html2.WebView; tolerate API shape differences."""
-    async_fn = getattr(view, "RunScriptAsync", None)
-    if callable(async_fn):
-        try:
-            async_fn(script)
-            return True
-        except Exception:
-            pass
+    # Prefer sync RunScript. The base wxWebView::RunScriptAsync only calls
+    # wxLogError("RunScriptAsync not supported") without raising (IE / stubs),
+    # which pops an error dialog and looks like success to Python callers.
     sync_fn = getattr(view, "RunScript", None)
     if callable(sync_fn):
         try:
-            sync_fn(script)
+            with wx.LogNull():
+                sync_fn(script)
             return True
         except TypeError:
             try:
                 out: list[str] = []
-                sync_fn(script, out)
+                with wx.LogNull():
+                    sync_fn(script, out)
                 return True
             except Exception:
                 pass
+        except Exception:
+            pass
+    async_fn = getattr(view, "RunScriptAsync", None)
+    if callable(async_fn):
+        try:
+            with wx.LogNull():
+                async_fn(script)
+            return True
         except Exception:
             pass
     return False
@@ -727,12 +761,12 @@ def _focus_ai_html_view(
         if doc:
             if not already_doc:
                 ctypes.windll.user32.SetFocus(doc)
-            # Scroll / park DOM focus first so the synthetic click lands on
-            # empty body padding, not a link.
             _webview_run_script(view, dom_js)
-            if arm_keyboard:
+            # MoveFocus alone is often unavailable (controller QI fails). A
+            # one-shot client click arms Edge keyboard on Tab-in; Escape and
+            # Tab-boundary navigations then exit via checkmate:// handlers.
+            if arm_keyboard and not already_doc:
                 _win_webview_synthetic_click(doc)
-                # Re-apply DOM start point after the click.
                 _webview_run_script(view, dom_js)
             return True
     except Exception:
@@ -792,9 +826,13 @@ def _wire_ai_html_host(
     is_webview: bool,
 ) -> None:
     """
-    Put the AI HTML pane in the Tab cycle and forward focus into the real view.
+    Put the AI HTML pane in the Tab cycle.
 
-    For WebView, the host is the Tab gate (see ``_refresh_ai_html_tab_stops``).
+    For WebView, the host panel is the keyboard surface (Escape / Tab stay in
+    wx). Enter/Space activates Edge for in-page link browsing; in-page JS then
+    exits via ``checkmate://``. Auto-diving into the document on Tab creates a
+    focus limbo where neither wx nor Edge receives keys.
+
     For the TextCtrl fallback, the text control itself remains the Tab stop.
     """
     if isinstance(host, _AiHtmlHostPanel):
@@ -803,8 +841,9 @@ def _wire_ai_html_host(
 
     if is_webview:
         tip = _(
-            "In the explanation: focus starts at the top; Tab moves between links. "
-            "Tab after the last link, or Ctrl+Tab, moves to the next dialog control."
+            "AI explanation: Tab moves to the next control; Enter activates the "
+            "page to browse links. Escape closes this dialog. Inside the page, "
+            "Tab after the last link (or Ctrl+Tab) returns to the dialog."
         )
         try:
             host.SetToolTip(tip)
@@ -812,37 +851,50 @@ def _wire_ai_html_host(
         except Exception:
             pass
 
+        def _dialog() -> wx.Window | None:
+            try:
+                return host.GetTopLevelParent()
+            except RuntimeError:
+                return None
+
+        def _on_host_char_hook(event: wx.KeyEvent) -> None:
+            key = event.GetKeyCode()
+            dlg = _dialog()
+            if key == wx.WXK_ESCAPE:
+                if dlg is not None and hasattr(dlg, "_on_close_dialog"):
+                    dlg._on_close_dialog(event)  # type: ignore[attr-defined]
+                    return
+            if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER, wx.WXK_SPACE):
+                _focus_ai_html_view(
+                    view,
+                    is_webview=True,
+                    retries=2,
+                    direction="next",
+                    arm_keyboard=True,
+                )
+                return
+            event.Skip()
+
+        host.Bind(wx.EVT_CHAR_HOOK, _on_host_char_hook)
+        return
+
+    # TextCtrl: forward host focus into the read-only text pane.
     focusing = {"busy": False}
 
-    def _push_focus(*, from_host_tab: bool = False) -> None:
-        # Guard stays up until after nested CallAfter handlers from view.SetFocus
-        # run; otherwise SET_FOCUS → CallAfter(_push_focus) loops forever.
+    def _push_focus() -> None:
         if focusing["busy"]:
             return
         focusing["busy"] = True
         try:
-            # Host Tab gate: arm Edge keyboard (MoveFocus / synthetic click).
-            # View SET_FOCUS while already inside the document must not re-click.
-            kwargs: dict = {"is_webview": is_webview, "retries": 2}
-            if from_host_tab and is_webview:
-                kwargs["direction"] = _tab_into_webview_direction()
-                kwargs["arm_keyboard"] = True
-            _focus_ai_html_view(view, **kwargs)
+            _focus_ai_html_view(view, is_webview=False, retries=2)
         finally:
             wx.CallAfter(lambda: focusing.__setitem__("busy", False))
 
     def _on_host_focus(event: wx.FocusEvent) -> None:
         event.Skip()
-        wx.CallAfter(lambda: _push_focus(from_host_tab=True))
+        wx.CallAfter(_push_focus)
 
     host.Bind(wx.EVT_SET_FOCUS, _on_host_focus)
-
-    if is_webview:
-        def _on_view_focus(event: wx.FocusEvent) -> None:
-            event.Skip()
-            wx.CallAfter(_push_focus)
-
-        view.Bind(wx.EVT_SET_FOCUS, _on_view_focus)
 
 
 class _AiHtmlHostPanel(wx.Panel):
@@ -850,8 +902,8 @@ class _AiHtmlHostPanel(wx.Panel):
     Deferred WebView container.
 
     Before the view exists it stays out of the Tab cycle. Once wired for a
-    WebView it becomes the dialog Tab stop and forwards keyboard focus into the
-    Edge/WebKit document (so Tab can return after leaving the pane).
+    WebView it becomes the dialog Tab stop and keeps keyboard focus in wx
+    (Enter activates the Edge document for link browsing).
     """
 
     def __init__(self, *args, **kwargs) -> None:
@@ -863,7 +915,6 @@ class _AiHtmlHostPanel(wx.Panel):
         self._ai_view: wx.Window | None = None
         self._ai_is_webview = False
         self._accept_kbd_focus = False
-        self._focus_gate_busy = False
 
     def bind_ai_view(self, view: wx.Window, *, is_webview: bool) -> None:
         self._ai_view = view
@@ -885,30 +936,14 @@ class _AiHtmlHostPanel(wx.Panel):
         return super().AcceptsFocusRecursively()
 
     def SetFocusFromKbd(self) -> None:  # noqa: N802 — wx override
-        """Tab navigation lands here; push into the WebView document."""
-        view = self._ai_view
-        if view is not None and self._ai_is_webview:
-            if self._focus_gate_busy:
-                return
-            self._focus_gate_busy = True
-            direction = _tab_into_webview_direction()
-
-            def _go() -> None:
-                try:
-                    _focus_ai_html_view(
-                        view,
-                        is_webview=True,
-                        retries=2,
-                        direction=direction,
-                        arm_keyboard=True,
-                    )
-                finally:
-                    wx.CallAfter(
-                        lambda: setattr(self, "_focus_gate_busy", False)
-                    )
-
-            wx.CallAfter(_go)
+        """Tab lands on the host; keep focus here (do not auto-dive into Edge)."""
+        if self._ai_is_webview:
+            try:
+                self.SetFocus()
+            except RuntimeError:
+                pass
             return
+        view = self._ai_view
         if view is not None:
             try:
                 view.SetFocus()
@@ -1420,10 +1455,22 @@ class IssueDetailDialog(wx.Dialog):
         event.Skip()
 
     def _on_close_dialog(self, event: wx.Event | None = None) -> None:
-        # Always allow closing, even while an explain request is in flight.
+        # Guard against SetEscapeId + CHAR_HOOK both firing: a second pass would
+        # see IsModal() False and Destroy() while ShowModal is still unwinding,
+        # which leaves the main frame disabled/frozen.
+        if getattr(self, "_closing", False):
+            return
+        self._closing = True
         if self._ai_cancel is not None:
             self._ai_cancel.set()
-        self._close_ai_progress()
+        # Do not reclaim focus onto this dialog after teardown.
+        self._close_ai_progress(reclaim_focus=False)
+        try:
+            close_btn = self.FindWindowById(wx.ID_CLOSE)
+            if close_btn is not None:
+                _try_set_focus(close_btn)
+        except RuntimeError:
+            pass
         if self.IsModal():
             self.EndModal(wx.ID_CLOSE)
         else:
@@ -1477,10 +1524,14 @@ class IssueDetailDialog(wx.Dialog):
     def _on_ai_webview_navigating(self, event) -> None:
         """Open http(s)/mailto links externally; allow in-dialog SetPage loads."""
         url = (event.GetURL() or "").strip()
-        direction = _webview_tab_exit_direction(url)
-        if direction is not None:
+        action = _webview_host_action(url)
+        if action == "close":
             event.Veto()
-            wx.CallAfter(self._leave_ai_webview, direction == "next")
+            wx.CallAfter(self._on_close_dialog)
+            return
+        if action in ("next", "prev"):
+            event.Veto()
+            wx.CallAfter(self._leave_ai_webview, action == "next")
             return
         if url.startswith(("http://", "https://", "mailto:")):
             event.Veto()
@@ -1546,7 +1597,7 @@ class IssueDetailDialog(wx.Dialog):
         )
 
     def _focus_ai_output_now(self) -> bool:
-        """Try once to put focus in the AI pane. True if already/now on target."""
+        """Try once to put focus on the AI pane host (not the Edge document)."""
         if not self._show_ai or not getattr(self, "_ai_view_realized", False):
             return True
         try:
@@ -1559,14 +1610,15 @@ class IssueDetailDialog(wx.Dialog):
         except RuntimeError:
             return False
         _win_force_foreground(self)
-        # Always run full activation (Win32 + DOM). Doc HWND alone is not enough;
-        # also arm Edge keyboard input (no mouse click required).
+        # Keep keyboard in wx on the host gate — diving into Edge after Explain
+        # often leaves focus limbo where Escape/Tab do nothing.
+        if self._ai_output_is_webview:
+            host = getattr(self, "_ai_output_host", None)
+            return _try_set_focus(host if host is not None else self.ai_output)
         return _focus_ai_html_view(
             self.ai_output,
-            is_webview=bool(self._ai_output_is_webview),
+            is_webview=False,
             retries=0,
-            direction="next",
-            arm_keyboard=True,
         )
 
     def _schedule_ai_output_focus(self) -> None:
@@ -2208,7 +2260,14 @@ class AiOverviewDialog(wx.Dialog):
         self.SetEscapeId(wx.ID_CLOSE)
         self.SetAffirmativeId(wx.ID_CLOSE)
         self.Bind(wx.EVT_CLOSE, self._on_close_dialog)
+        self.Bind(wx.EVT_CHAR_HOOK, self._on_dialog_char_hook)
         close_btn.SetDefault()
+
+    def _on_dialog_char_hook(self, event: wx.KeyEvent) -> None:
+        if event.GetKeyCode() == wx.WXK_ESCAPE:
+            self._on_close_dialog(event)
+            return
+        event.Skip()
 
     def _realize_ai_html_view(self) -> None:
         if getattr(self, "_ai_view_realized", False):
@@ -2251,10 +2310,14 @@ class AiOverviewDialog(wx.Dialog):
 
     def _on_webview_navigating(self, event) -> None:
         url = (event.GetURL() or "").strip()
-        direction = _webview_tab_exit_direction(url)
-        if direction is not None:
+        action = _webview_host_action(url)
+        if action == "close":
             event.Veto()
-            wx.CallAfter(self._leave_ai_webview, direction == "next")
+            wx.CallAfter(self._on_close_dialog)
+            return
+        if action in ("next", "prev"):
+            event.Veto()
+            wx.CallAfter(self._leave_ai_webview, action == "next")
             return
         if url.startswith(("http://", "https://", "mailto:")):
             event.Veto()
@@ -2312,12 +2375,13 @@ class AiOverviewDialog(wx.Dialog):
         except RuntimeError:
             return False
         _win_force_foreground(self)
+        if self._ai_output_is_webview:
+            host = getattr(self, "_ai_output_host", None)
+            return _try_set_focus(host if host is not None else self.ai_output)
         return _focus_ai_html_view(
             self.ai_output,
-            is_webview=bool(self._ai_output_is_webview),
+            is_webview=False,
             retries=0,
-            direction="next",
-            arm_keyboard=True,
         )
 
     def _dialog_html(self) -> str:
@@ -2427,6 +2491,15 @@ class AiOverviewDialog(wx.Dialog):
                 wx.TheClipboard.Close()
 
     def _on_close_dialog(self, event: wx.Event | None = None) -> None:
+        if getattr(self, "_closing", False):
+            return
+        self._closing = True
+        try:
+            close_btn = self.FindWindowById(wx.ID_CLOSE)
+            if close_btn is not None:
+                _try_set_focus(close_btn)
+        except RuntimeError:
+            pass
         if self.IsModal():
             self.EndModal(wx.ID_CLOSE)
         else:
@@ -3429,7 +3502,17 @@ class MainFrame(wx.Frame):
 
         result_code = dlg.ShowModal()
         pending = getattr(dlg, "applied_fix_verify", None)
-        dlg.Destroy()
+        try:
+            dlg.Destroy()
+        except RuntimeError:
+            pass
+        # ProgressDialog / WebView modal teardown can leave the frame disabled.
+        try:
+            self.Enable(True)
+            self.Raise()
+            _win_force_foreground(self)
+        except RuntimeError:
+            pass
         if result_code == wx.ID_APPLY:
             # Apply fix succeeded — re-scan, then confirm resolution / offer revert.
             self._pending_fix_verify = pending
@@ -4064,7 +4147,16 @@ class MainFrame(wx.Frame):
                 pass
         if dlg is not None:
             dlg.ShowModal()
-            dlg.Destroy()
+            try:
+                dlg.Destroy()
+            except RuntimeError:
+                pass
+            try:
+                self.Enable(True)
+                self.Raise()
+                _win_force_foreground(self)
+            except RuntimeError:
+                pass
 
     def on_save_text_report(self, _event: wx.CommandEvent) -> None:
         result = self._require_result(_("Nothing to save"))

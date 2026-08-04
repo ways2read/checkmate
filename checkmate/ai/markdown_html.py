@@ -310,7 +310,17 @@ _WEBVIEW_TAB_EXIT_SCRIPT = """
       ? 'checkmate://focus-prev'
       : 'checkmate://focus-next';
   }
+  function closeDialog() {
+    window.location.href = 'checkmate://close';
+  }
   document.addEventListener('keydown', function (e) {
+    // Escape never reaches wx CHAR_HOOK once Edge owns the document HWND.
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      closeDialog();
+      return;
+    }
     if (e.key !== 'Tab') return;
     // Always-available escape hatch while inside the WebView document.
     if (e.ctrlKey) {

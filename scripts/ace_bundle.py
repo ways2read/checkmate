@@ -67,24 +67,68 @@ def _node_archive(version: str) -> tuple[str, str]:
 
 def _download(url: str, label: str) -> bytes:
     print(f"Downloading {label}…")
-    response = requests.get(url, timeout=600, stream=True)
-    response.raise_for_status()
-    data = io.BytesIO()
-    total = int(response.headers.get("content-length", 0))
-    downloaded = 0
-    for chunk in response.iter_content(chunk_size=1024 * 256):
-        if chunk:
-            data.write(chunk)
-            downloaded += len(chunk)
-            if total:
-                pct = downloaded * 100 // total
-                print(
-                    f"\r  {pct}% ({downloaded // (1024 * 1024)} MB)",
-                    end="",
-                    flush=True,
-                )
-    print()
-    return data.getvalue()
+    try:
+        response = requests.get(url, timeout=600, stream=True)
+        response.raise_for_status()
+        data = io.BytesIO()
+        total = int(response.headers.get("content-length", 0))
+        downloaded = 0
+        for chunk in response.iter_content(chunk_size=1024 * 256):
+            if chunk:
+                data.write(chunk)
+                downloaded += len(chunk)
+                if total:
+                    pct = downloaded * 100 // total
+                    print(
+                        f"\r  {pct}% ({downloaded // (1024 * 1024)} MB)",
+                        end="",
+                        flush=True,
+                    )
+        print()
+        return data.getvalue()
+    except (requests.RequestException, OSError) as exc:
+        # Some Windows networks reset long streaming requests; curl is more reliable.
+        if sys.platform != "win32":
+            raise
+        print(f"\n  requests download failed ({exc}); retrying with curl…")
+        return _download_with_curl(url, label)
+
+
+def _download_with_curl(url: str, label: str) -> bytes:
+    curl = shutil.which("curl") or shutil.which("curl.exe")
+    if not curl:
+        raise RuntimeError(f"Download failed for {label} and curl was not found")
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".download") as tmp:
+        dest = Path(tmp.name)
+    try:
+        proc = subprocess.run(
+            [
+                curl,
+                "-L",
+                "--fail",
+                "--retry",
+                "5",
+                "--retry-all-errors",
+                "--connect-timeout",
+                "30",
+                "-o",
+                str(dest),
+                url,
+            ],
+            check=False,
+            text=True,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"curl failed downloading {label} (exit {proc.returncode})"
+            )
+        data = dest.read_bytes()
+        print(f"  downloaded {len(data) // (1024 * 1024)} MB via curl")
+        return data
+    finally:
+        dest.unlink(missing_ok=True)
 
 
 def _install_node(target: Path, version: str) -> Path:
