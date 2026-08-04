@@ -153,9 +153,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "&About": "À &propos",
         "Starting…": "Démarrage…",
         "Ready": "Prêt",
-        "In the explanation: Tab moves between links. "
+        "In the explanation: focus starts at the top; Tab moves between links. "
         "Tab after the last link, or Ctrl+Tab, moves to the next dialog control.": (
-            "Dans l’explication : Tab parcourt les liens. "
+            "Dans l’explication : le focus commence en haut ; Tab parcourt les liens. "
             "Tab après le dernier lien, ou Ctrl+Tab, passe au contrôle suivant."
         ),
         "Java required": "Java requis",
@@ -790,9 +790,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "&About": "&Acerca de",
         "Starting…": "Iniciando…",
         "Ready": "Listo",
-        "In the explanation: Tab moves between links. "
+        "In the explanation: focus starts at the top; Tab moves between links. "
         "Tab after the last link, or Ctrl+Tab, moves to the next dialog control.": (
-            "En la explicación: Tab se mueve entre enlaces. "
+            "En la explicación: el foco empieza arriba; Tab se mueve entre enlaces. "
             "Tab después del último enlace, o Ctrl+Tab, pasa al siguiente control."
         ),
         "Java required": "Se requiere Java",
@@ -1428,9 +1428,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "&About": "&Info",
         "Starting…": "Startet…",
         "Ready": "Bereit",
-        "In the explanation: Tab moves between links. "
+        "In the explanation: focus starts at the top; Tab moves between links. "
         "Tab after the last link, or Ctrl+Tab, moves to the next dialog control.": (
-            "In der Erklärung: Tab wechselt zwischen Links. "
+            "In der Erklärung: der Fokus beginnt oben; Tab wechselt zwischen Links. "
             "Tab nach dem letzten Link oder Strg+Tab wechselt zum nächsten Steuerelement."
         ),
         "Java required": "Java erforderlich",
@@ -2064,9 +2064,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "&About": "&Acerca de",
         "Starting…": "A iniciar…",
         "Ready": "Pronto",
-        "In the explanation: Tab moves between links. "
+        "In the explanation: focus starts at the top; Tab moves between links. "
         "Tab after the last link, or Ctrl+Tab, moves to the next dialog control.": (
-            "Na explicação: Tab move-se entre ligações. "
+            "Na explicação: o foco começa no topo; Tab move-se entre ligações. "
             "Tab após a última ligação, ou Ctrl+Tab, passa para o controlo seguinte."
         ),
         "Java required": "Java necessário",

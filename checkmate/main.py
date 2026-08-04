@@ -403,24 +403,26 @@ def _win_focus_is_webview_document(view: wx.Window) -> bool:
     return bool(doc) and _win_get_focus_hwnd() == doc
 
 
-# Nudge DOM keyboard focus only when nothing in the page is focused yet.
-# Re-focusing the first link on every activate caused an announce/focus loop.
+# On Tab entry: scroll to top and focus the document body so reading starts at
+# the beginning. Do not jump to the first link (next Tab reaches links).
 _WEBVIEW_ACTIVATE_DOM_JS = """
 (function () {
   try {
     var body = document.body;
-    if (body && !(body.tabIndex < 0)) { body.tabIndex = -1; }
+    if (!body) { return 'none'; }
+    if (!(body.tabIndex < 0)) { body.tabIndex = -1; }
     var active = document.activeElement;
     var onChrome = !active
       || active === body
       || active === document.documentElement;
     if (!onChrome) { return 'kept'; }
-    var el = document.querySelector(
-      'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
-    );
-    if (el) { el.focus(); return 'el'; }
-    if (body) { body.focus(); return 'body'; }
-    return 'none';
+    window.scrollTo(0, 0);
+    if (document.documentElement) {
+      document.documentElement.scrollTop = 0;
+    }
+    body.scrollTop = 0;
+    body.focus();
+    return 'body';
   } catch (e) {
     return 'err';
   }
@@ -573,7 +575,7 @@ def _wire_ai_html_host(
 
     if is_webview:
         tip = _(
-            "In the explanation: Tab moves between links. "
+            "In the explanation: focus starts at the top; Tab moves between links. "
             "Tab after the last link, or Ctrl+Tab, moves to the next dialog control."
         )
         try:
