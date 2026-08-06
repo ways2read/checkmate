@@ -331,6 +331,7 @@ checkmate/
     java_util.py       # Locate Java (bundled or PATH)
     models.py          # Verdict and issue models
     report_export.py   # Text / HTML report export
+    telemetry.py       # FIDO-consent usage telemetry (shared secrets/sender)
     i18n.py            # UI language registry + core translations
     i18n_extra.py      # Additional language catalogs (da/nl/fi/hi/nb/ru/sv)
     settings.py        # Persisted preferences

@@ -2074,8 +2074,20 @@ class IssueDetailDialog(wx.Dialog):
             )
             self._set_ai_content(self._ai_markdown, focus=True)
             self.followup_ctrl.SetValue("")
+            try:
+                from .telemetry import log_ai_explain
+
+                log_ai_explain(followup=True)
+            except Exception:
+                pass
         else:
             self._set_ai_content(result.text or "", focus=True)
+            try:
+                from .telemetry import log_ai_explain
+
+                log_ai_explain(followup=False)
+            except Exception:
+                pass
         self.ai_status.SetLabel(_("Done"))
 
     def _on_fix_ai_event(self, event: FixAiEvent) -> None:
@@ -2103,6 +2115,12 @@ class IssueDetailDialog(wx.Dialog):
         self.ask_btn.Enable(True)
         self._fix_proposal = result.proposal
         self._set_ai_content(result.text or "", focus=True)
+        try:
+            from .telemetry import log_ai_fix
+
+            log_ai_fix(applied=False)
+        except Exception:
+            pass
         if result.proposal is None:
             self._set_apply_fix_enabled(False)
             self.ai_status.SetLabel(_("Done"))
@@ -2159,6 +2177,12 @@ class IssueDetailDialog(wx.Dialog):
 
         self._fix_proposal = None
         self._set_apply_fix_enabled(False)
+        try:
+            from .telemetry import log_ai_fix
+
+            log_ai_fix(applied=True)
+        except Exception:
+            pass
         target = ""
         if self._check_result and self._check_result.target_path:
             target = self._check_result.target_path
@@ -2613,6 +2637,9 @@ class EBrailleApp(wx.App):
         super().__init__(False)
 
     def OnInit(self) -> bool:  # noqa: N802 — wx API
+        from .telemetry import init_app_telemetry
+
+        init_app_telemetry(self)
         self.frame = MainFrame(initial_paths=self._pending_paths)
         self._pending_paths.clear()
         self.frame.Show()
@@ -3585,6 +3612,12 @@ class MainFrame(wx.Frame):
         self._update_report_actions_enabled()
         self._update_status_bar()
         self._announce_result_pane()
+        try:
+            from .telemetry import log_check
+
+            log_check(result)
+        except Exception:
+            pass
 
     def _summary_text(self) -> str:
         result = self._last_result
@@ -4124,6 +4157,13 @@ class MainFrame(wx.Frame):
             msg = error_message_for_key(out.error_key, detail=out.text or "")
             wx.MessageBox(msg, _("AI overview"), wx.OK | wx.ICON_ERROR, self)
             return
+
+        try:
+            from .telemetry import log_ai_overview
+
+            log_ai_overview()
+        except Exception:
+            pass
 
         progress = wx.ProgressDialog(
             _("AI overview"),

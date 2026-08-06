@@ -204,7 +204,9 @@ def refresh_unlock(*, unlock_code: str | None = None) -> dict:
     """
     Fetch unlock JSON and fill in-memory API overlay.
 
-    CheckMate does not enforce FIDO's require_telemetry gate (no telemetry here).
+    CheckMate does not enforce FIDO's require_telemetry gate for unlock.
+    When the user has opted in via FIDO, anonymous usage events are sent
+    through FIDO's activity logger (see ``checkmate.telemetry``).
     Never writes API keys to disk.
 
     Returns ``{ok: bool, reason: str | None}``.
