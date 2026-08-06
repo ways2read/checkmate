@@ -1578,10 +1578,10 @@ class IssueDetailDialog(wx.Dialog):
         """HTML document for the in-dialog WebView (same styling as browser view)."""
         from .ai.markdown_html import markdown_to_browser_page
 
+        # Keep the <title> generic. Appending the Ace/EPUBCheck code (e.g.
+        # aria-required-children) makes Narrator/NVDA announce it as the
+        # document name, which sounds like a dialog accessibility error.
         title = _("AI explanation")
-        code = (self._issue.code or "").strip()
-        if code:
-            title = f"{title} — {code}"
         if plain:
             return markdown_to_browser_page(
                 self._ai_markdown or "",
@@ -2975,25 +2975,25 @@ class MainFrame(wx.Frame):
         menubar.Append(file_menu, _("&File"))
 
         report_menu = wx.Menu()
-        self.menu_view_text = report_menu.Append(
-            wx.ID_ANY, _("View &text report\tCtrl+T")
-        )
-        self.menu_save_text = report_menu.Append(
-            wx.ID_ANY, _("Save &text report…\tCtrl+Shift+S")
-        )
-        report_menu.AppendSeparator()
+        self.menu_ai_overview = None
+        if fido_settings_present():
+            self.menu_ai_overview = report_menu.Append(
+                wx.ID_ANY, _("AI &overview…\tCtrl+Shift+A")
+            )
+            report_menu.AppendSeparator()
         self.menu_view_html = report_menu.Append(
             wx.ID_ANY, _("View &HTML report in browser\tCtrl+H")
         )
         self.menu_save_html = report_menu.Append(
             wx.ID_SAVEAS, _("Save &HTML report…\tCtrl+S")
         )
-        self.menu_ai_overview = None
-        if fido_settings_present():
-            report_menu.AppendSeparator()
-            self.menu_ai_overview = report_menu.Append(
-                wx.ID_ANY, _("AI &overview…\tCtrl+Shift+A")
-            )
+        report_menu.AppendSeparator()
+        self.menu_view_text = report_menu.Append(
+            wx.ID_ANY, _("View &text report\tCtrl+T")
+        )
+        self.menu_save_text = report_menu.Append(
+            wx.ID_ANY, _("Save &text report…\tCtrl+Shift+S")
+        )
         report_menu.AppendSeparator()
         self.menu_copy = report_menu.Append(
             wx.ID_COPY, _("&Copy summary\tCtrl+Shift+C")
@@ -3885,26 +3885,26 @@ class MainFrame(wx.Frame):
 
     def on_report_button(self, _event: wx.CommandEvent) -> None:
         menu = wx.Menu()
-        view_text = menu.Append(wx.ID_ANY, _("View &text report\tCtrl+T"))
-        save_text = menu.Append(wx.ID_ANY, _("Save &text report…\tCtrl+Shift+S"))
-        menu.AppendSeparator()
-        view_html = menu.Append(wx.ID_ANY, _("View &HTML report in browser\tCtrl+H"))
-        save_html = menu.Append(wx.ID_ANY, _("Save &HTML report…\tCtrl+S"))
         overview_item = None
         if fido_settings_present():
-            menu.AppendSeparator()
             overview_item = menu.Append(wx.ID_ANY, _("AI &overview…\tCtrl+Shift+A"))
+            menu.AppendSeparator()
+        view_html = menu.Append(wx.ID_ANY, _("View &HTML report in browser\tCtrl+H"))
+        save_html = menu.Append(wx.ID_ANY, _("Save &HTML report…\tCtrl+S"))
+        menu.AppendSeparator()
+        view_text = menu.Append(wx.ID_ANY, _("View &text report\tCtrl+T"))
+        save_text = menu.Append(wx.ID_ANY, _("Save &text report…\tCtrl+Shift+S"))
         menu.AppendSeparator()
         copy_item = menu.Append(wx.ID_ANY, _("&Copy summary\tCtrl+Shift+C"))
         clear_item = menu.Append(wx.ID_ANY, _("C&lear results\tCtrl+Shift+N"))
         menu.AppendSeparator()
         log_item = menu.Append(wx.ID_ANY, _("View full &log\tCtrl+L"))
-        menu.Bind(wx.EVT_MENU, self.on_view_text_report, view_text)
-        menu.Bind(wx.EVT_MENU, self.on_save_text_report, save_text)
-        menu.Bind(wx.EVT_MENU, self.on_view_html_report, view_html)
-        menu.Bind(wx.EVT_MENU, self.on_save_html_report, save_html)
         if overview_item is not None:
             menu.Bind(wx.EVT_MENU, self.on_ai_overview, overview_item)
+        menu.Bind(wx.EVT_MENU, self.on_view_html_report, view_html)
+        menu.Bind(wx.EVT_MENU, self.on_save_html_report, save_html)
+        menu.Bind(wx.EVT_MENU, self.on_view_text_report, view_text)
+        menu.Bind(wx.EVT_MENU, self.on_save_text_report, save_text)
         menu.Bind(wx.EVT_MENU, self.on_copy_summary, copy_item)
         menu.Bind(wx.EVT_MENU, self.on_clear_results, clear_item)
         menu.Bind(wx.EVT_MENU, self.on_view_full_log, log_item)

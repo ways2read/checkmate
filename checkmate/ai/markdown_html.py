@@ -212,6 +212,389 @@ def markdown_to_page(text: str, *, plain: bool = False) -> str:
     )
 
 
+def _ai_browser_css() -> str:
+    """Shared look with the checker HTML report (lighter, prose-focused)."""
+    return """
+    :root {
+      --ink: #0f172a;
+      --muted: #475569;
+      --paper: #eef5fb;
+      --card: #ffffff;
+      --line: #c9d8e8;
+      --line-strong: #8aa0b8;
+      --focus: #0f766e;
+      --focus-ring: #5eead4;
+      --link: #0f766e;
+      --link-visited: #115e59;
+      --note-fg: #9a3412;
+      --note-bg: #ffedd5;
+      --note-border: #fdba74;
+      --fix-fg: #14532d;
+      --fix-border: #86efac;
+      --code-bg: #e8f0f8;
+      --radius: 0.5rem;
+      --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+      --mono: ui-monospace, "Cascadia Code", "Consolas", "Liberation Mono", monospace;
+      --shadow: 0 1px 2px rgb(15 23 42 / 8%);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --ink: #f1f5f9;
+        --muted: #94a3b8;
+        --paper: #0f172a;
+        --card: #1e293b;
+        --line: #334155;
+        --line-strong: #64748b;
+        --focus: #2dd4bf;
+        --focus-ring: #0f766e;
+        --link: #5eead4;
+        --link-visited: #99f6e4;
+        --note-fg: #fed7aa;
+        --note-bg: #7c2d12;
+        --note-border: #c2410c;
+        --fix-fg: #bbf7d0;
+        --fix-border: #166534;
+        --code-bg: #0f172a;
+        --shadow: 0 1px 3px rgb(0 0 0 / 35%);
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+    }
+    body {
+      font-family: var(--font);
+      line-height: 1.55;
+      color: var(--ink);
+      background: var(--paper);
+      overflow-wrap: anywhere;
+      word-wrap: break-word;
+    }
+    :focus-visible {
+      outline: 3px solid var(--focus-ring);
+      outline-offset: 2px;
+    }
+    main {
+      max-width: 46rem;
+      margin: 0 auto;
+      padding: 1.35rem clamp(1rem, 3vw, 1.5rem) 2.25rem;
+    }
+    .doc-header {
+      margin: 0 0 1.35rem;
+      padding: 1rem 1.1rem 1.1rem;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .doc-eyebrow {
+      margin: 0 0 0.4rem;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .doc-header h1 {
+      margin: 0;
+      font-size: clamp(1.3rem, 2.6vw, 1.7rem);
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      line-height: 1.25;
+    }
+    .issue-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+      gap: 0.65rem 1rem;
+      margin: 0 0 1.35rem;
+      padding: 0.9rem 1rem;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .issue-meta .meta-item {
+      min-width: 0;
+    }
+    .issue-meta h2 {
+      margin: 0 0 0.2rem;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border: 0;
+      padding: 0;
+    }
+    .issue-meta p {
+      margin: 0;
+      font-size: 0.98rem;
+      font-weight: 600;
+      line-height: 1.35;
+    }
+    .doc-meta {
+      margin: -0.5rem 0 1.25rem;
+      padding: 0.75rem 1rem;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.45;
+      box-shadow: var(--shadow);
+    }
+    .doc-meta p {
+      margin: 0.2rem 0;
+    }
+    .doc-meta p:first-child { margin-top: 0; }
+    .doc-meta p:last-child { margin-bottom: 0; }
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      line-height: 1.3;
+      margin: 1.65rem 0 0.55rem;
+      padding-bottom: 0.3rem;
+      border-bottom: 1px solid var(--line);
+    }
+    h3 {
+      font-size: 1.02rem;
+      font-weight: 700;
+      line-height: 1.35;
+      margin: 1.35rem 0 0.45rem;
+    }
+    p, ul, ol { margin: 0.65rem 0; }
+    ul, ol { padding-left: 1.35rem; }
+    li { margin: 0.25rem 0; }
+    a {
+      color: var(--link);
+      text-underline-offset: 0.15em;
+    }
+    a:visited { color: var(--link-visited); }
+    hr {
+      border: none;
+      border-top: 1px solid var(--line);
+      margin: 1.6rem 0;
+    }
+    blockquote {
+      margin: 0.9rem 0;
+      padding: 0.35rem 0 0.35rem 0.9rem;
+      border-left: 3px solid var(--line-strong);
+      color: var(--muted);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.9rem 0;
+      font-size: 0.95rem;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.5rem 0.7rem;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th {
+      background: color-mix(in srgb, var(--paper) 70%, var(--card));
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--muted);
+    }
+    tr:last-child td { border-bottom: 0; }
+    pre, code {
+      font-family: var(--mono);
+      font-size: 0.9em;
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 0.85rem 1rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      line-height: 1.45;
+    }
+    code {
+      background: color-mix(in srgb, var(--code-bg) 80%, var(--line));
+      padding: 0.12em 0.38em;
+      border-radius: 0.3rem;
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+    }
+    .ai-note {
+      margin: 1.15rem 0 1.4rem;
+      padding: 0.85rem 1rem;
+      background: var(--note-bg);
+      color: var(--note-fg);
+      border: 1px solid var(--note-border);
+      border-radius: var(--radius);
+    }
+    .ai-note h2 {
+      margin: 0 0 0.35rem;
+      padding: 0;
+      border: 0;
+      font-size: 0.95rem;
+      color: inherit;
+    }
+    .ai-note p {
+      margin: 0;
+    }
+    h2.ai-fix-heading {
+      color: var(--fix-fg);
+      border-bottom-color: var(--fix-border);
+    }
+    .plain {
+      white-space: pre-wrap;
+      font-family: var(--mono);
+      font-size: 0.9rem;
+      margin: 0;
+      padding: 0.9rem 1rem;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+    footer.doc-footer {
+      margin-top: 2rem;
+      padding-top: 0.85rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    @media print {
+      body { background: #fff; color: #000; }
+      .doc-header, .issue-meta, .doc-meta, .ai-note, pre, table {
+        box-shadow: none;
+        break-inside: avoid;
+      }
+    }
+    """
+
+
+def _structure_ai_browser_body(fragment: str) -> str:
+    """Light structural polish: title header, issue meta card, note callout."""
+    from ..i18n import _
+
+    if not fragment or not fragment.strip():
+        return fragment
+
+    detail_labels = {
+        _("Severity"),
+        _("Source"),
+        _("Code"),
+        _("Occurrences"),
+        _("Location"),
+        _("Message"),
+    }
+    note_label = _("Note")
+    fix_label = _("Proposed fix")
+
+    out = fragment
+
+    # Promote the document title.
+    out = re.sub(
+        r"<h1(\s[^>]*)?>(.*?)</h1>",
+        (
+            r'<header class="doc-header">'
+            r'<p class="doc-eyebrow">CheckMate</p>'
+            r"<h1\1>\2</h1>"
+            r"</header>"
+        ),
+        out,
+        count=1,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    # Group leading issue-detail h2+p pairs into a compact meta card.
+    pair_re = re.compile(
+        r"<h2(\s[^>]*)?>\s*(.*?)\s*</h2>\s*<p(\s[^>]*)?>(.*?)</p>\s*",
+        re.IGNORECASE | re.DOTALL,
+    )
+    header_end = out.find("</header>")
+    scan_at = header_end + len("</header>") if header_end != -1 else 0
+    # Skip whitespace after header.
+    while scan_at < len(out) and out[scan_at].isspace():
+        scan_at += 1
+
+    meta_chunks: list[str] = []
+    cursor = scan_at
+    while True:
+        m = pair_re.match(out, cursor)
+        if not m:
+            break
+        label = html.unescape(re.sub(r"<[^>]+>", "", m.group(2))).strip()
+        if label not in detail_labels:
+            break
+        meta_chunks.append(
+            f'<div class="meta-item"><h2{m.group(1) or ""}>{m.group(2)}</h2>'
+            f"<p{m.group(3) or ''}>{m.group(4)}</p></div>"
+        )
+        cursor = m.end()
+
+    if meta_chunks:
+        card = '<div class="issue-meta">\n' + "\n".join(meta_chunks) + "\n</div>\n"
+        out = out[:scan_at] + card + out[cursor:]
+
+    # Overview-style plain meta paragraphs right under the title.
+    if '<div class="issue-meta">' not in out:
+        meta_p_re = re.compile(r"(?:<p(\s[^>]*)?>.*?</p>\s*)+", re.IGNORECASE | re.DOTALL)
+        header_end = out.find("</header>")
+        if header_end != -1:
+            start = header_end + len("</header>")
+            while start < len(out) and out[start].isspace():
+                start += 1
+            m = meta_p_re.match(out, start)
+            if m:
+                # Only wrap when the next block is a heading or note (overview shape),
+                # and paragraphs look like "Label: value" metadata lines.
+                block = m.group(0)
+                plain_paras = re.findall(
+                    r"<p(?:\s[^>]*)?>(.*?)</p>", block, flags=re.IGNORECASE | re.DOTALL
+                )
+                texts = [
+                    html.unescape(re.sub(r"<[^>]+>", "", p)).strip() for p in plain_paras
+                ]
+                if texts and all(":" in t for t in texts):
+                    out = (
+                        out[:start]
+                        + f'<div class="doc-meta">{block.rstrip()}</div>\n'
+                        + out[m.end() :]
+                    )
+
+    # AI disclaimer callout.
+    note_esc = re.escape(html.escape(note_label, quote=False))
+    out = re.sub(
+        rf"<h2(\s[^>]*)?>\s*{note_esc}\s*</h2>\s*<p(\s[^>]*)?>(.*?)</p>",
+        (
+            r'<aside class="ai-note" role="note">'
+            rf"<h2\1>{html.escape(note_label)}</h2>"
+            r"<p\2>\3</p>"
+            r"</aside>"
+        ),
+        out,
+        count=1,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    # Mark the proposed-fix heading for a subtle accent.
+    fix_esc = re.escape(html.escape(fix_label, quote=False))
+    out = re.sub(
+        rf"<h2(\s[^>]*)?>\s*{fix_esc}\s*</h2>",
+        rf'<h2 class="ai-fix-heading">{html.escape(fix_label)}</h2>',
+        out,
+        count=1,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    return out
+
+
 def markdown_to_browser_page(
     text: str,
     *,
@@ -226,65 +609,35 @@ def markdown_to_browser_page(
     focus out of the page to the host dialog: Tab after the last link,
     Shift+Tab before the first, or Ctrl+Tab / Ctrl+Shift+Tab anytime.
     """
+    from ..i18n import _, get_language
+
     safe_title = html.escape(title or "CheckMate")
     if plain:
         body = f"<pre class='plain'>{html.escape(text or '')}</pre>"
     else:
-        body = markdown_to_body_html(text or "", for_dialog=False)
+        body = _structure_ai_browser_body(
+            markdown_to_body_html(text or "", for_dialog=False)
+        )
     tab_script = _WEBVIEW_TAB_EXIT_SCRIPT if tab_exit else ""
     body_attrs = ' tabindex="-1"' if tab_exit else ""
+    footer = ""
+    if not tab_exit:
+        footer = f'<footer class="doc-footer">{html.escape(_("Generated by CheckMate"))}</footer>'
     return f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="{html.escape(get_language())}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>{safe_title}</title>
-<style>
-  html, body {{
-    height: 100%;
-    margin: 0;
-  }}
-  body {{
-    font-family: system-ui, Segoe UI, sans-serif;
-    line-height: 1.45;
-    max-width: 52rem;
-    margin: 0 auto;
-    padding: 1rem 1.25rem 2rem;
-    color: #111;
-    background: #fff;
-    overflow-wrap: anywhere;
-    word-wrap: break-word;
-    box-sizing: border-box;
-  }}
-  h1, h2, h3 {{ line-height: 1.25; }}
-  pre, code {{
-    font-family: Consolas, "Courier New", monospace;
-    font-size: 0.92em;
-  }}
-  pre {{
-    background: #f3f3f3;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    padding: 0.85rem 1rem;
-    overflow-x: auto;
-    white-space: pre-wrap;
-  }}
-  code {{
-    background: #f3f3f3;
-    padding: 0.1em 0.35em;
-    border-radius: 3px;
-  }}
-  pre code {{
-    background: transparent;
-    padding: 0;
-  }}
-  a {{ color: #0645ad; }}
-  hr {{ border: none; border-top: 1px solid #ccc; margin: 1.5rem 0; }}
-  .plain {{ white-space: pre-wrap; }}
+<style>{_ai_browser_css()}
 </style>
 </head>
 <body{body_attrs}>
+<main>
 {body}
+{footer}
+</main>
 {tab_script}
 </body>
 </html>
