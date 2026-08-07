@@ -231,6 +231,9 @@ def _ai_browser_css() -> str:
       --note-border: #fdba74;
       --fix-fg: #14532d;
       --fix-border: #86efac;
+      --chat-user-bg: #dbeafe;
+      --chat-user-fg: #0f172a;
+      --chat-user-border: #93c5fd;
       --code-bg: #e8f0f8;
       --radius: 0.5rem;
       --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
@@ -254,6 +257,9 @@ def _ai_browser_css() -> str:
         --note-border: #c2410c;
         --fix-fg: #bbf7d0;
         --fix-border: #166534;
+        --chat-user-bg: #1e3a5f;
+        --chat-user-fg: #eff6ff;
+        --chat-user-border: #3b82f6;
         --code-bg: #0f172a;
         --shadow: 0 1px 3px rgb(0 0 0 / 35%);
       }
@@ -450,6 +456,38 @@ def _ai_browser_css() -> str:
       color: var(--fix-fg);
       border-bottom-color: var(--fix-border);
     }
+    .chat-bubble.chat-user {
+      display: block;
+      box-sizing: border-box;
+      margin: 1.35rem 0 0.9rem auto;
+      max-width: min(34rem, 94%);
+      padding: 0.7rem 0.95rem 0.8rem;
+      background: var(--chat-user-bg);
+      color: var(--chat-user-fg);
+      border: 1px solid var(--chat-user-border);
+      border-radius: 1.1rem 1.1rem 0.3rem 1.1rem;
+      box-shadow: var(--shadow);
+      line-height: 1.45;
+      scroll-margin-top: 0.75rem;
+    }
+    .chat-bubble.chat-user:focus {
+      outline: 3px solid var(--focus-ring);
+      outline-offset: 2px;
+    }
+    .chat-bubble.chat-user .chat-user-label {
+      display: block;
+      margin: 0 0 0.3rem;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      opacity: 0.75;
+    }
+    .chat-bubble.chat-user p {
+      margin: 0;
+      font-weight: 550;
+      overflow-wrap: anywhere;
+    }
     .plain {
       white-space: pre-wrap;
       font-family: var(--mono);
@@ -619,6 +657,7 @@ def markdown_to_browser_page(
             markdown_to_body_html(text or "", for_dialog=False)
         )
     tab_script = _WEBVIEW_TAB_EXIT_SCRIPT if tab_exit else ""
+    reveal_script = _LATEST_FOLLOWUP_REVEAL_SCRIPT
     body_attrs = ' tabindex="-1"' if tab_exit else ""
     footer = ""
     if not tab_exit:
@@ -638,6 +677,7 @@ def markdown_to_browser_page(
 {body}
 {footer}
 </main>
+{reveal_script}
 {tab_script}
 </body>
 </html>
@@ -685,7 +725,8 @@ _WEBVIEW_TAB_EXIT_SCRIPT = """
     var active = document.activeElement;
     var onChrome = !active
       || active === document.body
-      || active === document.documentElement;
+      || active === document.documentElement
+      || (active && active.id === 'cm-latest-followup');
     if (!list.length) {
       e.preventDefault();
       leave(!!e.shiftKey);
@@ -706,6 +747,41 @@ _WEBVIEW_TAB_EXIT_SCRIPT = """
 """.strip()
 
 
+# After SetPage, put the newest follow-up question at the top of the viewport
+# and move accessibility focus onto it when present.
+_LATEST_FOLLOWUP_REVEAL_SCRIPT = """
+<script>
+(function () {
+  function revealLatestFollowup() {
+    var el = document.getElementById('cm-latest-followup');
+    if (!el) return;
+    try {
+      el.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'auto' });
+    } catch (e) {
+      try { el.scrollIntoView(true); } catch (e2) {}
+    }
+    try {
+      if (!(el.tabIndex < 0)) { el.tabIndex = -1; }
+      el.focus({ preventScroll: true });
+    } catch (e3) {
+      try { el.focus(); } catch (e4) {}
+    }
+  }
+  function schedule() {
+    setTimeout(revealLatestFollowup, 0);
+    setTimeout(revealLatestFollowup, 50);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', schedule);
+  } else {
+    schedule();
+  }
+  window.addEventListener('load', schedule);
+})();
+</script>
+""".strip()
+
+
 def append_followup_markdown(
     previous: str,
     *,
@@ -713,9 +789,36 @@ def append_followup_markdown(
     question: str,
     answer: str,
 ) -> str:
-    """Append a follow-up Q&A block to accumulated markdown."""
+    """Append a follow-up Q&A block to accumulated markdown.
+
+    The HTML view renders the question as a chat bubble (see CSS in
+    ``markdown_to_browser_page``). ``heading`` is accepted for call-site
+    compatibility but is not shown in the document.
+
+    The newest question bubble gets ``id="cm-latest-followup"`` so the HTML
+    view can scroll and move accessibility focus to it after reload.
+    """
     prev = (previous or "").rstrip()
-    block = f"\n\n---\n\n### {heading}\n\n**{question}**\n\n{answer}"
+    # Only the newest bubble should be the scroll/focus target.
+    prev = re.sub(r'\s+id="cm-latest-followup"', "", prev)
+    q_plain = (question or "").strip()
+    q = html.escape(q_plain, quote=False)
+    from ..i18n import _
+
+    label = _("You asked")
+    label_esc = html.escape(label, quote=False)
+    aria = html.escape(f"{label}: {q_plain}", quote=True)
+    # Raw HTML survives markdown → HTML and is styled in markdown_to_browser_page.
+    # ``heading`` is intentionally unused (kept so existing callers need no change).
+    block = (
+        f"\n\n---\n\n"
+        f'<div id="cm-latest-followup" class="chat-bubble chat-user" '
+        f'role="note" tabindex="-1" aria-label="{aria}">'
+        f'<span class="chat-user-label">{label_esc}</span>'
+        f"<p>{q}</p>"
+        f"</div>\n\n"
+        f"{answer}"
+    )
     if prev:
         return prev + block
     return block.lstrip()

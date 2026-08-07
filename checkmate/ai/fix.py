@@ -63,6 +63,63 @@ def _language_name() -> str:
     return language_display_name()
 
 
+def fix_member_kind(member: str | None) -> str:
+    """
+    Classify the flagged package member for Fix prompt specialization.
+
+    Returns one of: ``opf``, ``html``, ``css``, ``other``.
+    ``html`` covers ``.xhtml``, ``.html``, and ``.htm`` content documents.
+    """
+    if not member:
+        return "other"
+    path = member.replace("\\", "/").lower().lstrip("/")
+    name = Path(path).name
+    suffix = Path(path).suffix
+    if suffix == ".opf":
+        return "opf"
+    if name.startswith("package") and suffix in {".xml", ""}:
+        return "opf"
+    if suffix in {".xhtml", ".html", ".htm"}:
+        return "html"
+    if suffix == ".css":
+        return "css"
+    return "other"
+
+
+def _member_kind_guidance(kind: str) -> str:
+    """English propose hints keyed off the flagged member type."""
+    if kind == "opf":
+        return (
+            "FILE TYPE: OPF package document.\n"
+            "- Edit inside <metadata>, <manifest>, or <spine> as the issue indicates.\n"
+            "- For new metadata, expand a unique existing <meta …> line or </metadata> "
+            "(insert-via-replace).\n"
+            "- Keep xmlns prefixes exactly as in the file; do not invent undeclared prefixes.\n"
+            "- Prefer one small meta/item/itemref change; do not rewrite the package."
+        )
+    if kind in {"html", "xhtml"}:
+        return (
+            "FILE TYPE: HTML/XHTML content document.\n"
+            "- Prefer fixing attributes or wrapping the flagged element locally.\n"
+            "- Keep well-formed markup (quoted attributes; matched tags).\n"
+            "- For a missing attribute, expand the existing start tag as \"original\".\n"
+            "- Do not rewrite the whole document or unrelated sections."
+        )
+    if kind == "css":
+        return (
+            "FILE TYPE: CSS stylesheet.\n"
+            "- Prefer editing the flagged rule or declaration only.\n"
+            "- Keep selectors exactly as in the excerpt.\n"
+            "- For a new declaration, expand the unique rule block as \"original\".\n"
+            "- Do not restyle the whole stylesheet or unrelated rules."
+        )
+    return (
+        "FILE TYPE: other package member.\n"
+        "- Make the smallest unique text edit that addresses the issue.\n"
+        "- Use insert-via-replace when adding content."
+    )
+
+
 def build_fix_system_prompt() -> str:
     lang = _language_name()
     lang_code = get_language()
@@ -91,6 +148,14 @@ STRICT RULES:
 - Keep "original" and "replacement" short (prefer under {_MAX_SNIPPET_CHARS} characters each) but unique in the excerpt.
 - Change as little as possible. Prefer a local markup/CSS/OPF edit.
 - Do not rewrite the whole file. Do not invent conformance rules.
+- Never use an empty "original". To insert new markup or CSS, copy a short unique existing
+  snippet from Exact file text into "original" and put that snippet plus the new content
+  in "replacement" (insert-via-replace). Prefer the smallest unique nearby anchor —
+  for example an existing tag line, attribute, CSS rule, or a closing tag such as
+  </metadata>, </head>, or }} in CSS.
+- Copy namespace prefixes, attribute names, and selectors exactly as in the excerpt;
+  do not invent undeclared prefixes or names.
+- When the user message includes a FILE TYPE section, follow those member-specific hints.
 - If you cannot propose a safe automated fix, explain why under "## {_('Proposed fix')}" and omit the JSON block.
 - Never include secrets or unrelated content.
 """
@@ -98,6 +163,8 @@ STRICT RULES:
 
 def build_fix_user_prompt(ctx: dict[str, str]) -> str:
     lang = _language_name()
+    member = ctx.get("file_member") or ""
+    kind = ctx.get("member_kind") or fix_member_kind(member)
     lines = [
         f"Propose a minimal fix for this validation issue.",
         f"Reply with the final ## {_('Proposed fix')} section and one complete JSON patch only.",
@@ -112,13 +179,18 @@ def build_fix_user_prompt(ctx: dict[str, str]) -> str:
         lines.append(f"- Publication kind: {ctx['publication_kind']}")
     if ctx.get("tool"):
         lines.append(f"- Checker: {ctx['tool']}")
-    if ctx.get("file_member"):
-        lines.append(f"- File: {ctx['file_member']}")
+    if member:
+        lines.append(f"- File: {member}")
+    lines.append("")
+    lines.append(_member_kind_guidance(kind))
     raw = ctx.get("file_excerpt_raw") or ""
     numbered = ctx.get("file_excerpt") or ""
     if raw:
         lines.append("")
-        lines.append("Exact file text to edit (copy original from here; no line prefixes):")
+        lines.append(
+            "Exact file text to edit (copy original from here; no line prefixes). "
+            "If adding content, expand a unique existing snippet (insert-via-replace)."
+        )
         lines.append("```")
         lines.append(raw)
         lines.append("```")
@@ -137,7 +209,26 @@ def build_fix_user_prompt(ctx: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
-def _repair_user_prompt() -> str:
+def _repair_user_prompt(
+    *,
+    reason: str | None = None,
+    member_kind: str = "other",
+) -> str:
+    guidance = _member_kind_guidance(member_kind)
+    if reason == "no_match_in_file":
+        return (
+            "Your previous patch was rejected because \"original\" was not found in "
+            "the Exact file text (or was not unique).\n"
+            "Reply again with ONLY:\n"
+            f"1. ## {_('Proposed fix')} — 2–4 short bullets\n"
+            "2. One complete ```json fence containing "
+            '{"file","original","replacement"} — valid JSON, no truncation.\n'
+            "Paste \"original\" verbatim from the Exact file text. "
+            "If you need to insert content, expand a short unique existing snippet "
+            "(insert-via-replace); never use an empty original. "
+            "No thinking aloud. No drafts.\n\n"
+            f"{guidance}"
+        )
     return (
         "Your previous reply was unusable (incomplete JSON, truncated output, "
         "or draft/thinking text).\n"
@@ -146,7 +237,9 @@ def _repair_user_prompt() -> str:
         "2. One complete ```json fence containing "
         '{"file","original","replacement"} — valid JSON, no truncation.\n'
         "No thinking aloud. No drafts. No braille-dot descriptions. "
-        "Copy characters exactly from the Exact file text."
+        "Copy characters exactly from the Exact file text. "
+        "Never use an empty original; use insert-via-replace to add content.\n\n"
+        f"{guidance}"
     )
 
 
@@ -381,6 +474,8 @@ def propose_fix(
         return FixResult(ok=False, error_key="cancelled")
 
     ctx = gather_issue_context(issue, result, target_path=target_path)
+    member_kind = fix_member_kind(ctx.get("file_member"))
+    ctx["member_kind"] = member_kind
     try:
         session = ExplainSession.create()
     except RuntimeError as e:
@@ -399,7 +494,12 @@ def propose_fix(
         return FixResult(ok=False, error_key="cancelled", session=session)
 
     _status(_("Proposing fix…"))
-    logger.info("Fix request starting model=%s code=%s", session.model, issue.code)
+    logger.info(
+        "Fix request starting model=%s code=%s member_kind=%s",
+        session.model,
+        issue.code,
+        member_kind,
+    )
     try:
         text = session.ask(
             system=build_fix_system_prompt(),
@@ -440,7 +540,10 @@ def propose_fix(
             return FixResult(ok=False, error_key="cancelled", session=session)
         _status(_("Proposing fix…"))
         try:
-            text = session.followup(_repair_user_prompt(), max_tokens=_FIX_MAX_TOKENS)
+            text = session.followup(
+                _repair_user_prompt(reason=err_key, member_kind=member_kind),
+                max_tokens=_FIX_MAX_TOKENS,
+            )
         except ProviderError as e:
             return FixResult(
                 ok=False,

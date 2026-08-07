@@ -365,3 +365,51 @@ def explain_overview(
         return ExplainResult(ok=False, error_key="cancelled", session=session)
 
     return ExplainResult(ok=True, text=text, session=session)
+
+
+def ask_overview_followup(
+    session: ExplainSession,
+    question: str,
+    *,
+    cancel_event: threading.Event | None = None,
+    status_callback: StatusCallback | None = None,
+) -> ExplainResult:
+    """Answer a free-form follow-up about an existing overview session."""
+    q = (question or "").strip()
+    if not q:
+        return ExplainResult(ok=False, error_key="empty_question", session=session)
+    if _cancelled(cancel_event):
+        return ExplainResult(ok=False, error_key="cancelled", session=session)
+
+    lang = _language_name()
+    h1, h2, h3, h4, h5 = _section_headings()
+    _status(status_callback, _("Thinking…"))
+    logger.info("Overview follow-up request starting model=%s", session.model)
+    try:
+        text = session.followup(
+            f"Follow-up question about the same validation report overview.\n"
+            f"Reply entirely in {lang}.\n\n"
+            f"Answer this question directly in a natural, conversational way. "
+            f"Do NOT reuse the structured overview layout with headings such as "
+            f"## {h1}, ## {h2}, ## {h3}, ## {h4}, or ## {h5}. "
+            f"Prefer short paragraphs or a few bullets; include a brief code example "
+            f"only when it helps. Stay focused on what was asked.\n\n"
+            f"Question:\n{q}"
+        )
+    except ProviderError as e:
+        return ExplainResult(
+            ok=False,
+            error_key=e.error_key,
+            text=e.detail,
+            session=session,
+        )
+    except Exception as e:
+        logger.exception("Overview follow-up provider error")
+        return ExplainResult(
+            ok=False, error_key="provider_error", text=str(e), session=session
+        )
+
+    if _cancelled(cancel_event):
+        return ExplainResult(ok=False, error_key="cancelled", session=session)
+    logger.info("Overview follow-up request completed model=%s", session.model)
+    return ExplainResult(ok=True, text=text, session=session)

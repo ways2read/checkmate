@@ -278,13 +278,19 @@ def ask_followup(
         return ExplainResult(ok=False, error_key="cancelled", session=session)
 
     lang = _language_name()
+    h1, h2, h3, h4, h5 = _section_headings()
     _status(status_callback, _("Thinking…"))
     logger.info("Follow-up request starting model=%s", session.model)
     try:
         text = session.followup(
             f"Follow-up question about the same issue.\n"
             f"Reply entirely in {lang}.\n\n"
-            f"{q}"
+            f"Answer this question directly in a natural, conversational way. "
+            f"Do NOT reuse the structured explanation layout with headings such as "
+            f"## {h1}, ## {h2}, ## {h3}, ## {h4}, or ## {h5}. "
+            f"Prefer short paragraphs or a few bullets; include a brief code example "
+            f"only when it helps. Stay focused on what was asked.\n\n"
+            f"Question:\n{q}"
         )
     except ProviderError as e:
         return ExplainResult(

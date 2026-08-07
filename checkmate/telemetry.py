@@ -589,9 +589,17 @@ def log_ai_fix(*, applied: bool = False) -> None:
         )
 
 
-def log_ai_overview() -> None:
+def log_ai_overview(*, followup: bool = False) -> None:
+    event = (
+        "checkmate_ai_overview_followup" if followup else "checkmate_ai_overview"
+    )
+    delta_key = (
+        "checkmate_ai_overview_followup_total"
+        if followup
+        else "checkmate_ai_overview_total"
+    )
     log_activity(
-        "checkmate_ai_overview",
+        event,
         _ai_model(),
-        last_run_deltas={"checkmate_ai_overview_total": 1},
+        last_run_deltas={delta_key: 1},
     )

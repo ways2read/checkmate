@@ -629,6 +629,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Cette explication a été générée par l’IA et peut contenir des erreurs !"
         ),
         "Follow-up": "Suivi",
+        "You asked": "Vous avez demandé",
         "Could not explain this issue.": "Impossible d’expliquer ce problème.",
         "AI support is not available (litellm is not installed).": (
             "L’assistance IA n’est pas disponible (litellm n’est pas installé)."
@@ -1279,6 +1280,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Esta explicación fue generada por IA y puede contener errores."
         ),
         "Follow-up": "Seguimiento",
+        "You asked": "Usted preguntó",
         "Could not explain this issue.": "No se pudo explicar este problema.",
         "AI support is not available (litellm is not installed).": (
             "La asistencia de IA no está disponible (litellm no está instalado)."
@@ -1929,6 +1931,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Diese Erklärung wurde von einer KI erzeugt und kann Fehler enthalten!"
         ),
         "Follow-up": "Nachfrage",
+        "You asked": "Ihre Frage",
         "Could not explain this issue.": "Dieses Problem konnte nicht erklärt werden.",
         "AI support is not available (litellm is not installed).": (
             "KI-Unterstützung ist nicht verfügbar (litellm ist nicht installiert)."
@@ -2580,6 +2583,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Esta explicação foi gerada por IA e pode conter erros!"
         ),
         "Follow-up": "Seguimento",
+        "You asked": "Você perguntou",
         "Could not explain this issue.": "Não foi possível explicar este problema.",
         "AI support is not available (litellm is not installed).": (
             "A assistência de IA não está disponível (litellm não está instalado)."

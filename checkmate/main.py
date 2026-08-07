@@ -611,6 +611,31 @@ _WEBVIEW_ACTIVATE_DOM_JS_NEXT = """
 })();
 """.strip()
 
+# After a follow-up answer reloads the page: put the newest question at the top
+# of the viewport and move document focus there for screen readers.
+_WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS = """
+(function () {
+  try {
+    var el = document.getElementById('cm-latest-followup');
+    if (!el) { return 'none'; }
+    if (!(el.tabIndex < 0)) { el.tabIndex = -1; }
+    try {
+      el.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'auto' });
+    } catch (e) {
+      try { el.scrollIntoView(true); } catch (e2) {}
+    }
+    try {
+      el.focus({ preventScroll: true });
+    } catch (e3) {
+      try { el.focus(); } catch (e4) {}
+    }
+    return 'latest';
+  } catch (e5) {
+    return 'err';
+  }
+})();
+""".strip()
+
 _WEBVIEW_ACTIVATE_DOM_JS_PREV = """
 (function () {
   try {
@@ -681,6 +706,75 @@ def _webview_run_script(view: wx.Window, script: str) -> bool:
             return True
         except Exception:
             pass
+    return False
+
+
+def _markdown_has_latest_followup(markdown_text: str) -> bool:
+    return 'id="cm-latest-followup"' in (markdown_text or "")
+
+
+def _reveal_latest_followup_in_webview(
+    view: wx.Window,
+    *,
+    retries: int = 8,
+) -> bool:
+    """
+    Activate the WebView document and scroll/focus ``#cm-latest-followup``.
+
+    Returns True when activation was attempted successfully enough to stop
+    retrying. Unlike Tab-entry activation, this does not scroll to the top.
+    """
+    try:
+        if not view:
+            return False
+    except RuntimeError:
+        return False
+
+    already_doc = sys.platform == "win32" and _win_focus_is_webview_document(view)
+    if not already_doc:
+        try:
+            _win_dialog_focus_hwnd(view)
+            view.SetFocus()
+        except RuntimeError:
+            return False
+        if not _win_webview_controller_move_focus(
+            view, _COREWEBVIEW2_MOVE_FOCUS_PROGRAMMATIC
+        ):
+            _win_webview_controller_move_focus(
+                view, _COREWEBVIEW2_MOVE_FOCUS_NEXT
+            )
+
+    if sys.platform != "win32":
+        _webview_run_script(view, _WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS)
+        return True
+
+    try:
+        import ctypes
+
+        outer = int(view.GetHandle() or 0)
+        doc = _win_webview_document_hwnd(outer)
+        if doc:
+            if not already_doc:
+                ctypes.windll.user32.SetFocus(doc)
+            _webview_run_script(view, _WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS)
+            # Arm Edge keyboard, then re-apply scroll/focus (click lands at 2,2).
+            if not already_doc:
+                _win_webview_synthetic_click(doc)
+                _webview_run_script(view, _WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS)
+            return True
+    except Exception:
+        pass
+
+    if retries > 0:
+        wx.CallLater(
+            100,
+            lambda v=view, n=retries: _reveal_latest_followup_in_webview(
+                v, retries=n - 1
+            ),
+        )
+        return False
+
+    _webview_run_script(view, _WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS)
     return False
 
 
@@ -1572,7 +1666,10 @@ class IssueDetailDialog(wx.Dialog):
         if not self._ai_focus_after_load:
             return
         self._ai_focus_after_load = False
-        self._schedule_ai_output_focus()
+        if _markdown_has_latest_followup(getattr(self, "_ai_markdown", "") or ""):
+            self._schedule_reveal_latest_followup()
+        else:
+            self._schedule_ai_output_focus()
 
     def _ai_dialog_html(self, *, plain: bool = False) -> str:
         """HTML document for the in-dialog WebView (same styling as browser view)."""
@@ -1638,6 +1735,51 @@ class IssueDetailDialog(wx.Dialog):
 
         wx.CallAfter(lambda: _attempt(5))
 
+    def _schedule_reveal_latest_followup(self) -> None:
+        """After a follow-up, scroll/focus the newest question in the HTML view."""
+        self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
+        gen = self._ai_focus_gen
+
+        def _attempt(remaining: int) -> None:
+            if gen != getattr(self, "_ai_focus_gen", 0):
+                return
+            if self._reveal_latest_followup_now():
+                return
+            if remaining > 0:
+                wx.CallLater(200, lambda: _attempt(remaining - 1))
+
+        wx.CallAfter(lambda: _attempt(5))
+
+    def _reveal_latest_followup_now(self) -> bool:
+        """Try once to put viewport + SR focus on the newest follow-up question."""
+        if not self._show_ai or not getattr(self, "_ai_view_realized", False):
+            return True
+        try:
+            if not self:
+                return True
+            self.Raise()
+        except RuntimeError:
+            return False
+        _win_force_foreground(self)
+        if self._ai_output_is_webview:
+            return _reveal_latest_followup_in_webview(self.ai_output, retries=0)
+        # TextCtrl fallback: jump near the latest "You asked" / question text.
+        view = self.ai_output
+        if hasattr(view, "SetInsertionPoint") and hasattr(view, "GetValue"):
+            try:
+                text = view.GetValue() or ""
+                # Jump near the latest follow-up separator when present.
+                idx = text.rfind("---")
+                if idx < 0:
+                    idx = 0
+                view.SetInsertionPoint(min(idx, len(text)))
+                view.ShowPosition(min(idx, len(text)))
+                view.SetFocus()
+            except RuntimeError:
+                return False
+            return True
+        return _try_set_focus(view)
+
     def _set_ai_content(
         self,
         markdown_text: str,
@@ -1660,12 +1802,19 @@ class IssueDetailDialog(wx.Dialog):
             # If LOADED already ran synchronously it cleared the flag — schedule
             # once as fallback. Do not also schedule while waiting for LOADED.
             if focus and not self._ai_focus_after_load:
-                self._schedule_ai_output_focus()
+                if _markdown_has_latest_followup(self._ai_markdown or ""):
+                    self._schedule_reveal_latest_followup()
+                else:
+                    self._schedule_ai_output_focus()
         else:
             self.ai_output.SetValue(self._ai_markdown)
-            self.ai_output.SetInsertionPoint(0)
-            if focus:
-                self._schedule_ai_output_focus()
+            if _markdown_has_latest_followup(self._ai_markdown or ""):
+                if focus:
+                    self._schedule_reveal_latest_followup()
+            else:
+                self.ai_output.SetInsertionPoint(0)
+                if focus:
+                    self._schedule_ai_output_focus()
         self._set_ai_export_enabled(self._has_ai_content())
 
     def _on_view_ai_browser(self, _event: wx.Event) -> None:
@@ -2212,6 +2361,7 @@ class AiOverviewDialog(wx.Dialog):
         *,
         markdown_text: str,
         result: CheckResult,
+        session=None,
     ) -> None:
         super().__init__(
             parent,
@@ -2220,6 +2370,11 @@ class AiOverviewDialog(wx.Dialog):
         )
         self.SetSize((720, 640))
         self._result = result
+        self._session = session
+        self._busy = False
+        self._ai_cancel: threading.Event | None = None
+        self._ai_progress: wx.ProgressDialog | None = None
+        self._ai_progress_timer: wx.Timer | None = None
         self._ai_plain = False
         self._ai_output_is_webview = False
         self._ai_focus_after_load = False
@@ -2253,6 +2408,21 @@ class AiOverviewDialog(wx.Dialog):
         self.ai_output = self._ai_output_host
         root.Add(self._ai_output_host, 1, wx.EXPAND | wx.ALL, 12)
 
+        follow_row = wx.BoxSizer(wx.HORIZONTAL)
+        self.followup_ctrl = wx.TextCtrl(
+            self,
+            value="",
+            style=wx.TE_PROCESS_ENTER,
+            name=_("Follow-up question"),
+        )
+        if hasattr(self.followup_ctrl, "SetHint"):
+            self.followup_ctrl.SetHint(_("Ask a follow-up question…"))
+        self.ask_btn = wx.Button(self, label=_("Ask"))
+        self.ask_btn.Enable(self._session is not None)
+        follow_row.Add(self.followup_ctrl, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        follow_row.Add(self.ask_btn, 0)
+        root.Add(follow_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+
         actions = wx.BoxSizer(wx.HORIZONTAL)
         self.view_browser_btn = wx.Button(self, label=_("View in browser"))
         self.save_html_btn = wx.Button(self, label=_("Save as HTML…"))
@@ -2274,10 +2444,13 @@ class AiOverviewDialog(wx.Dialog):
         footer.Add(close_btn, 0)
         root.Add(footer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
 
+        self.ask_btn.Bind(wx.EVT_BUTTON, self._on_ask_followup)
+        self.followup_ctrl.Bind(wx.EVT_TEXT_ENTER, self._on_ask_followup)
         self.view_browser_btn.Bind(wx.EVT_BUTTON, self._on_view_browser)
         self.save_html_btn.Bind(wx.EVT_BUTTON, self._on_save_html)
         self.save_md_btn.Bind(wx.EVT_BUTTON, self._on_save_markdown)
         self.copy_ai_btn.Bind(wx.EVT_BUTTON, self._on_copy_clipboard)
+        self.Bind(EVT_EXPLAIN_AI, self._on_followup_ai_event)
 
         self.SetSizer(root)
         self.CentreOnParent()
@@ -2354,6 +2527,10 @@ class AiOverviewDialog(wx.Dialog):
 
     def _leave_ai_webview(self, forward: bool) -> None:
         if forward:
+            if _try_set_focus(getattr(self, "followup_ctrl", None)):
+                return
+            if _try_set_focus(getattr(self, "ask_btn", None)):
+                return
             if _try_set_focus(getattr(self, "view_browser_btn", None)):
                 return
             close_btn = self.FindWindowById(wx.ID_CLOSE)
@@ -2375,7 +2552,10 @@ class AiOverviewDialog(wx.Dialog):
         if not self._ai_focus_after_load:
             return
         self._ai_focus_after_load = False
-        self._schedule_output_focus()
+        if _markdown_has_latest_followup(getattr(self, "_ai_markdown", "") or ""):
+            self._schedule_reveal_latest_followup()
+        else:
+            self._schedule_output_focus()
 
     def _schedule_output_focus(self) -> None:
         self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
@@ -2390,6 +2570,45 @@ class AiOverviewDialog(wx.Dialog):
                 wx.CallLater(200, lambda: _attempt(remaining - 1))
 
         wx.CallAfter(lambda: _attempt(5))
+
+    def _schedule_reveal_latest_followup(self) -> None:
+        self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
+        gen = self._ai_focus_gen
+
+        def _attempt(remaining: int) -> None:
+            if gen != getattr(self, "_ai_focus_gen", 0):
+                return
+            if self._reveal_latest_followup_now():
+                return
+            if remaining > 0:
+                wx.CallLater(200, lambda: _attempt(remaining - 1))
+
+        wx.CallAfter(lambda: _attempt(5))
+
+    def _reveal_latest_followup_now(self) -> bool:
+        try:
+            if not self:
+                return True
+            self.Raise()
+        except RuntimeError:
+            return False
+        _win_force_foreground(self)
+        if self._ai_output_is_webview:
+            return _reveal_latest_followup_in_webview(self.ai_output, retries=0)
+        view = self.ai_output
+        if hasattr(view, "SetInsertionPoint") and hasattr(view, "GetValue"):
+            try:
+                text = view.GetValue() or ""
+                idx = text.rfind("---")
+                if idx < 0:
+                    idx = 0
+                view.SetInsertionPoint(min(idx, len(text)))
+                view.ShowPosition(min(idx, len(text)))
+                view.SetFocus()
+            except RuntimeError:
+                return False
+            return True
+        return _try_set_focus(view)
 
     def _focus_output(self) -> bool:
         try:
@@ -2425,11 +2644,219 @@ class AiOverviewDialog(wx.Dialog):
             self._ai_focus_after_load = bool(focus)
             self.ai_output.SetPage(self._dialog_html(), "")
             if focus and not self._ai_focus_after_load:
-                self._schedule_output_focus()
+                if _markdown_has_latest_followup(self._ai_markdown or ""):
+                    self._schedule_reveal_latest_followup()
+                else:
+                    self._schedule_output_focus()
         else:
             self.ai_output.SetValue(self._ai_markdown or "")
-            if focus:
+            if _markdown_has_latest_followup(self._ai_markdown or ""):
+                if focus:
+                    self._schedule_reveal_latest_followup()
+            elif focus:
                 self._schedule_output_focus()
+
+    def _set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        self.ask_btn.Enable(not busy and self._session is not None)
+        self.followup_ctrl.Enable(not busy)
+        for btn in (
+            self.view_browser_btn,
+            self.save_html_btn,
+            self.save_md_btn,
+            self.copy_ai_btn,
+        ):
+            btn.Enable(not busy and bool((self._ai_markdown or "").strip()))
+
+    def _ai_status_callback(self, message: str) -> None:
+        def update() -> None:
+            if self._ai_progress is not None:
+                try:
+                    cont, _skip = self._ai_progress.Pulse(message)
+                    if not cont and self._ai_cancel is not None:
+                        self._ai_cancel.set()
+                except RuntimeError:
+                    pass
+
+        wx.CallAfter(update)
+
+    def _present_ai_progress(self, message: str) -> None:
+        dlg = self._ai_progress
+        if dlg is None:
+            return
+        _present_progress_dialog(dlg, message)
+
+    def _open_ai_progress(self, title: str, message: str) -> threading.Event:
+        self._close_ai_progress(reclaim_focus=False)
+        cancel = threading.Event()
+        self._ai_cancel = cancel
+        self._ai_progress = wx.ProgressDialog(
+            title,
+            message,
+            maximum=100,
+            parent=self,
+            style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
+        )
+        self._present_ai_progress(message)
+        self._ai_progress_timer = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self._on_ai_progress_timer, self._ai_progress_timer)
+        self._ai_progress_timer.Start(200)
+        return cancel
+
+    def _on_ai_progress_timer(self, _event: wx.TimerEvent) -> None:
+        dlg = self._ai_progress
+        cancel = self._ai_cancel
+        if dlg is None or cancel is None:
+            return
+        try:
+            cont, _skip = dlg.Pulse()
+        except RuntimeError:
+            return
+        if not cont:
+            cancel.set()
+            try:
+                dlg.Pulse(_("Cancelling…"))
+            except RuntimeError:
+                pass
+            self._close_ai_progress(reclaim_focus=True)
+            self._set_busy(False)
+
+    def _close_ai_progress(self, *, reclaim_focus: bool = True) -> None:
+        self._ai_progress_reclaim_gen = (
+            int(getattr(self, "_ai_progress_reclaim_gen", 0)) + 1
+        )
+        reclaim_gen = self._ai_progress_reclaim_gen
+        timer = self._ai_progress_timer
+        if timer is not None:
+            try:
+                if timer.IsRunning():
+                    timer.Stop()
+            except RuntimeError:
+                pass
+            self._ai_progress_timer = None
+        dlg = self._ai_progress
+        self._ai_progress = None
+        if dlg is not None:
+            try:
+                dlg.Destroy()
+            except RuntimeError:
+                pass
+            if not reclaim_focus:
+                return
+
+            def _reclaim() -> None:
+                if reclaim_gen != getattr(self, "_ai_progress_reclaim_gen", 0):
+                    return
+                try:
+                    if not self:
+                        return
+                    self.Raise()
+                    _win_force_foreground(self)
+                except RuntimeError:
+                    return
+
+            wx.CallLater(50, _reclaim)
+
+    def _fail_ai_libraries(self, detail: str = "") -> None:
+        self._close_ai_progress()
+        self._set_busy(False)
+        from .ai.explain import error_message_for_key
+
+        msg = error_message_for_key("no_litellm", detail=detail or "")
+        wx.MessageBox(msg, _("AI overview"), wx.OK | wx.ICON_ERROR, self)
+
+    def _on_ask_followup(self, _event: wx.Event) -> None:
+        if self._busy or self._session is None:
+            return
+        question = self.followup_ctrl.GetValue().strip()
+        if not question:
+            return
+        cancel = self._open_ai_progress(_("Follow-up"), _("Loading AI libraries…"))
+        self._set_busy(True)
+        session = self._session
+        status_cb = self._ai_status_callback
+
+        def work() -> None:
+            from .ai.explain import ExplainResult
+            from .ai.litellm_client import preload_litellm
+            from .ai.overview import ask_overview_followup
+
+            ok, detail = preload_litellm()
+            if not ok:
+                wx.CallAfter(self._fail_ai_libraries, detail)
+                return
+            if cancel.is_set():
+                return
+
+            def _thinking() -> None:
+                if self._ai_progress is not None:
+                    try:
+                        self._ai_progress.Pulse(_("Thinking…"))
+                    except RuntimeError:
+                        pass
+
+            wx.CallAfter(_thinking)
+            try:
+                out = ask_overview_followup(
+                    session,
+                    question,
+                    cancel_event=cancel,
+                    status_callback=status_cb,
+                )
+            except Exception as exc:
+                out = ExplainResult(
+                    ok=False,
+                    error_key="provider_error",
+                    text=str(exc),
+                    session=session,
+                )
+            if cancel.is_set():
+                return
+            try:
+                wx.PostEvent(
+                    self,
+                    ExplainAiEvent(kind="followup", result=out, question=question),
+                )
+            except RuntimeError:
+                return
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_followup_ai_event(self, event: ExplainAiEvent) -> None:
+        from .ai.explain import error_message_for_key
+        from .ai.markdown_html import append_followup_markdown
+
+        result = event.result
+        self._close_ai_progress()
+        self._set_busy(False)
+        if not result.ok:
+            if result.error_key == "cancelled":
+                return
+            msg = error_message_for_key(result.error_key, detail=result.text or "")
+            wx.MessageBox(msg, _("AI overview"), wx.OK | wx.ICON_ERROR, self)
+            if result.session is not None:
+                self._session = result.session
+                self.ask_btn.Enable(True)
+            return
+
+        self._session = result.session
+        self.ask_btn.Enable(True)
+        question = getattr(event, "question", "") or ""
+        self._ai_markdown = append_followup_markdown(
+            self._ai_markdown,
+            heading=_("Follow-up"),
+            question=question,
+            answer=result.text or "",
+        )
+        self._ai_plain = False
+        self._paint_content(focus=True)
+        self.followup_ctrl.SetValue("")
+        try:
+            from .telemetry import log_ai_overview
+
+            log_ai_overview(followup=True)
+        except Exception:
+            pass
 
     def _export_markdown(self) -> str:
         from .ai.markdown_html import with_ai_disclaimer
@@ -2518,6 +2945,9 @@ class AiOverviewDialog(wx.Dialog):
         if getattr(self, "_closing", False):
             return
         self._closing = True
+        if self._ai_cancel is not None:
+            self._ai_cancel.set()
+        self._close_ai_progress(reclaim_focus=False)
         try:
             close_btn = self.FindWindowById(wx.ID_CLOSE)
             if close_btn is not None:
@@ -4177,7 +4607,10 @@ class MainFrame(wx.Frame):
             progress.Pulse(_("Loading AI view…"))
             wx.SafeYield(self, True)
             dlg = AiOverviewDialog(
-                self, markdown_text=out.text or "", result=check_result
+                self,
+                markdown_text=out.text or "",
+                result=check_result,
+                session=out.session,
             )
             dlg._realize_ai_html_view()
         finally:
