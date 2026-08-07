@@ -5,12 +5,15 @@ from __future__ import annotations
 import re
 import zipfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 from ..models import CheckResult, Issue
-from ..publication import PublicationKind, classify_publication
+from ..publication import PublicationKind, classify_publication, find_package_document
 from ..settings import read_settings
 
 _MAX_EXCERPT_CHARS = 6000
+# Package documents are usually small; Fix works better with most/all of the OPF.
+_MAX_OPF_CHARS = 48_000
 _CONTEXT_LINES = 20
 _FALLBACK_HEAD_LINES = 80
 
@@ -219,6 +222,60 @@ def _is_css_member(member: str) -> bool:
     return _member_suffix(member) == ".css"
 
 
+def _xml_local_name(tag: str) -> str:
+    if "}" in tag:
+        return tag.rsplit("}", 1)[-1]
+    if ":" in tag:
+        return tag.rsplit(":", 1)[-1]
+    return tag
+
+
+def _find_opf_member(target: Path) -> str | None:
+    """Return the package-relative OPF path for a folder or packaged EPUB/eBraille."""
+    target = target.expanduser().resolve()
+    if target.is_dir():
+        opf = find_package_document(target)
+        if opf is None:
+            return None
+        try:
+            return opf.resolve().relative_to(target).as_posix()
+        except ValueError:
+            return opf.name.replace("\\", "/")
+    if target.is_file() and target.suffix.lower() in {".epub", ".ebrl", ".zip"}:
+        try:
+            with zipfile.ZipFile(target, "r") as zf:
+                names = {n.replace("\\", "/"): n for n in zf.namelist()}
+                container_key = None
+                for key in ("META-INF/container.xml", "meta-inf/container.xml"):
+                    if key in names:
+                        container_key = names[key]
+                        break
+                if container_key is None:
+                    lower = {k.lower(): v for k, v in names.items()}
+                    container_key = lower.get("meta-inf/container.xml")
+                if container_key is None:
+                    # Unique .opf fallback when container.xml is missing.
+                    opfs = [n for n in names if n.lower().endswith(".opf")]
+                    return opfs[0] if len(opfs) == 1 else None
+                root = ET.fromstring(zf.read(container_key))
+                for elem in root.iter():
+                    if _xml_local_name(elem.tag) != "rootfile":
+                        continue
+                    full = elem.attrib.get("full-path") or elem.attrib.get("fullPath")
+                    if not full:
+                        continue
+                    full = full.replace("\\", "/")
+                    if full in names:
+                        return full
+                    lower = {k.lower(): v for k, v in names.items()}
+                    real = lower.get(full.lower())
+                    if real:
+                        return real.replace("\\", "/")
+        except (OSError, zipfile.BadZipFile, ET.ParseError, KeyError):
+            return None
+    return None
+
+
 def _issue_search_blob(issue: Issue) -> str:
     return f"{issue.code or ''} {issue.message or ''} {issue.location or ''}".lower()
 
@@ -284,6 +341,12 @@ def _cap_chunk_lines(chunk_lines: list[str]) -> list[str]:
     return out or chunk_lines[:1]
 
 
+def _clip_excerpt(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "\n…"
+
+
 def _opf_structural_lines(text: str, issue: Issue) -> list[str] | None:
     """
     Prefer a structural OPF region when the checker gave no line number.
@@ -301,6 +364,32 @@ def _opf_structural_lines(text: str, issue: Issue) -> list[str] | None:
     if meta:
         return _cap_chunk_lines(meta)
     return None
+
+
+def _opf_member_excerpts(text: str, issue: Issue) -> tuple[str, str]:
+    """
+    Return (display_excerpt, raw_excerpt) for an OPF package document.
+
+    Prefer the full document when it fits under ``_MAX_OPF_CHARS``; otherwise a
+    large structural region or a clipped head of the file.
+    """
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    if len(normalized) <= _MAX_OPF_CHARS:
+        return normalized, normalized
+
+    preferred = _opf_preferred_region(issue)
+    block = None
+    if preferred:
+        block = _find_element_block_lines(normalized, preferred)
+    if block is None:
+        block = _find_element_block_lines(normalized, "metadata")
+    if block:
+        joined = "\n".join(block)
+        clipped = _clip_excerpt(joined, _MAX_OPF_CHARS)
+        return clipped, clipped
+
+    clipped = _clip_excerpt(normalized, _MAX_OPF_CHARS)
+    return clipped, clipped
 
 
 def _slice_around_line(text: str, line: int | None) -> tuple[list[str], int | None]:
@@ -434,20 +523,31 @@ def gather_issue_context(
                         line = _find_line_for_hints(text, _issue_hint_tokens(issue))
 
                     ctx["file_member"] = member
-                    if line is None and _is_package_member(member):
-                        structural = _opf_structural_lines(text, issue)
-                        if structural:
-                            numbered, raw = _excerpts_from_lines(structural)
-                            ctx["file_excerpt"] = numbered
-                            ctx["file_excerpt_raw"] = raw
-                        else:
-                            ctx["file_excerpt"] = _window_around_line(text, None)
-                            ctx["file_excerpt_raw"] = _raw_window_around_line(
-                                text, None
-                            )
+                    if _is_package_member(member):
+                        # OPFs are usually small — send most/all of the document
+                        # so Fix does not pad around a tiny snippet.
+                        numbered, raw = _opf_member_excerpts(text, issue)
+                        ctx["file_excerpt"] = numbered
+                        ctx["file_excerpt_raw"] = raw
                     else:
                         ctx["file_excerpt"] = _window_around_line(text, line)
                         ctx["file_excerpt_raw"] = _raw_window_around_line(text, line)
+
+                    # Content/CSS issues often need an OPF edit (metadata, manifest,
+                    # spine). Include a related package excerpt so Fix is not forced
+                    # into a wrong-file workaround.
+                    if not _is_package_member(member):
+                        opf_member = _find_opf_member(path)
+                        if opf_member and opf_member.replace("\\", "/") != member.replace(
+                            "\\", "/"
+                        ):
+                            opf_text = _read_member_text(path, opf_member)
+                            if opf_text:
+                                numbered, raw = _opf_member_excerpts(opf_text, issue)
+                                if raw:
+                                    ctx["related_opf_member"] = opf_member
+                                    ctx["related_opf_excerpt"] = numbered
+                                    ctx["related_opf_excerpt_raw"] = raw
 
     return ctx
 

@@ -12,6 +12,8 @@ from xml.etree import ElementTree as ET
 
 import requests
 
+from .subprocess_util import format_elapsed
+
 PIPELINE_NS = "http://www.daisy.org/ns/pipeline/data"
 _NS = {"d": PIPELINE_NS}
 SCRIPT_ID = "daisy202-validator"
@@ -268,11 +270,15 @@ def wait_for_job(
     job_id: str,
     *,
     timeout: float = JOB_TIMEOUT,
+    progress=None,
+    progress_label: str = "Running DAISY 2.02 Validator…",
 ) -> tuple[str, str]:
     """Poll until SUCCESS/FAIL/ERROR. Returns (status, job_xml)."""
     url = f"{status.base_url}/jobs/{job_id}"
-    deadline = time.monotonic() + timeout
+    start = time.monotonic()
+    deadline = start + timeout
     last_xml = ""
+    last_beat = 0.0
     while time.monotonic() < deadline:
         resp = requests.get(url, timeout=REQUEST_TIMEOUT)
         if resp.status_code != 200:
@@ -283,6 +289,14 @@ def wait_for_job(
         st = _job_status(last_xml)
         if st in ("SUCCESS", "FAIL", "ERROR"):
             return st, last_xml
+        now = time.monotonic()
+        if progress and (now - last_beat) >= 1.0:
+            msg = f"{progress_label} ({format_elapsed(now - start)})"
+            try:
+                progress(msg, announce=False)
+            except TypeError:
+                progress(msg)
+            last_beat = now
         time.sleep(POLL_INTERVAL)
     raise TimeoutError(f"Pipeline job timed out after {int(timeout)}s")
 

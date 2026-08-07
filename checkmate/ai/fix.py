@@ -99,11 +99,16 @@ def _member_kind_guidance(kind: str) -> str:
         )
     if kind in {"html", "xhtml"}:
         return (
-            "FILE TYPE: HTML/XHTML content document.\n"
-            "- Prefer fixing attributes or wrapping the flagged element locally.\n"
+            "FILE TYPE: HTML/XHTML content document (where the issue was reported).\n"
+            "- Prefer fixing attributes or wrapping the flagged element locally when "
+            "that resolves the issue.\n"
             "- Keep well-formed markup (quoted attributes; matched tags).\n"
             "- For a missing attribute, expand the existing start tag as \"original\".\n"
-            "- Do not rewrite the whole document or unrelated sections."
+            "- Do not rewrite the whole document or unrelated sections.\n"
+            "- If the correct fix belongs in the package document (OPF) — for example "
+            "metadata, manifest, or spine — edit that file using the Related package "
+            "document excerpt. Do not invent content-document workarounds for "
+            "package-level requirements."
         )
     if kind == "css":
         return (
@@ -111,12 +116,30 @@ def _member_kind_guidance(kind: str) -> str:
             "- Prefer editing the flagged rule or declaration only.\n"
             "- Keep selectors exactly as in the excerpt.\n"
             "- For a new declaration, expand the unique rule block as \"original\".\n"
-            "- Do not restyle the whole stylesheet or unrelated rules."
+            "- Do not restyle the whole stylesheet or unrelated rules.\n"
+            "- If the correct fix belongs in the package document (OPF), edit that file "
+            "using the Related package document excerpt instead."
         )
     return (
         "FILE TYPE: other package member.\n"
         "- Make the smallest unique text edit that addresses the issue.\n"
-        "- Use insert-via-replace when adding content."
+        "- Use insert-via-replace when adding content.\n"
+        "- If the correct fix belongs in a related package member (such as the OPF), "
+        "edit that file instead."
+    )
+
+
+def _cross_file_fix_guidance() -> str:
+    return (
+        "CROSS-FILE FIXES:\n"
+        "- The checker Location names where the problem was reported; the edit may "
+        "belong in a different package member.\n"
+        "- Common case: an issue reported against an XHTML/HTML file that requires "
+        "metadata, manifest, or spine changes in the OPF.\n"
+        "- When Related package document text is provided and that is where the fix "
+        "belongs, set \"file\" to that path and copy \"original\" from that excerpt.\n"
+        "- Do not refuse with \"cannot edit the OPF\" when Related package document "
+        "text is available, and do not invent bizarre workarounds in the wrong file."
     )
 
 
@@ -136,8 +159,9 @@ OUTPUT FORMAT (mandatory — final answer only):
 1. A short markdown section titled exactly "## {_('Proposed fix')}" with 2–4 short bullets or sentences.
 2. Immediately after that, exactly ONE fenced JSON code block with the language tag json.
    The JSON object must contain only these string fields:
-   - "file": package-relative path (use the File given if present)
-   - "original": exact substring copied from the Exact file text
+   - "file": package-relative path of the member you edit (the flagged File, or a
+     Related package document such as the OPF when that is where the fix belongs)
+   - "original": exact substring copied from the Exact file text of that same member
    - "replacement": the corrected substring
 
 STRICT RULES:
@@ -156,6 +180,8 @@ STRICT RULES:
 - Copy namespace prefixes, attribute names, and selectors exactly as in the excerpt;
   do not invent undeclared prefixes or names.
 - When the user message includes a FILE TYPE section, follow those member-specific hints.
+- When Related package document text is provided, you may patch that file instead of the
+  flagged File if that is where the real fix belongs.
 - If you cannot propose a safe automated fix, explain why under "## {_('Proposed fix')}" and omit the JSON block.
 - Never include secrets or unrelated content.
 """
@@ -165,6 +191,7 @@ def build_fix_user_prompt(ctx: dict[str, str]) -> str:
     lang = _language_name()
     member = ctx.get("file_member") or ""
     kind = ctx.get("member_kind") or fix_member_kind(member)
+    related_opf = ctx.get("related_opf_member") or ""
     lines = [
         f"Propose a minimal fix for this validation issue.",
         f"Reply with the final ## {_('Proposed fix')} section and one complete JSON patch only.",
@@ -180,15 +207,20 @@ def build_fix_user_prompt(ctx: dict[str, str]) -> str:
     if ctx.get("tool"):
         lines.append(f"- Checker: {ctx['tool']}")
     if member:
-        lines.append(f"- File: {member}")
+        lines.append(f"- File (reported location): {member}")
+    if related_opf:
+        lines.append(f"- Related package document: {related_opf}")
     lines.append("")
     lines.append(_member_kind_guidance(kind))
+    lines.append("")
+    lines.append(_cross_file_fix_guidance())
     raw = ctx.get("file_excerpt_raw") or ""
     numbered = ctx.get("file_excerpt") or ""
     if raw:
         lines.append("")
         lines.append(
-            "Exact file text to edit (copy original from here; no line prefixes). "
+            "Exact file text for the reported File (copy original from here when "
+            "editing this member; no line prefixes). "
             "If adding content, expand a unique existing snippet (insert-via-replace)."
         )
         lines.append("```")
@@ -203,9 +235,21 @@ def build_fix_user_prompt(ctx: dict[str, str]) -> str:
     else:
         lines.append("")
         lines.append(
-            "No file excerpt is available. Only propose a JSON patch if you can "
-            "give an original string that will uniquely match the file."
+            "No file excerpt is available for the reported location. Only propose a "
+            "JSON patch if you can give an original string that will uniquely match "
+            "the file, or use Related package document text when provided."
         )
+    related_raw = ctx.get("related_opf_excerpt_raw") or ""
+    related_numbered = ctx.get("related_opf_excerpt") or ""
+    if related_opf and (related_raw or related_numbered):
+        lines.append("")
+        lines.append(
+            f"Related package document text ({related_opf}) — use this when the fix "
+            "belongs in the OPF; copy \"original\" from here and set \"file\" to this path:"
+        )
+        lines.append("```")
+        lines.append(related_raw or related_numbered)
+        lines.append("```")
     return "\n".join(lines)
 
 
@@ -215,6 +259,7 @@ def _repair_user_prompt(
     member_kind: str = "other",
 ) -> str:
     guidance = _member_kind_guidance(member_kind)
+    cross = _cross_file_fix_guidance()
     if reason == "no_match_in_file":
         return (
             "Your previous patch was rejected because \"original\" was not found in "
@@ -223,11 +268,12 @@ def _repair_user_prompt(
             f"1. ## {_('Proposed fix')} — 2–4 short bullets\n"
             "2. One complete ```json fence containing "
             '{"file","original","replacement"} — valid JSON, no truncation.\n'
-            "Paste \"original\" verbatim from the Exact file text. "
+            "Paste \"original\" verbatim from the Exact file text of the member you "
+            "edit (reported File or Related package document). "
             "If you need to insert content, expand a short unique existing snippet "
             "(insert-via-replace); never use an empty original. "
             "No thinking aloud. No drafts.\n\n"
-            f"{guidance}"
+            f"{guidance}\n\n{cross}"
         )
     return (
         "Your previous reply was unusable (incomplete JSON, truncated output, "
@@ -237,9 +283,9 @@ def _repair_user_prompt(
         "2. One complete ```json fence containing "
         '{"file","original","replacement"} — valid JSON, no truncation.\n'
         "No thinking aloud. No drafts. No braille-dot descriptions. "
-        "Copy characters exactly from the Exact file text. "
+        "Copy characters exactly from the Exact file text of the member you edit. "
         "Never use an empty original; use insert-via-replace to add content.\n\n"
-        f"{guidance}"
+        f"{guidance}\n\n{cross}"
     )
 
 

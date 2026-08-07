@@ -31,7 +31,9 @@ support on Windows, macOS, and Linux.
 - On macOS packaged builds, Finder **Open With** for `.ebrl` / `.epub` / `.pdf`
   (does not take over double-click by default)
 - Result-first UI: multi-line verdict with counts; colour cues (green / orange /
-  red) reinforce the text; issues listed by severity
+  red) reinforce the text; a status icon beside the result (click to select a
+  file); action column for **Copy summary**, **Report…**, **AI overview**, and
+  **Show/Hide issues**; issues listed by severity (panel starts collapsed)
 - Filter issues (all / errors / warnings / info); optional **Show one example
   of each issue** to collapse repeated codes with counts
 - Filter by source (**EPUBCheck + Ace**, or either tool alone) when both ran
@@ -42,10 +44,11 @@ support on Windows, macOS, and Linux.
   unlock stay in memory only). Validation itself stays offline. Requests show
   a cancellable progress dialog, check the provider connection first, and
   write diagnostics to the app log (**Help → Open debugging log…**).
-- **AI overview** (same FIDO AI gate): from the **Report** menu (or **Report…**
-  button), ask for a whole-report briefing — themes, priorities, and next steps
-  based on the unique issue codes (not a full file dump). View, save, or copy
-  the result like other AI replies.
+- **AI overview** (same FIDO AI gate): dedicated **AI overview** button (and
+  **Report** menu when AI is enabled); whole-report briefing — themes,
+  priorities, and next steps based on the unique issue codes (not a full file
+  dump). View, save, or copy the result like other AI replies. Toggle with
+  **Tools → Enable AI features** (hidden when FIDO AI is unavailable).
 - **Fix with AI** (EPUB and eBraille only, when FIDO AI settings are present):
   from the same issue details dialog, ask for a minimal proposed markup patch,
   preview before/after, then **Apply fix** to the exploded folder or packaged
@@ -134,8 +137,9 @@ uv run checkmate
    right-click an `.ebrl`, `.epub`, or `.pdf` → **Validate with CheckMate**,
    or **Open with** → CheckMate. On macOS, use Finder **Open With** for a
    packaged `.app`.
-2. Read the **Result** summary (focus moves there when a check finishes), then
-   review **Issues** (filterable).
+2. While a check runs, the **Result** pane shows living progress (Ace streams
+   document status; other tools show elapsed time). When finished, focus moves
+   to the summary; expand **Show issues** to review the list (filterable).
 3. Use **Report → View full log** (`Ctrl+L`) only when you need the raw
    checker output.
 4. **Tools → Re-check publication** (`F5`) re-runs the current path after you
@@ -469,8 +473,9 @@ Output: `installer/Output/CheckMate-<version>-setup.exe`
 The installer:
 
 - Ships the full onedir tree (GUI + Temurin JRE 17 + eBraille Checker +
-  EPUBCheck, veraPDF) — no system Java (`build_installer.ps1` refuses to compile if
-  `runtime/`, `checker/`, `epubcheck/`, or `verapdf/` is missing from `dist/`)
+  EPUBCheck, veraPDF, Ace, status icons) — no system Java
+  (`build_installer.ps1` refuses to compile if `runtime/`, `checker/`,
+  `epubcheck/`, `verapdf/`, or `ace/` is missing from `dist/`)
 - Supports per-user install (default) or Program Files with elevation
 - Adds `.ebrl` / `.epub` / `.pdf` shell integration (optional task, on by default):
   **Open with** → CheckMate, and context menu **Validate with

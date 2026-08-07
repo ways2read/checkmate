@@ -37,11 +37,12 @@ from .paths import (
     EPUBCHECK_REPO_PAGE,
     VERAPDF_HOME_PAGE,
     application_dir,
+    images_dir,
     is_frozen,
 )
 from .publication import is_checkable_path
 from .report_export import format_text_report, report_title, save_report
-from .settings import read_settings, update_settings
+from .settings import ai_features_enabled, read_settings, update_settings
 from .updater import (
     EBRAILLE_TOOL,
     EPUBCHECK_TOOL,
@@ -1277,7 +1278,7 @@ class IssueDetailDialog(wx.Dialog):
         self._ai_cancel: threading.Event | None = None
         self._ai_progress: wx.ProgressDialog | None = None
         self._ai_progress_timer: wx.Timer | None = None
-        self._show_ai = fido_settings_present()
+        self._show_ai = ai_features_enabled()
         self._show_fix = self._show_ai and self._fix_available_for_result(check_result)
         if self._show_ai:
             self.SetSize((780, 760))
@@ -1499,7 +1500,14 @@ class IssueDetailDialog(wx.Dialog):
 
             view.Bind(html2.EVT_WEBVIEW_NAVIGATING, self._on_ai_webview_navigating)
             view.Bind(html2.EVT_WEBVIEW_LOADED, self._on_ai_webview_loaded)
-            view.SetPage("<!DOCTYPE html><html><body></body></html>", "")
+            from .ai.markdown_html import ai_idle_placeholder_page
+
+            view.SetPage(
+                ai_idle_placeholder_page(title=_("AI explanation"), tab_exit=True),
+                "",
+            )
+        else:
+            view.ChangeValue(_("AI-generated responses will be shown here."))
 
         sizer = host.GetSizer()
         if sizer is not None:
@@ -2479,7 +2487,14 @@ class AiOverviewDialog(wx.Dialog):
 
             view.Bind(html2.EVT_WEBVIEW_NAVIGATING, self._on_webview_navigating)
             view.Bind(html2.EVT_WEBVIEW_LOADED, self._on_webview_loaded)
-            view.SetPage("<!DOCTYPE html><html><body></body></html>", "")
+            from .ai.markdown_html import ai_idle_placeholder_page
+
+            view.SetPage(
+                ai_idle_placeholder_page(title=_("AI overview"), tab_exit=True),
+                "",
+            )
+        else:
+            view.ChangeValue(_("AI-generated responses will be shown here."))
         sizer = host.GetSizer()
         if sizer is not None:
             sizer.Clear(delete_windows=True)
@@ -3102,7 +3117,13 @@ class MainFrame(wx.Frame):
         self._overview_progress: wx.ProgressDialog | None = None
         self._overview_progress_timer: wx.Timer | None = None
         self.menu_ai_overview: wx.MenuItem | None = None
+        self.menu_ai_features: wx.MenuItem | None = None
         self._lang_menu_items: dict[str, wx.MenuItem] = {}
+        self._issues_visible = True
+        self._issues_height_delta = 0
+        self._source_filter_wanted = False
+        self._result_icon_cache: dict[tuple[str, int], wx.Bitmap] = {}
+        self._result_icon_key: str | None = None
         self._initial_focus_pending = True
         self._pending_open_paths = list(initial_paths or [])
         self._apply_window_icon()
@@ -3111,8 +3132,14 @@ class MainFrame(wx.Frame):
         self._enable_drag_drop()
         # Lightweight status only — detect_java() is too slow for the UI thread.
         self.SetStatusText(_("Starting…"))
-        self.Centre()
         self.Layout()
+        self._result_icon_key = None
+        self._update_result_status_icon()
+        # Issues start collapsed; centre the compact window.
+        self._set_issues_panel_visible(False, keep_center=False)
+        self.Centre()
+        # Min sizes are unreliable before the first Show; re-check after paint.
+        wx.CallAfter(self._ensure_result_text_height, keep_center=False)
         if sys.platform == "darwin":
             # On macOS, Cocoa assigns first responder to the path TextCtrl when
             # the window activates; wx.SetFocus cannot override that. Use native
@@ -3141,8 +3168,6 @@ class MainFrame(wx.Frame):
         """Append the verdict to the app name in the title bar."""
         if summary:
             clean = " ".join(summary.split())
-            if len(clean) > 80:
-                clean = clean[:77] + "…"
             self.SetTitle(f"{app_title()} — {clean}")
         else:
             self.SetTitle(app_title())
@@ -3219,6 +3244,91 @@ class MainFrame(wx.Frame):
         self.result_label.SetForegroundColour(fg)
         self.result_label.SetBackgroundColour(bg)
         self.result_label.Refresh()
+
+    def _result_icon_display_size(self) -> int:
+        """Square icon edge matching the result text box height."""
+        if hasattr(self, "result_label") and self.result_label is not None:
+            h = self.result_label.GetMinSize().height
+            if h > 0:
+                return h
+        return 72
+
+    def _result_status_icon_key(self) -> str:
+        """Return down / wait / ok / x for the result status graphic."""
+        if self._busy:
+            return "wait"
+        result = self._last_result
+        if result is None:
+            return "down"
+        if result.issues or result.verdict in (Verdict.FAILED, Verdict.ERROR):
+            return "x"
+        return "ok"
+
+    def _result_status_icon_path(self, key: str) -> Path | None:
+        names = {
+            "down": "checkmate-down.png",
+            "wait": "checkmate-wait.png",
+            "ok": "checkmate.png",
+            "x": "checkmate-x.png",
+        }
+        path = images_dir() / names[key]
+        return path if path.is_file() else None
+
+    def _scaled_result_icon_bitmap(self, key: str, size: int) -> wx.Bitmap | None:
+        cached = self._result_icon_cache.get((key, size))
+        if cached is not None and cached.IsOk():
+            return cached
+        path = self._result_status_icon_path(key)
+        if path is None:
+            return None
+        image = wx.Image(str(path), wx.BITMAP_TYPE_PNG)
+        if not image.IsOk():
+            return None
+        if image.GetWidth() != size or image.GetHeight() != size:
+            image = image.Scale(size, size, wx.IMAGE_QUALITY_HIGH)
+        bitmap = wx.Bitmap(image)
+        if not bitmap.IsOk():
+            return None
+        self._result_icon_cache[(key, size)] = bitmap
+        return bitmap
+
+    def _update_result_status_icon(self) -> None:
+        """Show waiting / pass / issues graphic beside the result box."""
+        if not hasattr(self, "result_icon"):
+            return
+        key = self._result_status_icon_key()
+        size = self._result_icon_display_size()
+        if key == self._result_icon_key:
+            current = self.result_icon.GetBitmap()
+            if current.IsOk() and current.GetWidth() == size:
+                return
+        bitmap = self._scaled_result_icon_bitmap(key, size)
+        if bitmap is None:
+            self.result_icon.SetBitmap(wx.NullBitmap)
+            self.result_icon.SetToolTip("")
+            self._result_icon_key = None
+            return
+        self.result_icon.SetMinSize((size, size))
+        self.result_icon.SetSize((size, size))
+        self.result_icon.SetBitmap(bitmap)
+        tip = {
+            "down": _("Waiting for a publication"),
+            "wait": _("Check in progress"),
+            "ok": _("No issues found"),
+            "x": _("Issues found"),
+        }[key]
+        open_hint = _("Click to select a file")
+        self.result_icon.SetToolTip(f"{tip}\n{open_hint}")
+        self.result_icon.SetName(
+            _("Check status: {status}. {action}", status=tip, action=open_hint)
+        )
+        self._result_icon_key = key
+        icon_sizer = getattr(self, "result_icon_sizer", None)
+        if icon_sizer is not None:
+            icon_sizer.Layout()
+        row = getattr(self, "result_row", None)
+        if row is not None:
+            row.Layout()
 
     def _prepare_result_for_review(self) -> None:
         """Select all so screen readers announce the result text on focus."""
@@ -3299,7 +3409,8 @@ class MainFrame(wx.Frame):
         input_sizer.Add(path_row, 0, wx.EXPAND | wx.ALL, 8)
         root.Add(input_sizer, 0, wx.EXPAND | wx.ALL, 10)
 
-        # --- Result ---
+        # --- Result (status icon + summary + action buttons) ---
+        result_row = wx.BoxSizer(wx.HORIZONTAL)
         self.result_box = wx.StaticBox(panel, label=_("Result"))
         result_sizer = wx.StaticBoxSizer(self.result_box, wx.VERTICAL)
         self.result_label = wx.TextCtrl(
@@ -3309,14 +3420,75 @@ class MainFrame(wx.Frame):
             name=_("Check result"),
         )
         font = self.result_label.GetFont()
-        font.SetPointSize(font.GetPointSize() + 2)
+        font.SetPointSize(font.GetPointSize() + 1)
         font.MakeBold()
         self.result_label.SetFont(font)
-        self.result_label.SetMinSize((-1, 72))
+        # Size from real text metrics so four lines are not clipped by chrome.
+        line_h = self.result_label.GetCharHeight()
+        if hasattr(self.result_label, "GetSizeFromTextSize"):
+            text_h = self.result_label.GetSizeFromTextSize(-1, line_h * 4).height
+            text_h = max(text_h + 12, line_h * 4 + 24)
+        else:
+            text_h = line_h * 4 + 36
+        self._result_text_min_height = text_h
+        self.result_label.SetMinSize((-1, text_h))
         self.result_label.Bind(wx.EVT_SET_FOCUS, self.on_result_focus)
         self._set_result_accessible_name(_("No check run yet."))
-        result_sizer.Add(self.result_label, 0, wx.EXPAND | wx.ALL, 8)
-        root.Add(result_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        result_sizer.Add(self.result_label, 1, wx.EXPAND | wx.ALL, 8)
+
+        icon_size = self._result_icon_display_size()
+        self.result_icon = wx.StaticBitmap(panel, size=(icon_size, icon_size))
+        self.result_icon.SetName(_("Check status"))
+        self.result_icon.SetCursor(wx.Cursor(wx.CURSOR_HAND))
+        # Center the bitmap in the result-row height (StaticBitmap paints
+        # top-left inside a taller control on Windows).
+        self.result_icon_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.result_icon_sizer.AddStretchSpacer(1)
+        self.result_icon_sizer.Add(self.result_icon, 0, wx.ALIGN_CENTER)
+        self.result_icon_sizer.AddStretchSpacer(1)
+
+        result_btns = wx.BoxSizer(wx.VERTICAL)
+        self.copy_btn = wx.Button(panel, label=_("&Copy summary"))
+        self.copy_btn.SetToolTip(_("Copy the result summary (Ctrl+Shift+C)"))
+        self.report_btn = wx.Button(panel, label=_("&Report…"))
+        self.report_btn.SetToolTip(
+            _(
+                "View or save reports, copy the summary, or view the full log"
+            )
+        )
+        self.ai_overview_btn = None
+        if fido_settings_present():
+            self.ai_overview_btn = wx.Button(panel, label=_("AI &overview"))
+            self.ai_overview_btn.SetToolTip(
+                _("Generate an AI overview of this report (Ctrl+Shift+A)")
+            )
+        self.show_issues_btn = wx.Button(panel, label=_("Show &issues"))
+        self.show_issues_btn.SetToolTip(_("Show the issues list"))
+        result_action_btns = self._result_action_buttons()
+        for i, btn in enumerate(result_action_btns):
+            border = wx.BOTTOM if i < len(result_action_btns) - 1 else 0
+            result_btns.Add(btn, 0, wx.EXPAND | border, 4 if border else 0)
+        self.result_btns = result_btns
+        self._size_result_action_buttons()
+        self._set_ai_overview_btn_visible(ai_features_enabled())
+        self.result_row = result_row
+        result_row.Add(
+            self.result_icon_sizer, 0, wx.EXPAND | wx.RIGHT, 10
+        )
+        result_row.Add(result_sizer, 1, wx.EXPAND | wx.RIGHT, 12)
+        result_row.Add(result_btns, 0, wx.EXPAND)
+        # Static box chrome (~label + padding) above/around the text box.
+        result_row.SetMinSize(
+            (
+                -1,
+                max(
+                    self._result_text_min_height + 44,
+                    result_btns.GetMinSize().height,
+                ),
+            )
+        )
+        root.Add(result_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        self._update_result_status_icon()
 
         # --- Issues ---
         self.issues_box = wx.StaticBox(panel, label=_("Issues"))
@@ -3355,15 +3527,6 @@ class MainFrame(wx.Frame):
         self.unique_codes_cb.SetValue(
             bool(read_settings().get("unique_codes", False))
         )
-        self.copy_btn = wx.Button(panel, label=_("&Copy summary"))
-        self.copy_btn.SetToolTip(_("Copy the result summary (Ctrl+Shift+C)"))
-        self.report_btn = wx.Button(panel, label=_("&Report…"))
-        self.report_btn.SetToolTip(
-            _(
-                "View or save reports, AI overview (when available), "
-                "copy the summary, or view the full log"
-            )
-        )
         self.filter_row = filter_row
         filter_row.Add(self.filter_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         filter_row.Add(
@@ -3376,11 +3539,8 @@ class MainFrame(wx.Frame):
         filter_row.Show(self.source_label, False)
         filter_row.Show(self.source_choice, False)
         filter_row.Add(
-            self.unique_codes_cb, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 12
+            self.unique_codes_cb, 0, wx.ALIGN_CENTER_VERTICAL
         )
-        filter_row.AddStretchSpacer(1)
-        filter_row.Add(self.copy_btn, 0, wx.RIGHT, 4)
-        filter_row.Add(self.report_btn, 0)
 
         self.issues_list = IssuesList(panel, name=_("Issues list"))
         self.issues_list.Bind(wx.EVT_SET_FOCUS, self.on_issues_list_focus)
@@ -3408,6 +3568,7 @@ class MainFrame(wx.Frame):
         issues_sizer.Add(
             self.issues_hint, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8
         )
+        self.issues_sizer = issues_sizer
         root.Add(issues_sizer, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
         panel.SetSizer(root)
@@ -3433,7 +3594,7 @@ class MainFrame(wx.Frame):
 
         report_menu = wx.Menu()
         self.menu_ai_overview = None
-        if fido_settings_present():
+        if ai_features_enabled():
             self.menu_ai_overview = report_menu.Append(
                 wx.ID_ANY, _("AI &overview…\tCtrl+Shift+A")
             )
@@ -3470,6 +3631,19 @@ class MainFrame(wx.Frame):
             wx.ID_ANY, _("&Re-check publication\tF5")
         )
         tools_menu.AppendSeparator()
+        self.menu_ai_features = tools_menu.AppendCheckItem(
+            wx.ID_ANY, _("Enable &AI features")
+        )
+        ai_available = fido_settings_present()
+        self.menu_ai_features.Enable(ai_available)
+        self.menu_ai_features.Check(ai_available and ai_features_enabled())
+        self.menu_ai_features.SetHelp(
+            _(
+                "Show or hide AI features when FIDO AI is available "
+                "(useful for training)"
+            )
+        )
+        tools_menu.AppendSeparator()
         self.menu_update = tools_menu.Append(
             wx.ID_ANY, _("Check for &updates…")
         )
@@ -3504,6 +3678,49 @@ class MainFrame(wx.Frame):
         self._bind_menus()
         self._update_report_actions_enabled()
 
+    def _result_action_buttons(self) -> list[wx.Button]:
+        buttons = [self.copy_btn, self.report_btn]
+        if self.ai_overview_btn is not None:
+            buttons.append(self.ai_overview_btn)
+        buttons.append(self.show_issues_btn)
+        return buttons
+
+    def _size_result_action_buttons(self) -> None:
+        """Give result-column buttons shared extra width for translations."""
+        buttons = self._result_action_buttons()
+        if not buttons:
+            return
+        # Reset so GetBestSize reflects the current labels.
+        for btn in buttons:
+            btn.SetMinSize(wx.DefaultSize)
+        btn_min_w = max(btn.GetBestSize().width for btn in buttons)
+        btn_min_w = max(btn_min_w + 24, 140)
+        for btn in buttons:
+            btn.SetMinSize((btn_min_w, -1))
+
+    def _set_ai_overview_btn_visible(self, visible: bool) -> None:
+        """Show or hide the AI overview button (remove from layout when off)."""
+        btn = self.ai_overview_btn
+        if btn is None:
+            return
+        self.result_btns.Show(btn, visible)
+        if visible:
+            btn.Show()
+        else:
+            btn.Hide()
+
+    def _apply_ai_features_visibility(self) -> None:
+        """Show or hide AI entry points after the training toggle changes."""
+        enabled = ai_features_enabled()
+        self._set_ai_overview_btn_visible(enabled)
+        self._size_result_action_buttons()
+        self.panel.Layout()
+        self.Layout()
+        self._result_icon_key = None
+        self._update_result_status_icon()
+        # Rebuild so Report → AI overview appears/disappears with the toggle.
+        self._build_menubar()
+
     def _update_report_actions_enabled(self) -> None:
         """Enable Report menu / button only when a check result exists.
 
@@ -3523,7 +3740,12 @@ class MainFrame(wx.Frame):
             item.Enable(enabled)
         if self.menu_ai_overview is not None:
             self.menu_ai_overview.Enable(enabled)
+        # AI overview is hidden when features are off; only enable when shown.
+        if self.ai_overview_btn is not None and ai_features_enabled():
+            self.ai_overview_btn.Enable(enabled)
+        self.copy_btn.Enable(enabled)
         self.report_btn.Enable(enabled)
+        self._update_show_issues_button()
         menubar = self.GetMenuBar()
         if menubar is None:
             return
@@ -3534,6 +3756,10 @@ class MainFrame(wx.Frame):
     def _bind(self) -> None:
         self.select_file_btn.Bind(wx.EVT_BUTTON, self.on_browse_file)
         self.select_folder_btn.Bind(wx.EVT_BUTTON, self.on_browse_folder)
+        self.result_icon.Bind(wx.EVT_LEFT_UP, self.on_result_icon_click)
+        if self.ai_overview_btn is not None:
+            self.ai_overview_btn.Bind(wx.EVT_BUTTON, self.on_ai_overview)
+        self.show_issues_btn.Bind(wx.EVT_BUTTON, self.on_show_issues)
         self.copy_btn.Bind(wx.EVT_BUTTON, self.on_copy_summary)
         self.report_btn.Bind(wx.EVT_BUTTON, self.on_report_button)
         self.filter_choice.Bind(wx.EVT_CHOICE, self.on_filter_changed)
@@ -3561,6 +3787,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_copy_summary, self.menu_copy)
         self.Bind(wx.EVT_MENU, self.on_clear_results, self.menu_clear)
         self.Bind(wx.EVT_MENU, self.on_check, self.menu_check)
+        self.Bind(wx.EVT_MENU, self.on_toggle_ai_features, self.menu_ai_features)
         self.Bind(wx.EVT_MENU, self.on_view_full_log, self.menu_view_log)
         self.Bind(wx.EVT_MENU, self.on_check_updates, self.menu_update)
         self.Bind(wx.EVT_MENU, self.on_reinstall_checker, self.menu_install)
@@ -3603,6 +3830,7 @@ class MainFrame(wx.Frame):
         self.result_box.SetLabel(_("Result"))
         self.result_label.SetName(_("Check result"))
         self._set_result_accessible_name(self.result_label.GetValue())
+        self._update_result_status_icon()
         self.issues_box.SetLabel(_("Issues"))
         self.filter_label.SetLabel(_("Filter:"))
         self.filter_choice.SetName(_("Issue filter"))
@@ -3628,15 +3856,21 @@ class MainFrame(wx.Frame):
                 "times it occurred. Useful when one rule has many instances."
             )
         )
+        if self.ai_overview_btn is not None:
+            self.ai_overview_btn.SetLabel(_("AI &overview"))
+            self.ai_overview_btn.SetToolTip(
+                _("Generate an AI overview of this report (Ctrl+Shift+A)")
+            )
+        self._update_show_issues_button()
         self.copy_btn.SetLabel(_("&Copy summary"))
         self.copy_btn.SetToolTip(_("Copy the result summary (Ctrl+Shift+C)"))
         self.report_btn.SetLabel(_("&Report…"))
         self.report_btn.SetToolTip(
             _(
-                "View or save reports, AI overview (when available), "
-                "copy the summary, or view the full log"
+                "View or save reports, copy the summary, or view the full log"
             )
         )
+        self._size_result_action_buttons()
         self.issues_list.SetName(_("Issues list"))
         self.issues_list.SetColumnTitles(
             (_("Severity"), _("Source"), _("Code"), _("Location"), _("Message"))
@@ -3651,6 +3885,96 @@ class MainFrame(wx.Frame):
         else:
             self._show_result_text(_("No check run yet."), title=None)
         self._update_status_bar()
+        self.panel.Layout()
+        self.Layout()
+
+    def _update_show_issues_button(self) -> None:
+        has_issues = (
+            self._last_result is not None and bool(self._last_result.issues)
+        )
+        if not has_issues and self._issues_visible:
+            self._set_issues_panel_visible(False)
+            return
+        self.show_issues_btn.Enable(has_issues)
+        if self._issues_visible:
+            self.show_issues_btn.SetLabel(_("Hide &issues"))
+            self.show_issues_btn.SetToolTip(_("Hide the issues list"))
+        else:
+            self.show_issues_btn.SetLabel(_("Show &issues"))
+            self.show_issues_btn.SetToolTip(_("Show the issues list"))
+
+    def _set_issues_panel_visible(
+        self, visible: bool, *, keep_center: bool = True
+    ) -> None:
+        """Show or hide the Issues frame, keeping the window vertically centred."""
+        if visible == self._issues_visible:
+            return
+
+        old_rect = self.GetRect()
+        non_client_h = old_rect.height - self.GetClientSize().height
+
+        if not visible:
+            # Measure how much height the issues block contributes before hiding.
+            issues_h = self.issues_sizer.GetSize().height
+            item = self.root_sizer.GetItem(self.issues_sizer)
+            border = item.GetBorder() if item is not None else 10
+            # LEFT|RIGHT|BOTTOM → bottom margin only adds to height.
+            self._issues_height_delta = max(issues_h + border, 0)
+
+        self.root_sizer.Show(self.issues_sizer, visible, recursive=True)
+        self.issues_box.Show(visible)
+        self._issues_visible = visible
+        # Re-apply Source visibility after the flag changes: showing those
+        # controls while Issues is collapsed parks them at the panel origin.
+        self._apply_source_filter_visibility()
+        self.panel.Layout()
+        self.Layout()
+
+        # Never shrink below the laid-out minimum — that was clipping the
+        # result text box to three lines when Issues started collapsed.
+        min_frame_h = non_client_h + max(self.root_sizer.GetMinSize().height, 1)
+        if visible:
+            new_h = max(old_rect.height + self._issues_height_delta, min_frame_h)
+        else:
+            new_h = max(old_rect.height - self._issues_height_delta, min_frame_h)
+
+        if keep_center:
+            new_y = old_rect.y + (old_rect.height - new_h) // 2
+            if new_y < 0:
+                new_y = 0
+            self.SetSize(old_rect.x, new_y, old_rect.width, new_h)
+        else:
+            # Startup: Centre() runs immediately afterwards.
+            self.SetSize(old_rect.width, new_h)
+
+        self._update_show_issues_button()
+        self._size_result_action_buttons()
+        self.panel.Layout()
+        self.Layout()
+        # If the result text was still squeezed (common after collapsing Issues),
+        # grow the frame by the shortfall so all four lines remain visible.
+        self._ensure_result_text_height(keep_center=keep_center)
+
+    def _ensure_result_text_height(self, *, keep_center: bool) -> None:
+        """Grow the frame when the result text box is below its four-line min."""
+        need = getattr(self, "_result_text_min_height", 0)
+        if need <= 0 or not hasattr(self, "result_label"):
+            return
+        have = self.result_label.GetSize().height
+        deficit = need - have
+        if deficit <= 0:
+            return
+        rect = self.GetRect()
+        new_h = rect.height + deficit
+        if keep_center:
+            new_y = rect.y - deficit // 2
+            if new_y < 0:
+                new_y = 0
+            self.SetSize(rect.x, new_y, rect.width, new_h)
+        else:
+            self.SetSize(rect.width, new_h)
+        min_w = self.GetMinSize().width
+        self.SetMinSize((min_w, max(self.GetMinSize().height, new_h)))
         self.panel.Layout()
         self.Layout()
 
@@ -3683,8 +4007,10 @@ class MainFrame(wx.Frame):
                 if detect_java() is None:
                     wx.PostEvent(self, JavaMissingEvent())
 
-                def progress(msg: str) -> None:
-                    wx.PostEvent(self, ProgressEvent(message=msg))
+                def progress(msg: str, *, announce: bool = True) -> None:
+                    wx.PostEvent(
+                        self, ProgressEvent(message=msg, announce=announce)
+                    )
 
                 ensure_tools_installed(progress=progress)
                 # One-time after install/upgrade: run each tool once so AV
@@ -3771,14 +4097,17 @@ class MainFrame(wx.Frame):
         self.source_choice.SetSelection(0)
         self._set_source_filter_visible(False)
         self._update_report_actions_enabled()
+        self._update_result_status_icon()
         self._update_status_bar()
         self._focus_select_button()
 
-    def _set_busy(self, busy: bool) -> None:
+    def _set_busy(self, busy: bool, *, update_icon: bool = True) -> None:
         self._busy = busy
         self.select_file_btn.Enable(not busy)
         self.select_folder_btn.Enable(not busy)
         self.path_ctrl.Enable(not busy)
+        if update_icon:
+            self._update_result_status_icon()
 
     def _current_path(self) -> Path | None:
         text = self.path_ctrl.GetValue().strip().strip('"')
@@ -3997,12 +4326,25 @@ class MainFrame(wx.Frame):
         return names[idx - 1]
 
     def _set_source_filter_visible(self, visible: bool) -> None:
-        """Show or hide the Source filter (only useful for multi-checker runs)."""
-        self.filter_row.Show(self.source_label, visible)
-        self.filter_row.Show(self.source_choice, visible)
-        self.source_label.Enable(visible)
-        self.source_choice.Enable(visible)
-        self.panel.Layout()
+        """Remember whether Source filter is wanted; show only if Issues is open."""
+        self._source_filter_wanted = visible
+        self._apply_source_filter_visibility()
+
+    def _apply_source_filter_visibility(self) -> None:
+        """Map Source filter wanted-state onto the screen.
+
+        The Issues panel starts collapsed. Showing Source while that panel is
+        hidden makes wx place the controls at the panel origin.
+        """
+        show = bool(self._source_filter_wanted and self._issues_visible)
+        self.filter_row.Show(self.source_label, show)
+        self.filter_row.Show(self.source_choice, show)
+        self.source_label.Show(show)
+        self.source_choice.Show(show)
+        self.source_label.Enable(self._source_filter_wanted)
+        self.source_choice.Enable(self._source_filter_wanted)
+        if self._issues_visible:
+            self.panel.Layout()
 
     def _sync_source_filter_choices(
         self,
@@ -4040,6 +4382,7 @@ class MainFrame(wx.Frame):
         self._sync_source_filter_choices(prefer=None, reset_to_all=True)
         self._populate_issues()
         self._update_report_actions_enabled()
+        self._update_result_status_icon()
         self._update_status_bar()
         self._announce_result_pane()
         try:
@@ -4057,7 +4400,14 @@ class MainFrame(wx.Frame):
 
     # --- Events ---
 
-    def on_browse_file(self, _event: wx.CommandEvent) -> None:
+    def on_result_icon_click(self, event: wx.MouseEvent) -> None:
+        """Status icon acts as a shortcut for Select file…"""
+        event.Skip()
+        if self._busy:
+            return
+        self.on_browse_file(None)
+
+    def on_browse_file(self, _event: wx.CommandEvent | None) -> None:
         with wx.FileDialog(
             self,
             _("Select an eBraille, EPUB, or PDF publication"),
@@ -4118,8 +4468,10 @@ class MainFrame(wx.Frame):
         self.issues_list.DeleteAllItems()
 
         def worker() -> None:
-            def progress(msg: str) -> None:
-                wx.PostEvent(self, ProgressEvent(message=msg))
+            def progress(msg: str, *, announce: bool = True) -> None:
+                wx.PostEvent(
+                    self, ProgressEvent(message=msg, announce=announce)
+                )
 
             result = run_check(path, exploded=None, progress=progress)
             wx.PostEvent(self, ResultEvent(result=result))
@@ -4136,13 +4488,24 @@ class MainFrame(wx.Frame):
             elif not self._busy:
                 self._restore_result_display()
             return
-        # Move focus into the result pane so progress is announced (checks and
-        # one-time first-use warm-up). Selecting the text is what screen readers
-        # pick up as a change.
-        self._show_result_text(event.message, update_title=False, focus=True)
+        announce = bool(getattr(event, "announce", True))
+        if announce:
+            # Move focus into the result pane so progress is announced (checks
+            # and one-time first-use warm-up). Selecting the text is what screen
+            # readers pick up as a change.
+            self._show_result_text(
+                event.message, update_title=False, focus=True
+            )
+            return
+        # Living updates (Ace stream / elapsed timer): refresh the text without
+        # stealing focus or re-announcing under focus.
+        self.result_label.ChangeValue(event.message)
+        self._set_result_accessible_name(event.message)
 
     def on_result_event(self, event: ResultEvent) -> None:
-        self._set_busy(False)
+        # Defer icon refresh until _apply_result so we don't flash the previous
+        # (or idle) status between clearing busy and loading the new verdict.
+        self._set_busy(False, update_icon=False)
         pending = self._pending_fix_verify
         self._pending_fix_verify = None
         self._apply_result(event.result)
@@ -4314,6 +4677,12 @@ class MainFrame(wx.Frame):
         update_settings(unique_codes=bool(self.unique_codes_cb.GetValue()))
         self._populate_issues()
 
+    def on_toggle_ai_features(self, _event: wx.CommandEvent) -> None:
+        if not fido_settings_present():
+            return
+        update_settings(ai_features_enabled=bool(self.menu_ai_features.IsChecked()))
+        self._apply_ai_features_visibility()
+
     def on_issues_list_focus(self, event: wx.FocusEvent) -> None:
         event.Skip()
         # Tabbing into the list often lands on the header first; move to row 0.
@@ -4333,6 +4702,9 @@ class MainFrame(wx.Frame):
             wx.TheClipboard.SetData(wx.TextDataObject(text))
             wx.TheClipboard.Close()
 
+    def on_show_issues(self, _event: wx.CommandEvent) -> None:
+        self._set_issues_panel_visible(not self._issues_visible)
+
     def on_clear_results(self, _event: wx.CommandEvent) -> None:
         if self._busy:
             wx.MessageBox(
@@ -4348,10 +4720,6 @@ class MainFrame(wx.Frame):
 
     def on_report_button(self, _event: wx.CommandEvent) -> None:
         menu = wx.Menu()
-        overview_item = None
-        if fido_settings_present():
-            overview_item = menu.Append(wx.ID_ANY, _("AI &overview…\tCtrl+Shift+A"))
-            menu.AppendSeparator()
         view_html = menu.Append(wx.ID_ANY, _("View &HTML report in browser\tCtrl+H"))
         save_html = menu.Append(wx.ID_ANY, _("Save &HTML report…\tCtrl+S"))
         menu.AppendSeparator()
@@ -4362,8 +4730,6 @@ class MainFrame(wx.Frame):
         clear_item = menu.Append(wx.ID_ANY, _("C&lear results\tCtrl+Shift+N"))
         menu.AppendSeparator()
         log_item = menu.Append(wx.ID_ANY, _("View full &log\tCtrl+L"))
-        if overview_item is not None:
-            menu.Bind(wx.EVT_MENU, self.on_ai_overview, overview_item)
         menu.Bind(wx.EVT_MENU, self.on_view_html_report, view_html)
         menu.Bind(wx.EVT_MENU, self.on_save_html_report, save_html)
         menu.Bind(wx.EVT_MENU, self.on_view_text_report, view_text)
@@ -4489,7 +4855,7 @@ class MainFrame(wx.Frame):
             self._close_overview_progress()
 
     def on_ai_overview(self, _event: wx.CommandEvent) -> None:
-        if not fido_settings_present():
+        if not ai_features_enabled():
             return
         if self._busy:
             wx.MessageBox(
@@ -4873,8 +5239,10 @@ class MainFrame(wx.Frame):
         def worker() -> None:
             try:
 
-                def progress(msg: str) -> None:
-                    wx.PostEvent(self, ProgressEvent(message=msg))
+                def progress(msg: str, *, announce: bool = True) -> None:
+                    wx.PostEvent(
+                        self, ProgressEvent(message=msg, announce=announce)
+                    )
 
                 paths: list[str] = []
                 for release in releases:

@@ -9,14 +9,40 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 
 from .models import CheckResult, Issue, Severity, Verdict
 from .paths import bundled_ace_dir
-from .subprocess_util import hidden_run_kwargs
+from .subprocess_util import hidden_run_kwargs, run_capturing
 
 ACE_DISPLAY_NAME = "Ace"
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_ACE_PROGRESS_RE = re.compile(r"(?i)^\s*(?:info|warn|warning|error):\s*(.+)$")
+
+
+def _strip_ansi(s: str) -> str:
+    return _ANSI_RE.sub("", s)
+
+
+def _ace_progress_message(line: str) -> str | None:
+    """Map an Ace console line to a short UI progress string, or None."""
+    cleaned = _strip_ansi(line).strip()
+    if not cleaned:
+        return None
+    m = _ACE_PROGRESS_RE.match(cleaned)
+    if not m:
+        return None
+    detail = m.group(1).strip()
+    if not detail:
+        return None
+    # Drop leading dash used for per-document lines: "- path: N issues found"
+    if detail.startswith("- "):
+        detail = detail[2:].strip()
+    return f"Ace: {detail}"
+
 
 _ACE_PATH_CACHE: Path | None | bool = False  # False = unset
 _ACE_CMD_CACHE: list[str] | None | bool = False
@@ -436,15 +462,30 @@ def run_ace_check(
             "--force",
             str(target),
         ]
+        last_post = [0.0]
+
+        def on_line(line: str) -> None:
+            if not progress:
+                return
+            msg = _ace_progress_message(line)
+            if not msg:
+                return
+            now = time.monotonic()
+            # Throttle UI posts; always allow the first.
+            if last_post[0] and (now - last_post[0]) < 0.35:
+                return
+            last_post[0] = now
+            try:
+                progress(msg, announce=False)
+            except TypeError:
+                progress(msg)
+
         try:
-            proc = subprocess.run(
+            proc = run_capturing(
                 cmd,
-                capture_output=True,
-                text=True,
-                check=False,
                 timeout=600,
                 env=_ace_run_env(),
-                **hidden_run_kwargs(),
+                on_line=on_line if progress else None,
             )
         except subprocess.TimeoutExpired:
             return CheckResult(

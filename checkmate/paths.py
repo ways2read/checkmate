@@ -78,6 +78,22 @@ def bundled_ace_dir() -> Path:
     return application_dir() / BUNDLED_ACE_DIRNAME
 
 
+def images_dir() -> Path:
+    """Directory with UI PNGs (result status icons, etc.)."""
+    if is_frozen():
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass is not None:
+            bundled = Path(meipass) / "images"
+            if bundled.is_dir():
+                return bundled
+        beside = application_dir() / "images"
+        if beside.is_dir():
+            return beside
+        if meipass is not None:
+            return Path(meipass) / "images"
+    return application_dir() / "images"
+
+
 def app_data_dir() -> Path:
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))

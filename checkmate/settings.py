@@ -32,3 +32,16 @@ def update_settings(**kwargs: Any) -> None:
     data.pop("select_result_on_focus", None)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def ai_features_enabled() -> bool:
+    """True when FIDO AI is available and the user has not turned it off.
+
+    The preference defaults to on when AI is available. Used for training so
+    the UI can match a no-AI install without removing FIDO settings.
+    """
+    from .fido_settings import fido_settings_present
+
+    if not fido_settings_present():
+        return False
+    return bool(read_settings().get("ai_features_enabled", True))

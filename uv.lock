@@ -314,7 +314,7 @@ wheels = [
 
 [[package]]
 name = "checkmate"
-version = "0.7.18"
+version = "0.7.19"
 source = { editable = "." }
 dependencies = [
     { name = "litellm" },

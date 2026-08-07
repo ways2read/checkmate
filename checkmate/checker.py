@@ -17,7 +17,7 @@ from .paths import (
     verapdf_uses_bundled_copy,
 )
 from .publication import PublicationKind, classify_publication
-from .subprocess_util import hidden_run_kwargs
+from .subprocess_util import format_elapsed, run_capturing
 from .updater import (
     EBRAILLE_TOOL,
     EPUBCHECK_TOOL,
@@ -33,6 +33,16 @@ PACKAGED_SUFFIXES = {".ebrl", ".epub", ".zip", ".pdf"}
 
 def is_packaged_path(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() in PACKAGED_SUFFIXES
+
+
+def _emit_progress(progress, message: str, *, announce: bool = True) -> None:
+    """Call ``progress`` with optional announce; tolerate older one-arg callbacks."""
+    if not progress:
+        return
+    try:
+        progress(message, announce=announce)
+    except TypeError:
+        progress(message)
 
 
 def is_exploded_path(path: Path) -> bool:
@@ -909,15 +919,20 @@ def _run_verapdf_once(
     jar: Path,
     target: Path,
     flavour: str,
+    progress=None,
+    progress_label: str | None = None,
 ) -> tuple[list[str], CheckResult]:
     cmd = build_verapdf_command(java, jar, target, flavour=flavour)
-    proc = subprocess.run(
+    label = progress_label or "Checking with veraPDF…"
+
+    def heartbeat(elapsed: float) -> None:
+        _emit_progress(progress, f"{label} ({format_elapsed(elapsed)})", announce=False)
+
+    proc = run_capturing(
         cmd,
-        capture_output=True,
-        text=True,
-        check=False,
         timeout=600,
-        **hidden_run_kwargs(),
+        heartbeat=heartbeat if progress else None,
+        heartbeat_interval=1.0,
     )
     result = parse_verapdf_output(
         proc.stdout or "",
@@ -1033,11 +1048,16 @@ def run_check(
     if kind == PublicationKind.PDF:
         # Prefer PDF/UA-2; some files trigger an internal veraPDF NPE on UA-2,
         # so fall back to PDF/UA-1 (still accessibility) when that happens.
-        if progress:
-            progress(f"Checking with {tool.display_name}…")
+        label = f"Checking with {tool.display_name}…"
+        _emit_progress(progress, label)
         try:
             _cmd, result = _run_verapdf_once(
-                java=java, jar=jar, target=target, flavour="ua2"
+                java=java,
+                jar=jar,
+                target=target,
+                flavour="ua2",
+                progress=progress,
+                progress_label=label,
             )
         except subprocess.TimeoutExpired:
             return _stamp_result(
@@ -1067,7 +1087,12 @@ def run_check(
         ):
             try:
                 _cmd_ua1, ua1_result = _run_verapdf_once(
-                    java=java, jar=jar, target=target, flavour="ua1"
+                    java=java,
+                    jar=jar,
+                    target=target,
+                    flavour="ua1",
+                    progress=progress,
+                    progress_label=label,
                 )
             except (subprocess.TimeoutExpired, OSError):
                 return _stamp_result(
@@ -1091,8 +1116,8 @@ def run_check(
             result, target=target, tool=tool, checked_at=checked_at
         )
 
-    if progress:
-        progress(f"Checking with {tool.display_name}…")
+    label = f"Checking with {tool.display_name}…"
+    _emit_progress(progress, label)
 
     with tempfile.TemporaryDirectory(prefix="ebraille-gui-") as tmp:
         json_path = Path(tmp) / "report.json"
@@ -1108,14 +1133,19 @@ def run_check(
             cmd.extend(["-mode", "exp"])
         cmd.extend(["--json", str(json_path), str(target)])
 
+        def heartbeat(elapsed: float) -> None:
+            _emit_progress(
+                progress,
+                f"{label} ({format_elapsed(elapsed)})",
+                announce=False,
+            )
+
         try:
-            proc = subprocess.run(
+            proc = run_capturing(
                 cmd,
-                capture_output=True,
-                text=True,
-                check=False,
                 timeout=600,
-                **hidden_run_kwargs(),
+                heartbeat=heartbeat if progress else None,
+                heartbeat_interval=1.0,
             )
         except subprocess.TimeoutExpired:
             return _stamp_result(

@@ -82,13 +82,16 @@ def run_daisy202_check(
     if status is None:
         return None
 
+    label = "Running DAISY 2.02 Validator…"
     if progress:
-        progress("Running DAISY 2.02 Validator…")
+        progress(label)
 
     job_id: str | None = None
     try:
         job_id = create_daisy202_job(status, ncc)
-        job_status, job_xml = wait_for_job(status, job_id)
+        job_status, job_xml = wait_for_job(
+            status, job_id, progress=progress, progress_label=label
+        )
         messages = job_messages_text(job_xml)
         job_log = fetch_job_log(status, job_id)
 

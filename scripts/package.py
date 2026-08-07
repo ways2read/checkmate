@@ -432,6 +432,17 @@ def build(
             file=sys.stderr,
         )
 
+    images = ROOT / "images"
+    if images.is_dir():
+        sep = ";" if sys.platform == "win32" else ":"
+        cmd.extend(["--add-data", f"{images}{sep}images"])
+        print(f"Bundling UI images from {images}")
+    else:
+        print(
+            f"Warning: UI images folder not found ({images})",
+            file=sys.stderr,
+        )
+
     if onefile:
         cmd.append("--onefile")
     else:
