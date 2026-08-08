@@ -94,6 +94,22 @@ def images_dir() -> Path:
     return application_dir() / "images"
 
 
+def sounds_dir() -> Path:
+    """Directory with UI WAV sound effects (check completion chimes)."""
+    if is_frozen():
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass is not None:
+            bundled = Path(meipass) / "sounds"
+            if bundled.is_dir():
+                return bundled
+        beside = application_dir() / "sounds"
+        if beside.is_dir():
+            return beside
+        if meipass is not None:
+            return Path(meipass) / "sounds"
+    return application_dir() / "sounds"
+
+
 def app_data_dir() -> Path:
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))

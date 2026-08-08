@@ -46,6 +46,7 @@ from .settings import (
     ai_features_enabled,
     read_settings,
     show_issues_always,
+    sounds_enabled,
     update_settings,
 )
 from .updater import (
@@ -253,21 +254,29 @@ def _win_clear_control_parent(window: wx.Window) -> None:
         pass
 
 
-def _win_force_foreground(window: wx.Window) -> None:
-    """Restore Win32 foreground after a modal ProgressDialog tears down."""
+def _win_force_foreground(window: wx.Window) -> bool:
+    """Try to make ``window`` the Win32 foreground top-level.
+
+    Uses AttachThreadInput + SetForegroundWindow. Does **not** synthesize Alt
+    keypresses — that toggles the menu bar and floods Narrator/NVDA.
+    """
     if sys.platform != "win32":
-        return
+        try:
+            window.Raise()
+            return True
+        except Exception:
+            return False
     try:
         import ctypes
 
         hwnd = int(window.GetHandle() or 0)
         if not hwnd:
-            return
+            return False
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
         fg = int(user32.GetForegroundWindow() or 0)
         if fg == hwnd:
-            return
+            return True
         this_thread = int(kernel32.GetCurrentThreadId())
         fg_thread = 0
         if fg:
@@ -276,14 +285,17 @@ def _win_force_foreground(window: wx.Window) -> None:
         if fg_thread and fg_thread != this_thread:
             attached = bool(user32.AttachThreadInput(this_thread, fg_thread, True))
         try:
+            if hasattr(window, "IsIconized") and window.IsIconized():
+                window.Iconize(False)
             user32.ShowWindow(hwnd, 9)  # SW_RESTORE
             user32.BringWindowToTop(hwnd)
             user32.SetForegroundWindow(hwnd)
         finally:
             if attached:
                 user32.AttachThreadInput(this_thread, fg_thread, False)
+        return int(user32.GetForegroundWindow() or 0) == hwnd
     except Exception:
-        pass
+        return False
 
 
 def _webview_host_action(url: str) -> str | None:
@@ -1117,6 +1129,14 @@ def _macos_make_first_responder(window: wx.Window) -> bool:
 
 def app_title() -> str:
     return _("CheckMate")
+
+
+# How check/progress milestones are announced to screen readers:
+#   "focus"     — quiet focus into Result (no text selection).
+#   "selection" — legacy leave/enter + leave text selected.
+_ANNOUNCE_MODE = "focus"
+# When False, keep the window title as plain "CheckMate" (no milestone suffix).
+_UPDATE_TITLE_BAR = False
 
 
 def filter_choices() -> tuple[str, ...]:
@@ -3429,6 +3449,7 @@ class MainFrame(wx.Frame):
         self.menu_ai_overview: wx.MenuItem | None = None
         self.menu_ai_features: wx.MenuItem | None = None
         self.menu_show_issues_always: wx.MenuItem | None = None
+        self.menu_sounds: wx.MenuItem | None = None
         self._lang_menu_items: dict[str, wx.MenuItem] = {}
         self._issues_visible = True
         self._issues_height_delta = 0
@@ -3476,7 +3497,10 @@ class MainFrame(wx.Frame):
             pass
 
     def _set_result_title(self, summary: str | None = None) -> None:
-        """Append the verdict to the app name in the title bar."""
+        """Optionally append a status/verdict message to the title bar."""
+        if not _UPDATE_TITLE_BAR:
+            self.SetTitle(app_title())
+            return
         if summary:
             clean = " ".join(summary.split())
             self.SetTitle(f"{app_title()} — {clean}")
@@ -3488,6 +3512,65 @@ class MainFrame(wx.Frame):
         spoken = " ".join(text.split())
         self.result_label.SetName(_("Check result: {text}", text=spoken))
 
+    def _focus_result_for_announcement(self, *, keep: bool = False) -> None:
+        """Focus Result so screen readers announce the new text (no highlight).
+
+        Mid-check: quiet SetFocus only (no Raise / foreground fight). Final
+        verdict uses ``_reclaim_focus_after_check`` from the result event.
+        """
+        self._announce_focus_gen = getattr(self, "_announce_focus_gen", 0) + 1
+        gen = self._announce_focus_gen
+
+        if keep:
+            self._reclaim_focus_after_check(gen=gen)
+            return
+
+        def _enter_result() -> None:
+            if getattr(self, "_announce_focus_gen", 0) != gen:
+                return
+            try:
+                self.result_label.SetSelection(0, 0)
+                if self.result_label.HasFocus():
+                    return
+                if not _try_set_focus(self.result_label):
+                    self.result_label.SetFocus()
+            except Exception:
+                return
+
+        wx.CallAfter(_enter_result)
+
+    def _reclaim_focus_after_check(self, *, gen: int | None = None) -> None:
+        """Raise the frame and put keyboard focus in Result after a check.
+
+        Retries a few times if checker process exit steals activation. Stops
+        early once the frame is foreground and Result has focus.
+        """
+        if gen is None:
+            self._announce_focus_gen = getattr(self, "_announce_focus_gen", 0) + 1
+            gen = self._announce_focus_gen
+
+        def _attempt(n: int) -> None:
+            if getattr(self, "_announce_focus_gen", 0) != gen:
+                return
+            try:
+                if self.IsIconized():
+                    self.Iconize(False)
+                self.Show(True)
+                self.Raise()
+                foreground_ok = _win_force_foreground(self)
+                self.result_label.SetSelection(0, 0)
+                if not _try_set_focus(self.result_label):
+                    self.result_label.SetFocus()
+                focused = self.result_label.HasFocus()
+                if foreground_ok and focused:
+                    return
+            except Exception:
+                pass
+            if n < 4:
+                wx.CallLater(100 + n * 100, lambda: _attempt(n + 1))
+
+        wx.CallAfter(lambda: _attempt(0))
+
     def _show_result_text(
         self,
         display: str,
@@ -3497,26 +3580,40 @@ class MainFrame(wx.Frame):
         update_title: bool = True,
         verdict: Verdict | None = None,
     ) -> None:
-        """Update the result pane value, accessible name, colors, and optionally the title."""
+        """Update the result pane value, accessible name, colors, and title.
+
+        ``focus=True`` requests a screen-reader announcement.
+        """
         self.result_label.ChangeValue(display)
         self._set_result_accessible_name(display)
         self._set_result_colors(verdict)
+        spoken = title if title is not None else display
+
+        if _ANNOUNCE_MODE == "focus":
+            if update_title or focus:
+                self._set_result_title(spoken if (focus or title) else title)
+            if focus:
+                self._focus_result_for_announcement(keep=False)
+            return
+
+        # Legacy selection / focus-leave path.
         if update_title:
             self._set_result_title(title)
         if focus:
             self._announce_result_pane()
         elif self.result_label.HasFocus():
-            # The text changed under focus (e.g. progress updates): re-select
-            # it so screen readers announce the new message.
             wx.CallAfter(self._prepare_result_for_review)
 
     def _announce_result_pane(self) -> None:
-        """Force a focus leave/enter so screen readers re-announce updated text.
-
-        Changing the value while the control already has focus (e.g. after
-        'Checking…') often produces no new announcement. Parking focus briefly
-        elsewhere then returning triggers a fresh focus event.
-        """
+        """Announce the current result (focus mode defers reclaim)."""
+        if _ANNOUNCE_MODE == "focus":
+            if self._last_result is not None:
+                self._set_result_title(self._last_result.headline)
+            else:
+                text = self.result_label.GetValue().strip()
+                self._set_result_title(text or None)
+            # Focus/foreground reclaim runs once from on_result_event after layout.
+            return
         if self.result_label.HasFocus():
             if self.select_file_btn.IsEnabled():
                 self._focus_select_button()
@@ -3643,6 +3740,8 @@ class MainFrame(wx.Frame):
 
     def _prepare_result_for_review(self) -> None:
         """Select all so screen readers announce the result text on focus."""
+        if _ANNOUNCE_MODE != "selection":
+            return
         if not self.result_label.HasFocus():
             return
         end = self.result_label.GetLastPosition()
@@ -3652,7 +3751,8 @@ class MainFrame(wx.Frame):
 
     def on_result_focus(self, event: wx.FocusEvent) -> None:
         event.Skip()
-        wx.CallAfter(self._prepare_result_for_review)
+        if _ANNOUNCE_MODE == "selection":
+            wx.CallAfter(self._prepare_result_for_review)
 
     def _focus_select_button(self) -> None:
         if sys.platform == "darwin":
@@ -3726,7 +3826,7 @@ class MainFrame(wx.Frame):
         result_sizer = wx.StaticBoxSizer(self.result_box, wx.VERTICAL)
         self.result_label = wx.TextCtrl(
             panel,
-            value=_("No check run yet."),
+            value=_("CheckMate ready."),
             style=wx.TE_READONLY | wx.TE_MULTILINE | wx.TE_WORDWRAP | wx.BORDER_SUNKEN,
             name=_("Check result"),
         )
@@ -3744,7 +3844,7 @@ class MainFrame(wx.Frame):
         self._result_text_min_height = text_h
         self.result_label.SetMinSize((-1, text_h))
         self.result_label.Bind(wx.EVT_SET_FOCUS, self.on_result_focus)
-        self._set_result_accessible_name(_("No check run yet."))
+        self._set_result_accessible_name(_("CheckMate ready."))
         result_sizer.Add(self.result_label, 1, wx.EXPAND | wx.ALL, 8)
 
         icon_size = self._result_icon_display_size()
@@ -3961,6 +4061,16 @@ class MainFrame(wx.Frame):
                 "that finds issues (instead of pressing Show issues)"
             )
         )
+        self.menu_sounds = tools_menu.AppendCheckItem(
+            wx.ID_ANY, _("Play completion &sounds")
+        )
+        self.menu_sounds.Check(sounds_enabled())
+        self.menu_sounds.SetHelp(
+            _(
+                "Play a short sound when a check finishes "
+                "(different tones for passed and failed)"
+            )
+        )
         tools_menu.AppendSeparator()
         self.menu_ai_features = tools_menu.AppendCheckItem(
             wx.ID_ANY, _("Enable &AI features")
@@ -4125,6 +4235,7 @@ class MainFrame(wx.Frame):
             self.on_toggle_show_issues_always,
             self.menu_show_issues_always,
         )
+        self.Bind(wx.EVT_MENU, self.on_toggle_sounds, self.menu_sounds)
         self.Bind(wx.EVT_MENU, self.on_toggle_ai_features, self.menu_ai_features)
         self.Bind(wx.EVT_MENU, self.on_view_full_log, self.menu_view_log)
         self.Bind(wx.EVT_MENU, self.on_view_changelog, self.menu_view_changelog)
@@ -4222,7 +4333,7 @@ class MainFrame(wx.Frame):
         if self._last_result is not None:
             self._refresh_result_text()
         else:
-            self._show_result_text(_("No check run yet."), title=None)
+            self._show_result_text(_("CheckMate ready."), title=None)
         self._update_status_bar()
         self.panel.Layout()
         self.Layout()
@@ -4422,7 +4533,7 @@ class MainFrame(wx.Frame):
         if self._last_result is not None:
             self._refresh_result_text()
         else:
-            self._show_result_text(_("No check run yet."), title=None)
+            self._show_result_text(_("CheckMate ready."), title=None)
 
     def _clear_to_launch_state(self) -> None:
         """Reset the UI to the same state as a fresh launch."""
@@ -4431,7 +4542,7 @@ class MainFrame(wx.Frame):
         self._displayed_issues = []
         self._displayed_counts = []
         self.path_ctrl.ChangeValue("")
-        self._show_result_text(_("No check run yet."), title=None)
+        self._show_result_text(_("CheckMate ready."), title=None)
         self.issues_list.DeleteAllItems()
         self.filter_choice.SetSelection(0)
         self._source_filter_names = []
@@ -4728,6 +4839,12 @@ class MainFrame(wx.Frame):
         self._update_status_bar()
         self._announce_result_pane()
         try:
+            from .sounds import play_completion_sound
+
+            play_completion_sound(result.verdict)
+        except Exception:
+            pass
+        try:
             from .telemetry import log_check
 
             log_check(result)
@@ -4802,8 +4919,7 @@ class MainFrame(wx.Frame):
             return
 
         self._set_busy(True)
-        # Focus the result pane so "Checking…" is announced; results will
-        # leave-and-refocus the same control when they arrive.
+        # Quiet focus so screen readers announce "Checking…".
         self._show_result_text(
             _("Checking…"), title=_("Checking…"), focus=True
         )
@@ -4832,15 +4948,14 @@ class MainFrame(wx.Frame):
             return
         announce = bool(getattr(event, "announce", True))
         if announce:
-            # Move focus into the result pane so progress is announced (checks
-            # and one-time first-use warm-up). Selecting the text is what screen
-            # readers pick up as a change.
+            # Milestones only (tool start / warm-up): quiet focus into Result.
             self._show_result_text(
                 event.message, update_title=False, focus=True
             )
             return
-        # Living updates (Ace stream / elapsed timer): refresh the text without
-        # stealing focus or re-announcing under focus.
+        # Living updates (Ace stream / elapsed timer): refresh Result text only.
+        # Do not touch the title or flash-announce — that is what made
+        # "Checking with EPUBCheck (0s)" feel clunky.
         self.result_label.ChangeValue(event.message)
         self._set_result_accessible_name(event.message)
 
@@ -4852,6 +4967,9 @@ class MainFrame(wx.Frame):
         self._pending_fix_verify = None
         self._apply_result(event.result)
         self._flush_pending_open_paths()
+        # Layout (e.g. auto-show Issues) can settle after apply; reclaim again.
+        if _ANNOUNCE_MODE == "focus":
+            wx.CallAfter(self._reclaim_focus_after_check)
         if pending is not None:
             wx.CallAfter(self._verify_applied_fix, pending, event.result)
 
@@ -5149,6 +5267,9 @@ class MainFrame(wx.Frame):
         update_settings(show_issues_always=enabled)
         # Apply immediately when turning on and a result already has issues.
         self._update_show_issues_button()
+
+    def on_toggle_sounds(self, _event: wx.CommandEvent) -> None:
+        update_settings(sounds_enabled=bool(self.menu_sounds.IsChecked()))
 
     def on_issues_list_focus(self, event: wx.FocusEvent) -> None:
         event.Skip()

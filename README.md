@@ -148,6 +148,8 @@ uv run checkmate
    document status; other tools show elapsed time). When finished, focus moves
    to the summary; expand **Show issues** to review the list (filterable), or enable
    **Tools → Show issues always** to open the list automatically after checks that find issues.
+   A short completion sound plays when the check finishes (passed vs failed);
+   turn that off under **Tools → Play completion sounds**.
 3. Use **Report → View full log** (`Ctrl+L`) only when you need the raw
    checker output.
 4. **Tools → Re-check publication** (`F5`) re-runs the current path after you
@@ -202,7 +204,7 @@ Under that folder:
 - `checker/` — downloaded or updated eBraille Checker releases
 - `epubcheck/` — downloaded or updated EPUBCheck releases
 - `verapdf/` — downloaded or updated veraPDF CLI installs
-- `settings.json` — remembered UI language and preferences (e.g. Show issues always)
+- `settings.json` — remembered UI language and preferences (e.g. Show issues always, Play completion sounds)
 
 Packaged builds also include `checker/`, `epubcheck/`, and `verapdf/` beside the
 executable (or inside the `.app` bundle on macOS).
@@ -213,9 +215,12 @@ executable (or inside the `.app` bundle on macOS).
 - Logical focus order; the **Result** pane is a large, bold, focusable
   read-only multi-line field so screen readers can tab in and re-read with the
   caret (Up/Down by line, Left/Right by character)
-- When a check finishes, focus moves to Result (with a brief leave/refocus if
-  it already had focus). The result text is selected on focus so screen readers
-  announce it; arrow keys then allow line/character review
+- When a check finishes, the main window is raised and focus stays in Result
+  so screen readers announce the verdict (no text selection — selecting then
+  clearing caused NVDA to speak each message twice). Mid-check milestones
+  quietly focus Result. Living timer lines update Result without stealing
+  focus. Set `_ANNOUNCE_MODE = "selection"` in `main.py` for the older
+  leave-text-selected behaviour.
 - **Explain with AI** prefers an Edge/WebKit `WebView` so the reply is real HTML
   (headings, lists, links) for screen readers; falls back to a Markdown text
   field if no webview backend is available (`HtmlWindow` is not used). The

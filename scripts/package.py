@@ -443,6 +443,17 @@ def build(
             file=sys.stderr,
         )
 
+    sounds = ROOT / "sounds"
+    if sounds.is_dir():
+        sep = ";" if sys.platform == "win32" else ":"
+        cmd.extend(["--add-data", f"{sounds}{sep}sounds"])
+        print(f"Bundling UI sounds from {sounds}")
+    else:
+        print(
+            f"Warning: UI sounds folder not found ({sounds})",
+            file=sys.stderr,
+        )
+
     if onefile:
         cmd.append("--onefile")
     else:

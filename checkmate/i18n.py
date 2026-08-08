@@ -76,6 +76,14 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Result": "Résultat",
         "Check result": "Résultat de la vérification",
         "No check run yet.": "Aucune vérification effectuée.",
+        "CheckMate ready.": "CheckMate est prêt.",
+        "Status:": "État :",
+        "Status": "État",
+        "Status: {text}": "État : {text}",
+        "Current check status (announced to screen readers when it changes)": (
+            "État actuel de la vérification (annoncé aux lecteurs d’écran "
+            "lorsqu’il change)"
+        ),
         "Checking…": "Vérification…",
         "Issues": "Problèmes",
         "Filter:": "Filtre :",
@@ -150,6 +158,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "that finds issues (instead of pressing Show issues)": (
             "Si coché, ouvre automatiquement la liste des problèmes après une "
             "vérification qui en trouve (sans appuyer sur Afficher les problèmes)"
+        ),
+        "Play completion &sounds": "Lire les &sons de fin",
+        "Play a short sound when a check finishes "
+        "(different tones for passed and failed)": (
+            "Joue un son court à la fin d’une vérification "
+            "(tons différents pour réussite et échec)"
         ),
         "View full &log\tCtrl+L": "Afficher le journal &complet\tCtrl+L",
         "Check for &updates…": "Rechercher des &mises à jour…",
@@ -799,6 +813,14 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Result": "Resultado",
         "Check result": "Resultado de la comprobación",
         "No check run yet.": "Aún no se ha ejecutado ninguna comprobación.",
+        "CheckMate ready.": "CheckMate listo.",
+        "Status:": "Estado:",
+        "Status": "Estado",
+        "Status: {text}": "Estado: {text}",
+        "Current check status (announced to screen readers when it changes)": (
+            "Estado actual de la comprobación (anunciado a los lectores de "
+            "pantalla cuando cambia)"
+        ),
         "Checking…": "Comprobando…",
         "Issues": "Problemas",
         "Filter:": "Filtro:",
@@ -872,6 +894,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "that finds issues (instead of pressing Show issues)": (
             "Si está marcado, abre automáticamente la lista de problemas después "
             "de una comprobación que encuentre problemas (sin pulsar Mostrar problemas)"
+        ),
+        "Play completion &sounds": "Reproducir &sonidos al finalizar",
+        "Play a short sound when a check finishes "
+        "(different tones for passed and failed)": (
+            "Reproduce un sonido breve al terminar una comprobación "
+            "(tonos distintos para aprobado y fallido)"
         ),
         "View full &log\tCtrl+L": "Ver registro &completo\tCtrl+L",
         "Check for &updates…": "Buscar &actualizaciones…",
@@ -1521,6 +1549,14 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Result": "Ergebnis",
         "Check result": "Prüfergebnis",
         "No check run yet.": "Noch keine Prüfung ausgeführt.",
+        "CheckMate ready.": "CheckMate bereit.",
+        "Status:": "Status:",
+        "Status": "Status",
+        "Status: {text}": "Status: {text}",
+        "Current check status (announced to screen readers when it changes)": (
+            "Aktueller Prüfstatus (wird bei Änderung von Screenreadern "
+            "angesagt)"
+        ),
         "Checking…": "Prüfung läuft…",
         "Issues": "Probleme",
         "Filter:": "Filter:",
@@ -1595,6 +1631,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "that finds issues (instead of pressing Show issues)": (
             "Wenn aktiviert, wird die Problemliste nach einer Prüfung mit "
             "Problemen automatisch geöffnet (ohne „Probleme anzeigen“)"
+        ),
+        "Play completion &sounds": "Abschluss&töne abspielen",
+        "Play a short sound when a check finishes "
+        "(different tones for passed and failed)": (
+            "Spielt einen kurzen Ton ab, wenn eine Prüfung endet "
+            "(unterschiedliche Töne für bestanden und fehlgeschlagen)"
         ),
         "View full &log\tCtrl+L": "Vollständiges &Protokoll anzeigen\tCtrl+L",
         "Check for &updates…": "Nach &Updates suchen…",
@@ -2243,6 +2285,14 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Result": "Resultado",
         "Check result": "Resultado da verificação",
         "No check run yet.": "Ainda não foi executada nenhuma verificação.",
+        "CheckMate ready.": "CheckMate pronto.",
+        "Status:": "Estado:",
+        "Status": "Estado",
+        "Status: {text}": "Estado: {text}",
+        "Current check status (announced to screen readers when it changes)": (
+            "Estado atual da verificação (anunciado a leitores de ecrã "
+            "quando muda)"
+        ),
         "Checking…": "A verificar…",
         "Issues": "Problemas",
         "Filter:": "Filtro:",
@@ -2316,6 +2366,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "that finds issues (instead of pressing Show issues)": (
             "Se marcado, abre automaticamente a lista de problemas após uma "
             "verificação que encontre problemas (sem premir Mostrar problemas)"
+        ),
+        "Play completion &sounds": "Reproduzir &sons de conclusão",
+        "Play a short sound when a check finishes "
+        "(different tones for passed and failed)": (
+            "Reproduz um som curto quando uma verificação termina "
+            "(tons diferentes para aprovado e reprovado)"
         ),
         "View full &log\tCtrl+L": "Ver registo &completo\tCtrl+L",
         "Check for &updates…": "Procurar &atualizações…",

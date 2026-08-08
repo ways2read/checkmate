@@ -50,3 +50,8 @@ def ai_features_enabled() -> bool:
 def show_issues_always() -> bool:
     """True when the Issues list should open automatically after a check."""
     return bool(read_settings().get("show_issues_always", False))
+
+
+def sounds_enabled() -> bool:
+    """True when check completion sound effects should play (default on)."""
+    return bool(read_settings().get("sounds_enabled", True))
