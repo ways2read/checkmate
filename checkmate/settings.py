@@ -45,3 +45,8 @@ def ai_features_enabled() -> bool:
     if not fido_settings_present():
         return False
     return bool(read_settings().get("ai_features_enabled", True))
+
+
+def show_issues_always() -> bool:
+    """True when the Issues list should open automatically after a check."""
+    return bool(read_settings().get("show_issues_always", False))

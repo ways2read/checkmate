@@ -73,6 +73,9 @@ class Issue:
     location: str = ""
     # Checker that produced this issue (e.g. "EPUBCheck", "Ace", "veraPDF").
     source: str = ""
+    # Optional Ace (or other) help link for AI "Learn more" and UI.
+    help_url: str = ""
+    help_title: str = ""
 
     def summary_line(self) -> str:
         parts = [self.severity.label]

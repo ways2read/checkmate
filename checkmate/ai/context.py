@@ -566,6 +566,153 @@ def fix_allowed_for_result(result: CheckResult | None) -> bool:
     return kind_allows_excerpt(kind)
 
 
+def issues_matching_seed(
+    seed: Issue,
+    result: CheckResult | None,
+    *,
+    max_issues: int = 40,
+) -> list[Issue]:
+    """
+    Issues that share the seed's checker source + code (for Fix all like this).
+
+    Message text is ignored for matching so parameterized EPUBCheck / Ace help
+    suffixes still group together. Distinct locations are kept separately.
+    """
+    if result is None or not seed.code:
+        return [seed]
+    out: list[Issue] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for issue in result.issues:
+        if issue.code != seed.code:
+            continue
+        if seed.source and issue.source and issue.source != seed.source:
+            continue
+        member, line = parse_issue_location(issue.location)
+        key = (
+            (issue.source or "").strip().lower(),
+            (issue.code or "").strip(),
+            (member or "").replace("\\", "/").lstrip("/").lower(),
+            f"{line if line is not None else ''}|{(issue.location or '').strip().lower()}",
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(issue)
+        if len(out) >= max_issues:
+            break
+    if not out:
+        return [seed]
+    # Prefer keeping the seed first when present.
+    for i, issue in enumerate(out):
+        if (
+            issue.code == seed.code
+            and (not seed.source or issue.source == seed.source)
+            and issue.location == seed.location
+        ):
+            if i:
+                out.insert(0, out.pop(i))
+            break
+    else:
+        out.insert(0, seed)
+        # Dedupe seed if duplicated
+        deduped = [out[0]]
+        for issue in out[1:]:
+            if issue is seed or (
+                issue.location == seed.location and issue.message == seed.message
+            ):
+                continue
+            deduped.append(issue)
+        out = deduped[:max_issues]
+    return out
+
+
+def gather_batch_fix_context(
+    seed: Issue,
+    result: CheckResult | None,
+    *,
+    target_path: str | Path | None = None,
+    max_members: int = 12,
+    max_issues: int = 40,
+) -> tuple[dict[str, str], list[Issue]]:
+    """
+    Context for Fix all like this: shared metadata + per-member excerpts.
+
+    Returns ``(ctx, matched_issues)``. ``ctx`` includes:
+    - standard seed fields from ``gather_issue_context``
+    - ``batch_instance_count``, ``batch_member_count``
+    - ``batch_instances`` — numbered list for the prompt
+    - ``batch_files_block`` — Exact file text sections per member
+    """
+    matched = issues_matching_seed(seed, result, max_issues=max_issues)
+    ctx = gather_issue_context(seed, result, target_path=target_path)
+    path: Path | None = None
+    if target_path:
+        path = Path(target_path)
+    elif result and result.target_path:
+        path = Path(result.target_path)
+
+    # Collect unique members (preserve order).
+    members: list[str] = []
+    member_issues: dict[str, list[Issue]] = {}
+    for issue in matched:
+        member, _line = parse_issue_location(issue.location)
+        if not member:
+            continue
+        key = member.replace("\\", "/").lstrip("/")
+        if key not in member_issues:
+            if len(members) >= max_members:
+                continue
+            members.append(key)
+            member_issues[key] = []
+        member_issues[key].append(issue)
+
+    instance_lines: list[str] = []
+    for i, issue in enumerate(matched, start=1):
+        member, line = parse_issue_location(issue.location)
+        loc = member or issue.location or "—"
+        if line:
+            loc = f"{loc}:{line}"
+        msg = (issue.message or "").strip()
+        if len(msg) > 120:
+            msg = msg[:119] + "…"
+        instance_lines.append(f"{i}. [{issue.severity.label}] {loc} — {msg}")
+
+    files_blocks: list[str] = []
+    if path is not None and path.exists() and send_file_context_enabled():
+        kind_val = ctx.get("publication_kind", "")
+        if kind_allows_excerpt(kind_val):
+            for member in members:
+                text = _read_member_text(path, member)
+                if not text:
+                    continue
+                # Use first issue in this member for line/OPF windowing.
+                sample = member_issues[member][0]
+                _m, line = parse_issue_location(sample.location)
+                if line is None and (
+                    "·" in (sample.location or "")
+                    or "\u00b7" in (sample.location or "")
+                ):
+                    hints = _ace_location_parts(sample.location)[1:]
+                    line = _find_line_for_hints(text, hints)
+                if _is_package_member(member):
+                    _numbered, raw = _opf_member_excerpts(text, sample)
+                else:
+                    raw = _raw_window_around_line(text, line)
+                if not raw:
+                    continue
+                files_blocks.append(
+                    f"### File: {member}\n"
+                    f"(instances in this file: {len(member_issues[member])})\n"
+                    f"```\n{raw}\n```"
+                )
+
+    ctx["batch_instance_count"] = str(len(matched))
+    ctx["batch_member_count"] = str(len(members))
+    ctx["batch_instances"] = "\n".join(instance_lines)
+    ctx["batch_files_block"] = "\n\n".join(files_blocks)
+    return ctx, matched
+
+
 def kind_allows_excerpt(kind: str) -> bool:
     k = (kind or "").lower()
     return k in {

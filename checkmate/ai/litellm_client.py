@@ -248,6 +248,96 @@ def assistant_text_from_response(response: Any) -> str:
         return ""
 
 
+def cost_and_usage_from_response(response: Any) -> dict[str, Any]:
+    """
+    Extract LiteLLM cost (USD) and token usage from a completion response.
+
+    Cost comes from ``response._hidden_params['response_cost']`` when present,
+    otherwise ``litellm.completion_cost(completion_response=...)`` when available.
+    Missing pricing (local / unknown models) yields ``cost_usd=None``.
+    """
+    out: dict[str, Any] = {
+        "cost_usd": None,
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "total_tokens": None,
+    }
+    if response is None:
+        return out
+
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        try:
+            pt = getattr(usage, "prompt_tokens", None)
+            ct = getattr(usage, "completion_tokens", None)
+            tt = getattr(usage, "total_tokens", None)
+            if pt is None and isinstance(usage, dict):
+                pt = usage.get("prompt_tokens")
+                ct = usage.get("completion_tokens")
+                tt = usage.get("total_tokens")
+            out["prompt_tokens"] = int(pt) if pt is not None else None
+            out["completion_tokens"] = int(ct) if ct is not None else None
+            if tt is not None:
+                out["total_tokens"] = int(tt)
+            elif out["prompt_tokens"] is not None and out["completion_tokens"] is not None:
+                out["total_tokens"] = out["prompt_tokens"] + out["completion_tokens"]
+        except Exception:
+            logger.debug("Could not read usage from LiteLLM response", exc_info=True)
+
+    cost: float | None = None
+    try:
+        hidden = getattr(response, "_hidden_params", None) or {}
+        if isinstance(hidden, dict) and hidden.get("response_cost") is not None:
+            cost = float(hidden["response_cost"])
+    except Exception:
+        cost = None
+
+    if cost is None:
+        try:
+            mod = _get_litellm()
+            completion_cost = getattr(mod, "completion_cost", None) if mod else None
+            if callable(completion_cost):
+                estimated = completion_cost(completion_response=response)
+                if estimated is not None:
+                    cost = float(estimated)
+        except Exception:
+            logger.debug("LiteLLM completion_cost unavailable", exc_info=True)
+
+    out["cost_usd"] = cost
+    return out
+
+
+def log_completion_cost(
+    *,
+    model: str | None,
+    response: Any = None,
+    operation: str = "completion",
+    session_total_usd: float | None = None,
+    metrics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Log cost/usage at INFO (logger only). Returns the extracted metrics dict."""
+    data = metrics if metrics is not None else cost_and_usage_from_response(response)
+    cost = data.get("cost_usd")
+    cost_s = f"{cost:.6f}" if isinstance(cost, (int, float)) else "n/a"
+    total_s = (
+        f"{session_total_usd:.6f}"
+        if isinstance(session_total_usd, (int, float))
+        else "n/a"
+    )
+    logger.info(
+        "AI %s cost model=%s cost_usd=%s session_total_usd=%s "
+        "prompt_tokens=%s completion_tokens=%s total_tokens=%s",
+        operation,
+        model or "?",
+        cost_s,
+        total_s,
+        data.get("prompt_tokens"),
+        data.get("completion_tokens"),
+        data.get("total_tokens"),
+    )
+    return data
+
+
 def classify_provider_error(exc: BaseException) -> tuple[str, str]:
     """Map a provider/LiteLLM exception to (error_key, detail)."""
     detail = str(exc) or type(exc).__name__
@@ -321,7 +411,7 @@ def check_provider_connection(
 
     logger.info("AI connection check starting model=%s", model)
     try:
-        litellm_completion(**kwargs)
+        response = litellm_completion(**kwargs)
     except Exception as exc:
         key, detail = classify_provider_error(exc)
         logger.exception("AI connection check failed (%s): %s", key, detail)
@@ -329,6 +419,10 @@ def check_provider_connection(
 
     if cancel_event is not None and cancel_event.is_set():
         return False, "cancelled", ""
+    try:
+        log_completion_cost(model=model, response=response, operation="connection_check")
+    except Exception:
+        logger.debug("Connection-check cost logging failed", exc_info=True)
     logger.info("AI connection check ok model=%s", model)
     return True, None, ""
 

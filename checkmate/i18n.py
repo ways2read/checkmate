@@ -145,6 +145,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "&Tools": "&Outils",
         "&Re-check publication\tF5": "&Revérifier la publication\tF5",
+        "Show &issues always": "Toujours afficher les &problèmes",
+        "When checked, open the issues list automatically after a check "
+        "that finds issues (instead of pressing Show issues)": (
+            "Si coché, ouvre automatiquement la liste des problèmes après une "
+            "vérification qui en trouve (sans appuyer sur Afficher les problèmes)"
+        ),
         "View full &log\tCtrl+L": "Afficher le journal &complet\tCtrl+L",
         "Check for &updates…": "Rechercher des &mises à jour…",
         "&Download / reinstall checkers…": "&Télécharger / réinstaller les vérificateurs…",
@@ -373,13 +379,19 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Opening issue details…": "Ouverture des détails du problème…",
         "Loading AI view…": "Chargement de la vue IA…",
-        "Fix with AI": "Corriger avec l’IA",
-        "Ask AI to propose a minimal markup fix for this EPUB "
+        "Suggest fix with AI": "Suggérer une correction avec l’IA",
+        "Suggest all like this…": "Tout suggérer comme ceci…",
+        "Ask AI to suggest a minimal markup fix for this EPUB "
         "or eBraille issue (uses FIDO AI settings)": (
-            "Demander à l’IA de proposer une correction minimale du balisage "
+            "Demander à l’IA de suggérer une correction minimale du balisage "
             "pour ce problème EPUB ou eBraille (utilise les réglages IA de FIDO)"
         ),
-        "Apply fix": "Appliquer la correction",
+        "Ask AI to suggest unique fixes for every issue with the "
+        "same checker code in this report (uses FIDO AI settings)": (
+            "Demander à l’IA de suggérer des corrections uniques pour chaque "
+            "problème portant le même code dans ce rapport (utilise les réglages IA de FIDO)"
+        ),
+        "Apply fix and validate": "Appliquer la correction et valider",
         "Write the proposed fix into the publication "
         "(creates a .bak backup first)": (
             "Écrire la correction proposée dans la publication "
@@ -400,13 +412,36 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "After": "Après",
         "File": "Fichier",
         "(no rationale)": "(aucune justification)",
-        "Proposing fix…": "Proposition de correction…",
+        "Suggesting fix…": "Suggestion de correction…",
+        "Suggesting fixes…": "Suggestion des corrections…",
         "Applying fix…": "Application de la correction…",
         "Could not propose a fix.": "Impossible de proposer une correction.",
         "Could not apply the fix.": "Impossible d’appliquer la correction.",
-        "Fix proposed. Review, then Apply fix.": (
-            "Correction proposée. Vérifiez, puis appliquez la correction."
+        "Fix suggested. Review, then Apply fix and validate.": (
+            "Correction suggérée. Vérifiez, puis appliquez et validez la correction."
         ),
+        "Batch fix suggested ({n} patch(es)). Review, then "
+        "Apply fix and validate.": (
+            "Correction groupée suggérée ({n} correctif(s)). Vérifiez, puis "
+            "appliquez et validez la correction."
+        ),
+        "This proposal covers {n} text replacement(s) for {m} matching issue(s).": (
+            "Cette proposition couvre {n} remplacement(s) de texte pour "
+            "{m} problème(s) correspondant(s)."
+        ),
+        "Patch": "Correctif",
+        "Skipped": "Ignorés",
+        "All matching issues with code {code} appear to be resolved "
+        "({before} → {after}).": (
+            "Tous les problèmes correspondant au code {code} semblent résolus "
+            "({before} → {after})."
+        ),
+        "Matching issues with code {code}: {before} before, "
+        "{after} after the batch fix.": (
+            "Problèmes correspondant au code {code} : {before} avant, "
+            "{after} après la correction groupée."
+        ),
+        "Patches applied: {n}.": "Correctifs appliqués : {n}.",
         "Fix applied": "Correction appliquée",
         "Fix applied. Re-check the publication with F5.": (
             "Correction appliquée. Revérifiez la publication avec F5."
@@ -461,6 +496,42 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Sauvegarde :\n{backup}"
         ),
         "Fix confirmed": "Correction confirmée",
+        "Edit log:\n{path}": "Journal des modifications :\n{path}",
+        "Edit changelog": "Journal des modifications",
+        "View edit &changelog…\tCtrl+Shift+G": (
+            "Voir le &journal des modifications…\tCtrl+Shift+G"
+        ),
+        "Open in &browser": "Ouvrir dans le &navigateur",
+        "Open &folder": "Ouvrir le &dossier",
+        "No changelog": "Aucun journal",
+        "No CheckMate edit changelog was found for this publication.\n\n"
+        "A changelog is created beside the file (or inside an exploded "
+        "folder) when you apply an AI fix.": (
+            "Aucun journal des modifications CheckMate n’a été trouvé pour "
+            "cette publication.\n\n"
+            "Un journal est créé à côté du fichier (ou dans un dossier "
+            "éclaté) lorsque vous appliquez une correction par IA."
+        ),
+        "Could not read the changelog:\n{error}": (
+            "Impossible de lire le journal des modifications :\n{error}"
+        ),
+        "Could not open the changelog in a browser:\n{error}": (
+            "Impossible d’ouvrir le journal dans un navigateur :\n{error}"
+        ),
+        "Could not open the folder:\n{error}": (
+            "Impossible d’ouvrir le dossier :\n{error}"
+        ),
+        "Open the CheckMate edit changelog for this publication "
+        "(AI fixes and backups), when one exists": (
+            "Ouvrir le journal des modifications CheckMate pour cette "
+            "publication (corrections IA et sauvegardes), s’il existe"
+        ),
+        "Open a formatted HTML view in your browser": (
+            "Ouvrir une vue HTML formatée dans votre navigateur"
+        ),
+        "Reveal the changelog file in the file manager": (
+            "Afficher le fichier journal dans le gestionnaire de fichiers"
+        ),
         "Fix not confirmed": "Correction non confirmée",
         "Re-check failed": "Échec de la revérification",
         "Reverted": "Rétabli",
@@ -796,6 +867,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "&Tools": "&Herramientas",
         "&Re-check publication\tF5": "&Volver a comprobar\tF5",
+        "Show &issues always": "Mostrar &problemas siempre",
+        "When checked, open the issues list automatically after a check "
+        "that finds issues (instead of pressing Show issues)": (
+            "Si está marcado, abre automáticamente la lista de problemas después "
+            "de una comprobación que encuentre problemas (sin pulsar Mostrar problemas)"
+        ),
         "View full &log\tCtrl+L": "Ver registro &completo\tCtrl+L",
         "Check for &updates…": "Buscar &actualizaciones…",
         "&Download / reinstall checkers…": "&Descargar / reinstalar los comprobadores…",
@@ -1026,13 +1103,19 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Opening issue details…": "Abriendo detalles del problema…",
         "Loading AI view…": "Cargando la vista de IA…",
-        "Fix with AI": "Corregir con IA",
-        "Ask AI to propose a minimal markup fix for this EPUB "
+        "Suggest fix with AI": "Sugerir corrección con IA",
+        "Suggest all like this…": "Sugerir todos así…",
+        "Ask AI to suggest a minimal markup fix for this EPUB "
         "or eBraille issue (uses FIDO AI settings)": (
             "Pedir a la IA una corrección mínima de marcado para este "
             "problema de EPUB o eBraille (usa la configuración de IA de FIDO)"
         ),
-        "Apply fix": "Aplicar corrección",
+        "Ask AI to suggest unique fixes for every issue with the "
+        "same checker code in this report (uses FIDO AI settings)": (
+            "Pedir a la IA correcciones únicas para cada problema con el "
+            "mismo código en este informe (usa la configuración de IA de FIDO)"
+        ),
+        "Apply fix and validate": "Aplicar corrección y validar",
         "Write the proposed fix into the publication "
         "(creates a .bak backup first)": (
             "Escribir la corrección propuesta en la publicación "
@@ -1053,13 +1136,36 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "After": "Después",
         "File": "Archivo",
         "(no rationale)": "(sin justificación)",
-        "Proposing fix…": "Proponiendo corrección…",
+        "Suggesting fix…": "Sugiriendo corrección…",
+        "Suggesting fixes…": "Sugiriendo correcciones…",
         "Applying fix…": "Aplicando corrección…",
         "Could not propose a fix.": "No se pudo proponer una corrección.",
         "Could not apply the fix.": "No se pudo aplicar la corrección.",
-        "Fix proposed. Review, then Apply fix.": (
-            "Corrección propuesta. Revísela y luego aplíquela."
+        "Fix suggested. Review, then Apply fix and validate.": (
+            "Corrección sugerida. Revísela y luego aplíquela y valídela."
         ),
+        "Batch fix suggested ({n} patch(es)). Review, then "
+        "Apply fix and validate.": (
+            "Corrección por lotes sugerida ({n} parche(s)). Revísela y luego "
+            "aplíquela y valídela."
+        ),
+        "This proposal covers {n} text replacement(s) for {m} matching issue(s).": (
+            "Esta propuesta cubre {n} reemplazo(s) de texto para "
+            "{m} problema(s) coincidente(s)."
+        ),
+        "Patch": "Parche",
+        "Skipped": "Omitidos",
+        "All matching issues with code {code} appear to be resolved "
+        "({before} → {after}).": (
+            "Todos los problemas con el código {code} parecen resueltos "
+            "({before} → {after})."
+        ),
+        "Matching issues with code {code}: {before} before, "
+        "{after} after the batch fix.": (
+            "Problemas con el código {code}: {before} antes, "
+            "{after} después de la corrección por lotes."
+        ),
+        "Patches applied: {n}.": "Parches aplicados: {n}.",
         "Fix applied": "Corrección aplicada",
         "Fix applied. Re-check the publication with F5.": (
             "Corrección aplicada. Vuelva a comprobar la publicación con F5."
@@ -1113,6 +1219,42 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Copia de seguridad:\n{backup}"
         ),
         "Fix confirmed": "Corrección confirmada",
+        "Edit log:\n{path}": "Registro de ediciones:\n{path}",
+        "Edit changelog": "Registro de ediciones",
+        "View edit &changelog…\tCtrl+Shift+G": (
+            "Ver &registro de ediciones…\tCtrl+Shift+G"
+        ),
+        "Open in &browser": "Abrir en el &navegador",
+        "Open &folder": "Abrir &carpeta",
+        "No changelog": "Sin registro",
+        "No CheckMate edit changelog was found for this publication.\n\n"
+        "A changelog is created beside the file (or inside an exploded "
+        "folder) when you apply an AI fix.": (
+            "No se encontró un registro de ediciones de CheckMate para esta "
+            "publicación.\n\n"
+            "Se crea un registro junto al archivo (o dentro de una carpeta "
+            "descomprimida) al aplicar una corrección con IA."
+        ),
+        "Could not read the changelog:\n{error}": (
+            "No se pudo leer el registro de ediciones:\n{error}"
+        ),
+        "Could not open the changelog in a browser:\n{error}": (
+            "No se pudo abrir el registro en un navegador:\n{error}"
+        ),
+        "Could not open the folder:\n{error}": (
+            "No se pudo abrir la carpeta:\n{error}"
+        ),
+        "Open the CheckMate edit changelog for this publication "
+        "(AI fixes and backups), when one exists": (
+            "Abrir el registro de ediciones de CheckMate para esta "
+            "publicación (correcciones IA y copias de seguridad), si existe"
+        ),
+        "Open a formatted HTML view in your browser": (
+            "Abrir una vista HTML formateada en el navegador"
+        ),
+        "Reveal the changelog file in the file manager": (
+            "Mostrar el archivo de registro en el explorador de archivos"
+        ),
         "Fix not confirmed": "Corrección no confirmada",
         "Re-check failed": "Error al volver a comprobar",
         "Reverted": "Revertido",
@@ -1448,6 +1590,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "&Tools": "&Extras",
         "&Re-check publication\tF5": "Publikation erneut &prüfen\tF5",
+        "Show &issues always": "Probleme immer &anzeigen",
+        "When checked, open the issues list automatically after a check "
+        "that finds issues (instead of pressing Show issues)": (
+            "Wenn aktiviert, wird die Problemliste nach einer Prüfung mit "
+            "Problemen automatisch geöffnet (ohne „Probleme anzeigen“)"
+        ),
         "View full &log\tCtrl+L": "Vollständiges &Protokoll anzeigen\tCtrl+L",
         "Check for &updates…": "Nach &Updates suchen…",
         "&Download / reinstall checkers…": "Prüfer &herunterladen / neu installieren…",
@@ -1675,13 +1823,19 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Opening issue details…": "Problemdetails werden geöffnet…",
         "Loading AI view…": "KI-Ansicht wird geladen…",
-        "Fix with AI": "Mit KI beheben",
-        "Ask AI to propose a minimal markup fix for this EPUB "
+        "Suggest fix with AI": "Korrektur mit KI vorschlagen",
+        "Suggest all like this…": "Alle so vorschlagen…",
+        "Ask AI to suggest a minimal markup fix for this EPUB "
         "or eBraille issue (uses FIDO AI settings)": (
             "KI um einen minimalen Markup-Fix für dieses EPUB- oder "
             "eBraille-Problem bitten (nutzt FIDO-KI-Einstellungen)"
         ),
-        "Apply fix": "Korrektur anwenden",
+        "Ask AI to suggest unique fixes for every issue with the "
+        "same checker code in this report (uses FIDO AI settings)": (
+            "KI um eindeutige Korrekturen für jedes Problem mit demselben "
+            "Prüfcode in diesem Bericht bitten (nutzt FIDO-KI-Einstellungen)"
+        ),
+        "Apply fix and validate": "Korrektur anwenden und validieren",
         "Write the proposed fix into the publication "
         "(creates a .bak backup first)": (
             "Die vorgeschlagene Korrektur in die Publikation schreiben "
@@ -1702,13 +1856,36 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "After": "Nachher",
         "File": "Datei",
         "(no rationale)": "(keine Begründung)",
-        "Proposing fix…": "Korrektur wird vorgeschlagen…",
+        "Suggesting fix…": "Korrektur wird vorgeschlagen…",
+        "Suggesting fixes…": "Korrekturen werden vorgeschlagen…",
         "Applying fix…": "Korrektur wird angewendet…",
         "Could not propose a fix.": "Es konnte keine Korrektur vorgeschlagen werden.",
         "Could not apply the fix.": "Die Korrektur konnte nicht angewendet werden.",
-        "Fix proposed. Review, then Apply fix.": (
-            "Korrektur vorgeschlagen. Prüfen, dann Korrektur anwenden."
+        "Fix suggested. Review, then Apply fix and validate.": (
+            "Korrektur vorgeschlagen. Prüfen, dann anwenden und validieren."
         ),
+        "Batch fix suggested ({n} patch(es)). Review, then "
+        "Apply fix and validate.": (
+            "Sammelkorrektur vorgeschlagen ({n} Patch(es)). Prüfen, dann "
+            "anwenden und validieren."
+        ),
+        "This proposal covers {n} text replacement(s) for {m} matching issue(s).": (
+            "Dieser Vorschlag umfasst {n} Textersetzung(en) für "
+            "{m} passende(s) Problem(e)."
+        ),
+        "Patch": "Patch",
+        "Skipped": "Übersprungen",
+        "All matching issues with code {code} appear to be resolved "
+        "({before} → {after}).": (
+            "Alle passenden Probleme mit Code {code} scheinen behoben "
+            "({before} → {after})."
+        ),
+        "Matching issues with code {code}: {before} before, "
+        "{after} after the batch fix.": (
+            "Passende Probleme mit Code {code}: {before} vorher, "
+            "{after} nach der Sammelkorrektur."
+        ),
+        "Patches applied: {n}.": "Angewendete Patches: {n}.",
         "Fix applied": "Korrektur angewendet",
         "Fix applied. Re-check the publication with F5.": (
             "Korrektur angewendet. Publikation mit F5 erneut prüfen."
@@ -1763,6 +1940,42 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Sicherung:\n{backup}"
         ),
         "Fix confirmed": "Korrektur bestätigt",
+        "Edit log:\n{path}": "Änderungsprotokoll:\n{path}",
+        "Edit changelog": "Änderungsprotokoll",
+        "View edit &changelog…\tCtrl+Shift+G": (
+            "Änderungs&protokoll anzeigen…\tCtrl+Shift+G"
+        ),
+        "Open in &browser": "Im &Browser öffnen",
+        "Open &folder": "&Ordner öffnen",
+        "No changelog": "Kein Protokoll",
+        "No CheckMate edit changelog was found for this publication.\n\n"
+        "A changelog is created beside the file (or inside an exploded "
+        "folder) when you apply an AI fix.": (
+            "Für diese Publikation wurde kein CheckMate-Änderungsprotokoll "
+            "gefunden.\n\n"
+            "Ein Protokoll wird neben der Datei (oder in einem entpackten "
+            "Ordner) erstellt, wenn Sie eine KI-Korrektur anwenden."
+        ),
+        "Could not read the changelog:\n{error}": (
+            "Änderungsprotokoll konnte nicht gelesen werden:\n{error}"
+        ),
+        "Could not open the changelog in a browser:\n{error}": (
+            "Protokoll konnte nicht im Browser geöffnet werden:\n{error}"
+        ),
+        "Could not open the folder:\n{error}": (
+            "Ordner konnte nicht geöffnet werden:\n{error}"
+        ),
+        "Open the CheckMate edit changelog for this publication "
+        "(AI fixes and backups), when one exists": (
+            "CheckMate-Änderungsprotokoll für diese Publikation öffnen "
+            "(KI-Korrekturen und Sicherungen), falls vorhanden"
+        ),
+        "Open a formatted HTML view in your browser": (
+            "Formatierte HTML-Ansicht im Browser öffnen"
+        ),
+        "Reveal the changelog file in the file manager": (
+            "Protokolldatei im Dateimanager anzeigen"
+        ),
         "Fix not confirmed": "Korrektur nicht bestätigt",
         "Re-check failed": "Erneute Prüfung fehlgeschlagen",
         "Reverted": "Zurückgesetzt",
@@ -2098,6 +2311,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "&Tools": "&Ferramentas",
         "&Re-check publication\tF5": "&Verificar novamente\tF5",
+        "Show &issues always": "Mostrar &problemas sempre",
+        "When checked, open the issues list automatically after a check "
+        "that finds issues (instead of pressing Show issues)": (
+            "Se marcado, abre automaticamente a lista de problemas após uma "
+            "verificação que encontre problemas (sem premir Mostrar problemas)"
+        ),
         "View full &log\tCtrl+L": "Ver registo &completo\tCtrl+L",
         "Check for &updates…": "Procurar &atualizações…",
         "&Download / reinstall checkers…": "&Descarregar / reinstalar os verificadores…",
@@ -2328,13 +2547,19 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Opening issue details…": "A abrir os detalhes do problema…",
         "Loading AI view…": "A carregar a vista de IA…",
-        "Fix with AI": "Corrigir com IA",
-        "Ask AI to propose a minimal markup fix for this EPUB "
+        "Suggest fix with AI": "Sugerir correção com IA",
+        "Suggest all like this…": "Sugerir todos assim…",
+        "Ask AI to suggest a minimal markup fix for this EPUB "
         "or eBraille issue (uses FIDO AI settings)": (
             "Pedir à IA uma correção mínima de marcação para este "
             "problema de EPUB ou eBraille (usa as definições de IA do FIDO)"
         ),
-        "Apply fix": "Aplicar correção",
+        "Ask AI to suggest unique fixes for every issue with the "
+        "same checker code in this report (uses FIDO AI settings)": (
+            "Pedir à IA correções únicas para cada problema com o mesmo "
+            "código neste relatório (usa as definições de IA do FIDO)"
+        ),
+        "Apply fix and validate": "Aplicar correção e validar",
         "Write the proposed fix into the publication "
         "(creates a .bak backup first)": (
             "Escrever a correção proposta na publicação "
@@ -2355,13 +2580,36 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "After": "Depois",
         "File": "Ficheiro",
         "(no rationale)": "(sem justificação)",
-        "Proposing fix…": "A propor correção…",
+        "Suggesting fix…": "A sugerir correção…",
+        "Suggesting fixes…": "A sugerir correções…",
         "Applying fix…": "A aplicar correção…",
         "Could not propose a fix.": "Não foi possível propor uma correção.",
         "Could not apply the fix.": "Não foi possível aplicar a correção.",
-        "Fix proposed. Review, then Apply fix.": (
-            "Correção proposta. Reveja e depois aplique a correção."
+        "Fix suggested. Review, then Apply fix and validate.": (
+            "Correção sugerida. Reveja e depois aplique e valide a correção."
         ),
+        "Batch fix suggested ({n} patch(es)). Review, then "
+        "Apply fix and validate.": (
+            "Correção em lote sugerida ({n} correção(ões)). Reveja e depois "
+            "aplique e valide a correção."
+        ),
+        "This proposal covers {n} text replacement(s) for {m} matching issue(s).": (
+            "Esta proposta cobre {n} substituição(ões) de texto para "
+            "{m} problema(s) correspondente(s)."
+        ),
+        "Patch": "Correção",
+        "Skipped": "Ignorados",
+        "All matching issues with code {code} appear to be resolved "
+        "({before} → {after}).": (
+            "Todos os problemas com o código {code} parecem resolvidos "
+            "({before} → {after})."
+        ),
+        "Matching issues with code {code}: {before} before, "
+        "{after} after the batch fix.": (
+            "Problemas com o código {code}: {before} antes, "
+            "{after} depois da correção em lote."
+        ),
+        "Patches applied: {n}.": "Correções aplicadas: {n}.",
         "Fix applied": "Correção aplicada",
         "Fix applied. Re-check the publication with F5.": (
             "Correção aplicada. Volte a verificar a publicação com F5."
@@ -2415,6 +2663,42 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Cópia de segurança:\n{backup}"
         ),
         "Fix confirmed": "Correção confirmada",
+        "Edit log:\n{path}": "Registo de edições:\n{path}",
+        "Edit changelog": "Registo de edições",
+        "View edit &changelog…\tCtrl+Shift+G": (
+            "Ver &registo de edições…\tCtrl+Shift+G"
+        ),
+        "Open in &browser": "Abrir no &navegador",
+        "Open &folder": "Abrir &pasta",
+        "No changelog": "Sem registo",
+        "No CheckMate edit changelog was found for this publication.\n\n"
+        "A changelog is created beside the file (or inside an exploded "
+        "folder) when you apply an AI fix.": (
+            "Não foi encontrado um registo de edições do CheckMate para esta "
+            "publicação.\n\n"
+            "Um registo é criado junto ao ficheiro (ou dentro de uma pasta "
+            "expandida) quando aplica uma correção com IA."
+        ),
+        "Could not read the changelog:\n{error}": (
+            "Não foi possível ler o registo de edições:\n{error}"
+        ),
+        "Could not open the changelog in a browser:\n{error}": (
+            "Não foi possível abrir o registo no navegador:\n{error}"
+        ),
+        "Could not open the folder:\n{error}": (
+            "Não foi possível abrir a pasta:\n{error}"
+        ),
+        "Open the CheckMate edit changelog for this publication "
+        "(AI fixes and backups), when one exists": (
+            "Abrir o registo de edições do CheckMate para esta publicação "
+            "(correções IA e cópias de segurança), se existir"
+        ),
+        "Open a formatted HTML view in your browser": (
+            "Abrir uma vista HTML formatada no navegador"
+        ),
+        "Reveal the changelog file in the file manager": (
+            "Mostrar o ficheiro de registo no gestor de ficheiros"
+        ),
         "Fix not confirmed": "Correção não confirmada",
         "Re-check failed": "Falha na nova verificação",
         "Reverted": "Revertido",

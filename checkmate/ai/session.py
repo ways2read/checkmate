@@ -15,7 +15,9 @@ from .litellm_client import (
     assistant_text_from_response,
     check_provider_connection,
     classify_provider_error,
+    cost_and_usage_from_response,
     litellm_completion,
+    log_completion_cost,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,13 @@ class ExplainSession:
     api_base: str | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     last_finish_reason: str | None = None
+    # LiteLLM cost/usage for logging / optional diagnostics (not shown in UI).
+    last_cost_usd: float | None = None
+    last_prompt_tokens: int | None = None
+    last_completion_tokens: int | None = None
+    session_cost_usd: float = 0.0
+    session_prompt_tokens: int = 0
+    session_completion_tokens: int = 0
 
     @classmethod
     def create(cls) -> ExplainSession:
@@ -67,15 +76,36 @@ class ExplainSession:
             {"role": "user", "content": user},
         ]
         self.last_finish_reason = None
-        return self._complete(max_tokens=max_tokens)
+        return self._complete(max_tokens=max_tokens, operation="ask")
 
     def followup(self, user: str, max_tokens: int = DEFAULT_FOLLOWUP_MAX_TOKENS) -> str:
         if not self.messages:
             raise RuntimeError("no_session")
         self.messages.append({"role": "user", "content": user})
-        return self._complete(max_tokens=max_tokens)
+        return self._complete(max_tokens=max_tokens, operation="followup")
 
-    def _complete(self, *, max_tokens: int) -> str:
+    def _record_cost(self, response: Any, *, operation: str) -> None:
+        metrics = cost_and_usage_from_response(response)
+        cost = metrics.get("cost_usd")
+        self.last_cost_usd = float(cost) if isinstance(cost, (int, float)) else None
+        pt = metrics.get("prompt_tokens")
+        ct = metrics.get("completion_tokens")
+        self.last_prompt_tokens = int(pt) if isinstance(pt, int) else None
+        self.last_completion_tokens = int(ct) if isinstance(ct, int) else None
+        if self.last_cost_usd is not None:
+            self.session_cost_usd += self.last_cost_usd
+        if self.last_prompt_tokens is not None:
+            self.session_prompt_tokens += self.last_prompt_tokens
+        if self.last_completion_tokens is not None:
+            self.session_completion_tokens += self.last_completion_tokens
+        log_completion_cost(
+            model=self.model,
+            operation=operation,
+            session_total_usd=self.session_cost_usd if self.session_cost_usd else None,
+            metrics=metrics,
+        )
+
+    def _complete(self, *, max_tokens: int, operation: str = "completion") -> str:
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": self.messages,
@@ -98,5 +128,9 @@ class ExplainSession:
             )
         except Exception:
             self.last_finish_reason = None
+        try:
+            self._record_cost(response, operation=operation)
+        except Exception:
+            logger.debug("AI cost recording failed", exc_info=True)
         self.messages.append({"role": "assistant", "content": text or ""})
         return text or ""

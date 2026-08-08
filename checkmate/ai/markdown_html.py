@@ -265,11 +265,14 @@ def _ai_browser_css() -> str:
       }
     }
     * { box-sizing: border-box; }
-    html, body { height: 100%; margin: 0; }
-    @media (prefers-reduced-motion: reduce) {
-      html { scroll-behavior: auto; }
+    html {
+      margin: 0;
+      min-height: 100%;
+      overflow-y: auto;
     }
     body {
+      margin: 0;
+      min-height: 100%;
       font-family: var(--font);
       line-height: 1.55;
       color: var(--ink);
@@ -797,6 +800,24 @@ _LATEST_FOLLOWUP_REVEAL_SCRIPT = """
     var el = document.getElementById('cm-latest-followup');
     if (!el) return;
     try {
+      // Prefer scrolling the document so tall pages remain scrollable after
+      // WebView SetPage (height:100% layouts can clip follow-ups otherwise).
+      var top = 0;
+      try {
+        var rect = el.getBoundingClientRect();
+        top = (window.pageYOffset || document.documentElement.scrollTop || 0)
+          + rect.top - 12;
+      } catch (e0) {
+        top = el.offsetTop || 0;
+      }
+      if (top < 0) top = 0;
+      window.scrollTo(0, top);
+      if (document.documentElement) {
+        document.documentElement.scrollTop = top;
+      }
+      if (document.body) {
+        document.body.scrollTop = top;
+      }
       el.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'auto' });
     } catch (e) {
       try { el.scrollIntoView(true); } catch (e2) {}
@@ -811,6 +832,7 @@ _LATEST_FOLLOWUP_REVEAL_SCRIPT = """
   function schedule() {
     setTimeout(revealLatestFollowup, 0);
     setTimeout(revealLatestFollowup, 50);
+    setTimeout(revealLatestFollowup, 200);
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', schedule);

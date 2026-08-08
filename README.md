@@ -49,15 +49,22 @@ support on Windows, macOS, and Linux.
   priorities, and next steps based on the unique issue codes (not a full file
   dump). View, save, or copy the result like other AI replies. Toggle with
   **Tools → Enable AI features** (hidden when FIDO AI is unavailable).
-- **Fix with AI** (EPUB and eBraille only, when FIDO AI settings are present):
-  from the same issue details dialog, ask for a minimal proposed markup patch,
-  preview before/after, then **Apply fix** to the exploded folder or packaged
-  `.epub`/`.ebrl` (creates a `.bak` backup). The details dialog closes and the
+- **Suggest fix with AI** (EPUB and eBraille only, when FIDO AI settings are present):
+  from the same issue details dialog, ask for a minimal suggested markup patch,
+  preview before/after, then **Apply fix and validate** to the exploded folder or packaged
+  `.epub`/`.ebrl` (creates a `.bak` backup).   When the report has more than one
+  issue with the same checker code, **Suggest all like this…** suggests up to 20
+  unique replacements across matching instances in one backup/rebuild cycle.
+  The details dialog closes and the
   publication is re-checked automatically. CheckMate then reports whether the
   targeted issue is gone, whether overall error/warning counts decreased, and
   (for Ace fixes) whether any new EPUBCheck errors appeared; if anything looks
-  wrong, it offers to revert from the backup. Packaged rewrite uses the same
-  EPUB-safe extract/rebuild approach as FIDO.
+  wrong, it offers to revert from the backup. Each applied fix also appends an
+  entry to a **edit changelog** beside the publication
+  (`book.epub.checkmate-changelog.md`, or `checkmate-changelog.md` inside an
+  exploded folder) naming the backup file, the issue fixed, and how to revert.
+  Open it from **Report → View edit changelog…** when present.
+  Packaged rewrite uses the same EPUB-safe extract/rebuild approach as FIDO.
 - Copy summary; view or save text / HTML reports (**Report** menu) — HTML
   reports embed an EPUB/eBraille cover image when present, or the first page
   of a PDF; **Clear results** returns to the launch state
@@ -139,7 +146,8 @@ uv run checkmate
    packaged `.app`.
 2. While a check runs, the **Result** pane shows living progress (Ace streams
    document status; other tools show elapsed time). When finished, focus moves
-   to the summary; expand **Show issues** to review the list (filterable).
+   to the summary; expand **Show issues** to review the list (filterable), or enable
+   **Tools → Show issues always** to open the list automatically after checks that find issues.
 3. Use **Report → View full log** (`Ctrl+L`) only when you need the raw
    checker output.
 4. **Tools → Re-check publication** (`F5`) re-runs the current path after you
@@ -194,7 +202,7 @@ Under that folder:
 - `checker/` — downloaded or updated eBraille Checker releases
 - `epubcheck/` — downloaded or updated EPUBCheck releases
 - `verapdf/` — downloaded or updated veraPDF CLI installs
-- `settings.json` — remembered UI language
+- `settings.json` — remembered UI language and preferences (e.g. Show issues always)
 
 Packaged builds also include `checker/`, `epubcheck/`, and `verapdf/` beside the
 executable (or inside the `.app` bundle on macOS).

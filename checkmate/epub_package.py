@@ -209,28 +209,78 @@ def apply_text_replacement(
     For packaged files, extracts → edits → rebuilds via ``create_epub``,
     replacing the original package (optional ``.bak`` backup first).
     """
+    return apply_text_replacements(
+        target,
+        [(member, original, replacement)],
+        backup=backup,
+    )
+
+
+def apply_text_replacements(
+    target: Path,
+    patches: list[tuple[str, str, str]],
+    *,
+    backup: bool = True,
+) -> ApplyResult:
+    """
+    Apply one or more exact text replacements in a single backup/rebuild cycle.
+
+    Each patch is ``(member, original, replacement)``. Patches for the same
+    member are applied sequentially (each ``original`` must occur exactly once
+    in the member text as it stands before that patch).
+    """
     target = Path(target).expanduser().resolve()
     if not target.exists():
         return ApplyResult(ok=False, error_key="no_target")
+    if not patches:
+        return ApplyResult(ok=False, error_key="no_match")
 
-    resolved, text = read_member_text(target, member)
-    if text is None or resolved is None:
-        return ApplyResult(ok=False, error_key="no_member", member=member)
-
-    new_text, err = _replace_once(text, original, replacement)
-    if err or new_text is None:
-        return ApplyResult(ok=False, error_key=err or "no_match", member=resolved)
+    # Plan final text per resolved member.
+    planned: dict[str, str] = {}
+    resolved_names: dict[str, str] = {}
+    for member, original, replacement in patches:
+        if not original:
+            return ApplyResult(ok=False, error_key="empty_original", member=member)
+        resolved, text = read_member_text(target, member)
+        if text is None or resolved is None:
+            return ApplyResult(ok=False, error_key="no_member", member=member)
+        key = resolved.replace("\\", "/").lstrip("/")
+        resolved_names[key] = resolved
+        current = planned.get(key, text)
+        new_text, err = _replace_once(current, original, replacement)
+        if err or new_text is None:
+            return ApplyResult(
+                ok=False, error_key=err or "no_match", member=resolved
+            )
+        planned[key] = new_text
 
     backup_path = ""
+    extra_backups: list[tuple[str, str]] = []
+    first_member = next(iter(resolved_names.values()))
     try:
         if target.is_dir():
-            path = resolve_member_path(target, resolved) or (target / resolved)
-            if backup and path.is_file():
-                bak = next_backup_path(path)
-                shutil.copy2(path, bak)
-                backup_path = str(bak)
-            path.write_text(new_text, encoding="utf-8", newline="")
-            return ApplyResult(ok=True, backup_path=backup_path, member=resolved)
+            for key, new_text in planned.items():
+                resolved = resolved_names[key]
+                path = resolve_member_path(target, resolved) or (target / resolved)
+                if backup and path.is_file():
+                    bak = next_backup_path(path)
+                    shutil.copy2(path, bak)
+                    if not backup_path:
+                        backup_path = str(bak)
+                    else:
+                        extra_backups.append((str(bak), str(path)))
+                path.write_text(new_text, encoding="utf-8", newline="")
+            detail = ""
+            if extra_backups:
+                detail = "extra_backups=" + ";".join(
+                    f"{b}|{r}" for b, r in extra_backups
+                )
+            return ApplyResult(
+                ok=True,
+                backup_path=backup_path,
+                member=first_member,
+                detail=detail,
+            )
 
         if is_packaged_publication(target):
             if backup:
@@ -242,16 +292,23 @@ def apply_text_replacement(
                 work = Path(tmp) / "work"
                 work.mkdir()
                 extract_epub(target, work)
-                member_path = resolve_member_path(work, resolved)
-                if member_path is None:
-                    return ApplyResult(
-                        ok=False, error_key="no_member", member=resolved
-                    )
-                member_path.write_text(new_text, encoding="utf-8", newline="")
+                for key, new_text in planned.items():
+                    resolved = resolved_names[key]
+                    member_path = resolve_member_path(work, resolved)
+                    if member_path is None:
+                        return ApplyResult(
+                            ok=False,
+                            error_key="no_member",
+                            member=resolved,
+                            backup_path=backup_path,
+                        )
+                    member_path.write_text(new_text, encoding="utf-8", newline="")
                 out_tmp = Path(tmp) / f"out{target.suffix.lower()}"
                 create_epub(work, out_tmp)
                 shutil.move(str(out_tmp), str(target))
-            return ApplyResult(ok=True, backup_path=backup_path, member=resolved)
+            return ApplyResult(
+                ok=True, backup_path=backup_path, member=first_member
+            )
 
         return ApplyResult(ok=False, error_key="unsupported_target")
     except OSError as exc:
@@ -259,7 +316,7 @@ def apply_text_replacement(
             ok=False,
             error_key="write_failed",
             detail=str(exc),
-            member=resolved,
+            member=first_member,
             backup_path=backup_path,
         )
     except zipfile.BadZipFile as exc:
@@ -267,7 +324,7 @@ def apply_text_replacement(
             ok=False,
             error_key="bad_zip",
             detail=str(exc),
-            member=resolved,
+            member=first_member,
             backup_path=backup_path,
         )
 

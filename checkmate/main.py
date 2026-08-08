@@ -42,7 +42,12 @@ from .paths import (
 )
 from .publication import is_checkable_path
 from .report_export import format_text_report, report_title, save_report
-from .settings import ai_features_enabled, read_settings, update_settings
+from .settings import (
+    ai_features_enabled,
+    read_settings,
+    show_issues_always,
+    update_settings,
+)
 from .updater import (
     EBRAILLE_TOOL,
     EPUBCHECK_TOOL,
@@ -621,6 +626,22 @@ _WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS = """
     if (!el) { return 'none'; }
     if (!(el.tabIndex < 0)) { el.tabIndex = -1; }
     try {
+      var top = 0;
+      try {
+        var rect = el.getBoundingClientRect();
+        top = (window.pageYOffset || document.documentElement.scrollTop || 0)
+          + rect.top - 12;
+      } catch (e0) {
+        top = el.offsetTop || 0;
+      }
+      if (top < 0) top = 0;
+      window.scrollTo(0, top);
+      if (document.documentElement) {
+        document.documentElement.scrollTop = top;
+      }
+      if (document.body) {
+        document.body.scrollTop = top;
+      }
       el.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'auto' });
     } catch (e) {
       try { el.scrollIntoView(true); } catch (e2) {}
@@ -1274,12 +1295,20 @@ class IssueDetailDialog(wx.Dialog):
         self._ai_focus_after_load = False
         self._ai_view_realized = False
         self._fix_proposal = None
+        self._batch_proposal = None
         self.applied_fix_verify = None
         self._ai_cancel: threading.Event | None = None
         self._ai_progress: wx.ProgressDialog | None = None
         self._ai_progress_timer: wx.Timer | None = None
         self._show_ai = ai_features_enabled()
         self._show_fix = self._show_ai and self._fix_available_for_result(check_result)
+        self._matching_like_this = 1
+        if self._show_fix and check_result is not None:
+            from .ai.context import issues_matching_seed
+
+            self._matching_like_this = max(
+                1, len(issues_matching_seed(issue, check_result))
+            )
         if self._show_ai:
             self.SetSize((780, 760))
             self.SetMinSize((700, 520))
@@ -1338,14 +1367,25 @@ class IssueDetailDialog(wx.Dialog):
             top_row.Add(self.explain_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
 
             if self._show_fix:
-                self.fix_btn = wx.Button(self, label=_("Fix with AI"))
+                self.fix_btn = wx.Button(self, label=_("Suggest fix with AI"))
                 self.fix_btn.SetToolTip(
                     _(
-                        "Ask AI to propose a minimal markup fix for this EPUB "
+                        "Ask AI to suggest a minimal markup fix for this EPUB "
                         "or eBraille issue (uses FIDO AI settings)"
                     )
                 )
                 top_row.Add(self.fix_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+                self.fix_all_btn = wx.Button(self, label=_("Suggest all like this…"))
+                self.fix_all_btn.SetToolTip(
+                    _(
+                        "Ask AI to suggest unique fixes for every issue with the "
+                        "same checker code in this report (uses FIDO AI settings)"
+                    )
+                )
+                self.fix_all_btn.Enable(self._matching_like_this > 1)
+                top_row.Add(
+                    self.fix_all_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8
+                )
 
             model_label = wx.StaticText(self, label=_("Model:"))
             top_row.Add(model_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
@@ -1399,7 +1439,7 @@ class IssueDetailDialog(wx.Dialog):
 
             actions = wx.BoxSizer(wx.HORIZONTAL)
             if self._show_fix:
-                self.apply_fix_btn = wx.Button(self, label=_("Apply fix"))
+                self.apply_fix_btn = wx.Button(self, label=_("Apply fix and validate"))
                 self.apply_fix_btn.SetToolTip(
                     _(
                         "Write the proposed fix into the publication, "
@@ -1445,6 +1485,7 @@ class IssueDetailDialog(wx.Dialog):
             self.explain_btn.Bind(wx.EVT_BUTTON, self._on_explain)
             if self._show_fix:
                 self.fix_btn.Bind(wx.EVT_BUTTON, self._on_fix)
+                self.fix_all_btn.Bind(wx.EVT_BUTTON, self._on_fix_all)
             self.ask_btn.Bind(wx.EVT_BUTTON, self._on_ask_followup)
             self.followup_ctrl.Bind(wx.EVT_TEXT_ENTER, self._on_ask_followup)
             self.view_browser_btn.Bind(wx.EVT_BUTTON, self._on_view_ai_browser)
@@ -1490,6 +1531,7 @@ class IssueDetailDialog(wx.Dialog):
         self.explain_btn.Enable(False)
         if self._show_fix:
             self.fix_btn.Enable(False)
+            self.fix_all_btn.Enable(False)
         if hasattr(self, "ai_status"):
             self.ai_status.SetLabel(_("Loading AI view…"))
 
@@ -1537,6 +1579,9 @@ class IssueDetailDialog(wx.Dialog):
         self.explain_btn.Enable(not self._busy)
         if self._show_fix:
             self.fix_btn.Enable(not self._busy)
+            self.fix_all_btn.Enable(
+                (not self._busy) and self._matching_like_this > 1
+            )
         if hasattr(self, "ai_status") and not self._busy:
             if self.ai_status.GetLabel() == _("Loading AI view…"):
                 self.ai_status.SetLabel("")
@@ -1563,20 +1608,35 @@ class IssueDetailDialog(wx.Dialog):
         if getattr(self, "_closing", False):
             return
         self._closing = True
+        # Cancel deferred WebView focus/reveal/paint chains (follow-up SetPage
+        # + MoveFocus into Edge can otherwise keep the process alive after exit).
+        self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
         if self._ai_cancel is not None:
             self._ai_cancel.set()
         # Do not reclaim focus onto this dialog after teardown.
         self._close_ai_progress(reclaim_focus=False)
         try:
+            # Pull Win32 focus out of the WebView2 document before destroy.
             close_btn = self.FindWindowById(wx.ID_CLOSE)
             if close_btn is not None:
                 _try_set_focus(close_btn)
+            elif _try_set_focus(self):
+                pass
         except RuntimeError:
             pass
         if self.IsModal():
             self.EndModal(wx.ID_CLOSE)
         else:
             self.Destroy()
+
+    def _ai_dialog_alive(self) -> bool:
+        """False while closing or after the dialog window is gone."""
+        if getattr(self, "_closing", False):
+            return False
+        try:
+            return bool(self)
+        except RuntimeError:
+            return False
 
     def _ai_model_display_text(self) -> str:
         from .fido_settings import selected_model_service_string
@@ -1595,7 +1655,8 @@ class IssueDetailDialog(wx.Dialog):
     def _set_apply_fix_enabled(self, enabled: bool) -> None:
         if not self._show_fix:
             return
-        self.apply_fix_btn.Enable(enabled and self._fix_proposal is not None)
+        has_proposal = self._fix_proposal is not None or self._batch_proposal is not None
+        self.apply_fix_btn.Enable(enabled and has_proposal)
 
     def _set_ai_export_enabled(self, enabled: bool) -> None:
         if not self._show_ai:
@@ -1663,6 +1724,8 @@ class IssueDetailDialog(wx.Dialog):
     def _on_ai_webview_loaded(self, event) -> None:
         """After SetPage, move focus into the WebView for screen-reader review."""
         event.Skip()
+        if not self._ai_dialog_alive():
+            return
         host = getattr(self, "_ai_output_host", None)
         try:
             if host is not None:
@@ -1703,6 +1766,8 @@ class IssueDetailDialog(wx.Dialog):
 
     def _focus_ai_output_now(self) -> bool:
         """Try once to put focus on the AI pane host (not the Edge document)."""
+        if not self._ai_dialog_alive():
+            return True
         if not self._show_ai or not getattr(self, "_ai_view_realized", False):
             return True
         try:
@@ -1730,10 +1795,14 @@ class IssueDetailDialog(wx.Dialog):
         """Focus the AI pane after progress UI teardown (and WebView load)."""
         # One coordinated retry chain — supersedes any previous schedule so we
         # never stack parallel “wx webview” focus storms.
+        if not self._ai_dialog_alive():
+            return
         self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
         gen = self._ai_focus_gen
 
         def _attempt(remaining: int) -> None:
+            if not self._ai_dialog_alive():
+                return
             if gen != getattr(self, "_ai_focus_gen", 0):
                 return
             if self._focus_ai_output_now():
@@ -1745,10 +1814,14 @@ class IssueDetailDialog(wx.Dialog):
 
     def _schedule_reveal_latest_followup(self) -> None:
         """After a follow-up, scroll/focus the newest question in the HTML view."""
+        if not self._ai_dialog_alive():
+            return
         self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
         gen = self._ai_focus_gen
 
         def _attempt(remaining: int) -> None:
+            if not self._ai_dialog_alive():
+                return
             if gen != getattr(self, "_ai_focus_gen", 0):
                 return
             if self._reveal_latest_followup_now():
@@ -1760,6 +1833,8 @@ class IssueDetailDialog(wx.Dialog):
 
     def _reveal_latest_followup_now(self) -> bool:
         """Try once to put viewport + SR focus on the newest follow-up question."""
+        if not self._ai_dialog_alive():
+            return True
         if not self._show_ai or not getattr(self, "_ai_view_realized", False):
             return True
         try:
@@ -1770,7 +1845,15 @@ class IssueDetailDialog(wx.Dialog):
             return False
         _win_force_foreground(self)
         if self._ai_output_is_webview:
-            return _reveal_latest_followup_in_webview(self.ai_output, retries=0)
+            # Prefer JS scroll only — MoveFocus/synthetic click into Edge after
+            # follow-up has been linked to unclean app shutdown on Windows.
+            try:
+                _webview_run_script(
+                    self.ai_output, _WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS
+                )
+            except Exception:
+                return False
+            return True
         # TextCtrl fallback: jump near the latest "You asked" / question text.
         view = self.ai_output
         if hasattr(view, "SetInsertionPoint") and hasattr(view, "GetValue"):
@@ -1797,6 +1880,8 @@ class IssueDetailDialog(wx.Dialog):
     ) -> None:
         from .ai.markdown_html import with_ai_disclaimer
 
+        if getattr(self, "_closing", False):
+            return
         self._ai_plain = plain
         raw = markdown_text or ""
         self._ai_markdown = raw if plain else with_ai_disclaimer(raw)
@@ -1935,6 +2020,7 @@ class IssueDetailDialog(wx.Dialog):
         self.explain_btn.Enable(not busy)
         if self._show_fix:
             self.fix_btn.Enable(not busy)
+            self.fix_all_btn.Enable((not busy) and self._matching_like_this > 1)
             self._set_apply_fix_enabled(not busy)
         self.ask_btn.Enable(not busy and self._session is not None)
         self.followup_ctrl.Enable(not busy)
@@ -2062,6 +2148,7 @@ class IssueDetailDialog(wx.Dialog):
         if self._busy:
             return
         self._fix_proposal = None
+        self._batch_proposal = None
         self._set_apply_fix_enabled(False)
         cancel = self._open_ai_progress(
             _("Explain with AI"), _("Loading AI libraries…")
@@ -2106,8 +2193,11 @@ class IssueDetailDialog(wx.Dialog):
         if self._busy or not self._show_fix:
             return
         self._fix_proposal = None
+        self._batch_proposal = None
         self._set_apply_fix_enabled(False)
-        cancel = self._open_ai_progress(_("Fix with AI"), _("Loading AI libraries…"))
+        cancel = self._open_ai_progress(
+            _("Suggest fix with AI"), _("Loading AI libraries…")
+        )
         self._set_busy(True, _("Loading AI libraries…"))
         issue = self._issue
         result = self._check_result
@@ -2125,6 +2215,50 @@ class IssueDetailDialog(wx.Dialog):
                 return
             try:
                 out = propose_fix(
+                    issue,
+                    result,
+                    cancel_event=cancel,
+                    status_callback=status_cb,
+                )
+            except Exception as exc:
+                out = FixResult(ok=False, error_key="provider_error", text=str(exc))
+            if cancel.is_set():
+                return
+            try:
+                wx.PostEvent(self, FixAiEvent(result=out))
+            except RuntimeError:
+                return
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_fix_all(self, _event: wx.Event) -> None:
+        if self._busy or not self._show_fix:
+            return
+        if self._matching_like_this <= 1:
+            return
+        self._fix_proposal = None
+        self._batch_proposal = None
+        self._set_apply_fix_enabled(False)
+        cancel = self._open_ai_progress(
+            _("Suggest all like this…"), _("Loading AI libraries…")
+        )
+        self._set_busy(True, _("Loading AI libraries…"))
+        issue = self._issue
+        result = self._check_result
+        status_cb = self._ai_status_callback
+
+        def work() -> None:
+            from .ai.fix import FixResult, propose_batch_fix
+            from .ai.litellm_client import preload_litellm
+
+            ok, detail = preload_litellm()
+            if not ok:
+                wx.CallAfter(self._fail_ai_libraries, detail)
+                return
+            if cancel.is_set():
+                return
+            try:
+                out = propose_batch_fix(
                     issue,
                     result,
                     cancel_event=cancel,
@@ -2186,7 +2320,9 @@ class IssueDetailDialog(wx.Dialog):
                     text=str(exc),
                     session=session,
                 )
-            if cancel.is_set():
+            # Prefer showing a completed reply over a late cancel race with the
+            # progress dialog (Pulse can flip to cancelled while the reply lands).
+            if cancel.is_set() and not (out.ok and (out.text or "").strip()):
                 return
             try:
                 wx.PostEvent(
@@ -2229,22 +2365,53 @@ class IssueDetailDialog(wx.Dialog):
                 question=question,
                 answer=result.text or "",
             )
-            self._set_ai_content(self._ai_markdown, focus=True)
-            self.followup_ctrl.SetValue("")
+            # Defer SetPage until after ProgressDialog teardown / Layout so Edge
+            # WebView2 reliably paints the updated document (follow-ups were
+            # landing in markdown but staying off-screen or unpainted).
+            md = self._ai_markdown
+
+            def _paint_followup() -> None:
+                if not self._ai_dialog_alive():
+                    return
+                try:
+                    if not self:
+                        return
+                except RuntimeError:
+                    return
+                # Paint without diving Win32 focus into Edge (see close hang).
+                self._set_ai_content(md, focus=False)
+                self.followup_ctrl.SetValue("")
+                self.ai_status.SetLabel(_("Done"))
+                # Scroll in-document via page script / one JS pass only.
+                if self._ai_output_is_webview and _markdown_has_latest_followup(md):
+                    wx.CallLater(
+                        120,
+                        lambda: self._ai_dialog_alive()
+                        and _webview_run_script(
+                            self.ai_output, _WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS
+                        ),
+                    )
+                try:
+                    _try_set_focus(self.followup_ctrl)
+                except RuntimeError:
+                    pass
+
+            wx.CallAfter(_paint_followup)
             try:
                 from .telemetry import log_ai_explain
 
                 log_ai_explain(followup=True)
             except Exception:
                 pass
-        else:
-            self._set_ai_content(result.text or "", focus=True)
-            try:
-                from .telemetry import log_ai_explain
+            return
 
-                log_ai_explain(followup=False)
-            except Exception:
-                pass
+        self._set_ai_content(result.text or "", focus=True)
+        try:
+            from .telemetry import log_ai_explain
+
+            log_ai_explain(followup=False)
+        except Exception:
+            pass
         self.ai_status.SetLabel(_("Done"))
 
     def _on_fix_ai_event(self, event: FixAiEvent) -> None:
@@ -2260,6 +2427,7 @@ class IssueDetailDialog(wx.Dialog):
                 return
             msg = error_message_for_key(result.error_key, detail=result.text or "")
             self._fix_proposal = None
+            self._batch_proposal = None
             self._set_apply_fix_enabled(False)
             self._set_ai_content(msg, plain=True, focus=True)
             self.ai_status.SetLabel(_("Could not propose a fix."))
@@ -2271,6 +2439,7 @@ class IssueDetailDialog(wx.Dialog):
         self._session = result.session
         self.ask_btn.Enable(True)
         self._fix_proposal = result.proposal
+        self._batch_proposal = result.batch
         self._set_ai_content(result.text or "", focus=True)
         try:
             from .telemetry import log_ai_fix
@@ -2278,15 +2447,27 @@ class IssueDetailDialog(wx.Dialog):
             log_ai_fix(applied=False)
         except Exception:
             pass
-        if result.proposal is None:
+        if result.proposal is None and result.batch is None:
             self._set_apply_fix_enabled(False)
             self.ai_status.SetLabel(_("Done"))
         else:
             self._set_apply_fix_enabled(True)
-            self.ai_status.SetLabel(_("Fix proposed. Review, then Apply fix."))
+            if result.batch is not None:
+                self.ai_status.SetLabel(
+                    _(
+                        "Batch fix suggested ({n} patch(es)). Review, then "
+                        "Apply fix and validate."
+                    ).format(n=len(result.batch.patches))
+                )
+            else:
+                self.ai_status.SetLabel(
+                    _("Fix suggested. Review, then Apply fix and validate.")
+                )
 
     def _on_apply_fix(self, _event: wx.Event) -> None:
-        if self._busy or not self._show_fix or self._fix_proposal is None:
+        if self._busy or not self._show_fix:
+            return
+        if self._fix_proposal is None and self._batch_proposal is None:
             return
         target = ""
         if self._check_result and self._check_result.target_path:
@@ -2302,12 +2483,16 @@ class IssueDetailDialog(wx.Dialog):
 
         self._set_busy(True, _("Applying fix…"))
         proposal = self._fix_proposal
+        batch = self._batch_proposal
 
         def work() -> None:
-            from .ai.fix import apply_proposed_fix
+            from .ai.fix import apply_proposed_fix, apply_proposed_fixes
 
             try:
-                out = apply_proposed_fix(proposal, target)
+                if batch is not None:
+                    out = apply_proposed_fixes(batch.patches, target)
+                else:
+                    out = apply_proposed_fix(proposal, target)
             except Exception as exc:
                 from .epub_package import ApplyResult
 
@@ -2320,7 +2505,7 @@ class IssueDetailDialog(wx.Dialog):
         threading.Thread(target=work, daemon=True).start()
 
     def _on_apply_fix_event(self, event: ApplyFixEvent) -> None:
-        from .ai.fix import PendingFixVerify, error_message_for_key
+        from .ai.fix import PendingFixVerify, error_message_for_key, parse_extra_backups
         from .epub_package import restore_path_for_apply
 
         result = event.result
@@ -2332,7 +2517,10 @@ class IssueDetailDialog(wx.Dialog):
             self._set_apply_fix_enabled(True)
             return
 
+        proposal = self._fix_proposal
+        batch = self._batch_proposal
         self._fix_proposal = None
+        self._batch_proposal = None
         self._set_apply_fix_enabled(False)
         try:
             from .telemetry import log_ai_fix
@@ -2343,14 +2531,78 @@ class IssueDetailDialog(wx.Dialog):
         target = ""
         if self._check_result and self._check_result.target_path:
             target = self._check_result.target_path
+        changelog_path = ""
+        extra_backups = parse_extra_backups(result.detail or "")
         if target and result.backup_path and self._check_result is not None:
-            self.applied_fix_verify = PendingFixVerify(
-                issue=self._issue,
-                target_path=target,
-                backup_path=result.backup_path,
-                restore_to=restore_path_for_apply(target, result),
-                before_result=self._check_result,
-            )
+            if batch is not None:
+                rationale = batch.rationale
+                member = result.member or (
+                    batch.patches[0].file if batch.patches else ""
+                )
+                try:
+                    from .edit_log import log_batch_fix_applied
+
+                    log_file = log_batch_fix_applied(
+                        target_path=target,
+                        issue=self._issue,
+                        backup_path=result.backup_path,
+                        patches=[
+                            (p.file, p.original, p.replacement) for p in batch.patches
+                        ],
+                        rationale=rationale,
+                        matched_issue_count=batch.matched_issue_count
+                        or self._matching_like_this,
+                        extra_backups=extra_backups,
+                    )
+                    changelog_path = str(log_file)
+                except OSError:
+                    changelog_path = ""
+                self.applied_fix_verify = PendingFixVerify(
+                    issue=self._issue,
+                    target_path=target,
+                    backup_path=result.backup_path,
+                    restore_to=restore_path_for_apply(target, result),
+                    before_result=self._check_result,
+                    member=member,
+                    rationale=rationale,
+                    changelog_path=changelog_path,
+                    batch_mode=True,
+                    patch_count=len(batch.patches),
+                    matched_before=batch.matched_issue_count or self._matching_like_this,
+                    extra_backups=extra_backups,
+                )
+            else:
+                member = result.member or (proposal.file if proposal else "")
+                rationale = proposal.rationale if proposal else ""
+                original = proposal.original if proposal else ""
+                replacement = proposal.replacement if proposal else ""
+                try:
+                    from .edit_log import log_fix_applied
+
+                    log_file = log_fix_applied(
+                        target_path=target,
+                        issue=self._issue,
+                        member=member,
+                        backup_path=result.backup_path,
+                        rationale=rationale,
+                        original=original,
+                        replacement=replacement,
+                    )
+                    changelog_path = str(log_file)
+                except OSError:
+                    changelog_path = ""
+                self.applied_fix_verify = PendingFixVerify(
+                    issue=self._issue,
+                    target_path=target,
+                    backup_path=result.backup_path,
+                    restore_to=restore_path_for_apply(target, result),
+                    before_result=self._check_result,
+                    member=member,
+                    rationale=rationale,
+                    original=original,
+                    replacement=replacement,
+                    changelog_path=changelog_path,
+                )
         else:
             self.applied_fix_verify = None
         # Close and let the main window re-check (verify / optional revert after).
@@ -2556,6 +2808,8 @@ class AiOverviewDialog(wx.Dialog):
 
     def _on_webview_loaded(self, event) -> None:
         event.Skip()
+        if not self._ai_dialog_alive():
+            return
         host = getattr(self, "_ai_output_host", None)
         try:
             if host is not None:
@@ -2573,10 +2827,14 @@ class AiOverviewDialog(wx.Dialog):
             self._schedule_output_focus()
 
     def _schedule_output_focus(self) -> None:
+        if not self._ai_dialog_alive():
+            return
         self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
         gen = self._ai_focus_gen
 
         def _attempt(remaining: int) -> None:
+            if not self._ai_dialog_alive():
+                return
             if gen != getattr(self, "_ai_focus_gen", 0):
                 return
             if self._focus_output():
@@ -2587,10 +2845,14 @@ class AiOverviewDialog(wx.Dialog):
         wx.CallAfter(lambda: _attempt(5))
 
     def _schedule_reveal_latest_followup(self) -> None:
+        if not self._ai_dialog_alive():
+            return
         self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
         gen = self._ai_focus_gen
 
         def _attempt(remaining: int) -> None:
+            if not self._ai_dialog_alive():
+                return
             if gen != getattr(self, "_ai_focus_gen", 0):
                 return
             if self._reveal_latest_followup_now():
@@ -2601,6 +2863,8 @@ class AiOverviewDialog(wx.Dialog):
         wx.CallAfter(lambda: _attempt(5))
 
     def _reveal_latest_followup_now(self) -> bool:
+        if not self._ai_dialog_alive():
+            return True
         try:
             if not self:
                 return True
@@ -2609,7 +2873,13 @@ class AiOverviewDialog(wx.Dialog):
             return False
         _win_force_foreground(self)
         if self._ai_output_is_webview:
-            return _reveal_latest_followup_in_webview(self.ai_output, retries=0)
+            try:
+                _webview_run_script(
+                    self.ai_output, _WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS
+                )
+            except Exception:
+                return False
+            return True
         view = self.ai_output
         if hasattr(view, "SetInsertionPoint") and hasattr(view, "GetValue"):
             try:
@@ -2626,6 +2896,8 @@ class AiOverviewDialog(wx.Dialog):
         return _try_set_focus(view)
 
     def _focus_output(self) -> bool:
+        if not self._ai_dialog_alive():
+            return True
         try:
             if not self:
                 return True
@@ -2653,6 +2925,8 @@ class AiOverviewDialog(wx.Dialog):
         )
 
     def _paint_content(self, *, focus: bool = False) -> None:
+        if not self._ai_dialog_alive():
+            return
         if not self._ai_view_realized:
             return
         if self._ai_output_is_webview:
@@ -2825,7 +3099,7 @@ class AiOverviewDialog(wx.Dialog):
                     text=str(exc),
                     session=session,
                 )
-            if cancel.is_set():
+            if cancel.is_set() and not (out.ok and (out.text or "").strip()):
                 return
             try:
                 wx.PostEvent(
@@ -2864,8 +3138,33 @@ class AiOverviewDialog(wx.Dialog):
             answer=result.text or "",
         )
         self._ai_plain = False
-        self._paint_content(focus=True)
-        self.followup_ctrl.SetValue("")
+
+        def _paint_followup() -> None:
+            if not self._ai_dialog_alive():
+                return
+            try:
+                if not self:
+                    return
+            except RuntimeError:
+                return
+            self._paint_content(focus=False)
+            self.followup_ctrl.SetValue("")
+            if self._ai_output_is_webview and _markdown_has_latest_followup(
+                self._ai_markdown or ""
+            ):
+                wx.CallLater(
+                    120,
+                    lambda: self._ai_dialog_alive()
+                    and _webview_run_script(
+                        self.ai_output, _WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS
+                    ),
+                )
+            try:
+                _try_set_focus(self.followup_ctrl)
+            except RuntimeError:
+                pass
+
+        wx.CallAfter(_paint_followup)
         try:
             from .telemetry import log_ai_overview
 
@@ -2960,6 +3259,7 @@ class AiOverviewDialog(wx.Dialog):
         if getattr(self, "_closing", False):
             return
         self._closing = True
+        self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
         if self._ai_cancel is not None:
             self._ai_cancel.set()
         self._close_ai_progress(reclaim_focus=False)
@@ -2967,12 +3267,22 @@ class AiOverviewDialog(wx.Dialog):
             close_btn = self.FindWindowById(wx.ID_CLOSE)
             if close_btn is not None:
                 _try_set_focus(close_btn)
+            else:
+                _try_set_focus(self)
         except RuntimeError:
             pass
         if self.IsModal():
             self.EndModal(wx.ID_CLOSE)
         else:
             self.Destroy()
+
+    def _ai_dialog_alive(self) -> bool:
+        if getattr(self, "_closing", False):
+            return False
+        try:
+            return bool(self)
+        except RuntimeError:
+            return False
 
 
 class AboutDialog(wx.Dialog):
@@ -3118,6 +3428,7 @@ class MainFrame(wx.Frame):
         self._overview_progress_timer: wx.Timer | None = None
         self.menu_ai_overview: wx.MenuItem | None = None
         self.menu_ai_features: wx.MenuItem | None = None
+        self.menu_show_issues_always: wx.MenuItem | None = None
         self._lang_menu_items: dict[str, wx.MenuItem] = {}
         self._issues_visible = True
         self._issues_height_delta = 0
@@ -3623,12 +3934,32 @@ class MainFrame(wx.Frame):
         self.menu_view_log = report_menu.Append(
             wx.ID_ANY, _("View full &log\tCtrl+L")
         )
+        self.menu_view_changelog = report_menu.Append(
+            wx.ID_ANY, _("View edit &changelog…\tCtrl+Shift+G")
+        )
+        self.menu_view_changelog.SetHelp(
+            _(
+                "Open the CheckMate edit changelog for this publication "
+                "(AI fixes and backups), when one exists"
+            )
+        )
         self._report_menu_index = menubar.GetMenuCount()
         menubar.Append(report_menu, _("&Report"))
 
         tools_menu = wx.Menu()
         self.menu_check = tools_menu.Append(
             wx.ID_ANY, _("&Re-check publication\tF5")
+        )
+        tools_menu.AppendSeparator()
+        self.menu_show_issues_always = tools_menu.AppendCheckItem(
+            wx.ID_ANY, _("Show &issues always")
+        )
+        self.menu_show_issues_always.Check(show_issues_always())
+        self.menu_show_issues_always.SetHelp(
+            _(
+                "When checked, open the issues list automatically after a check "
+                "that finds issues (instead of pressing Show issues)"
+            )
         )
         tools_menu.AppendSeparator()
         self.menu_ai_features = tools_menu.AppendCheckItem(
@@ -3728,6 +4059,7 @@ class MainFrame(wx.Frame):
         greys out correctly on Windows and macOS.
         """
         enabled = self._last_result is not None
+        changelog_ok = self._changelog_path_if_present() is not None
         for item in (
             self.menu_view_text,
             self.menu_save_text,
@@ -3740,18 +4072,19 @@ class MainFrame(wx.Frame):
             item.Enable(enabled)
         if self.menu_ai_overview is not None:
             self.menu_ai_overview.Enable(enabled)
+        self.menu_view_changelog.Enable(changelog_ok)
         # AI overview is hidden when features are off; only enable when shown.
         if self.ai_overview_btn is not None and ai_features_enabled():
             self.ai_overview_btn.Enable(enabled)
         self.copy_btn.Enable(enabled)
-        self.report_btn.Enable(enabled)
+        self.report_btn.Enable(enabled or changelog_ok)
         self._update_show_issues_button()
         menubar = self.GetMenuBar()
         if menubar is None:
             return
         idx = getattr(self, "_report_menu_index", -1)
         if 0 <= idx < menubar.GetMenuCount():
-            menubar.EnableTop(idx, enabled)
+            menubar.EnableTop(idx, enabled or changelog_ok)
 
     def _bind(self) -> None:
         self.select_file_btn.Bind(wx.EVT_BUTTON, self.on_browse_file)
@@ -3787,8 +4120,14 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_copy_summary, self.menu_copy)
         self.Bind(wx.EVT_MENU, self.on_clear_results, self.menu_clear)
         self.Bind(wx.EVT_MENU, self.on_check, self.menu_check)
+        self.Bind(
+            wx.EVT_MENU,
+            self.on_toggle_show_issues_always,
+            self.menu_show_issues_always,
+        )
         self.Bind(wx.EVT_MENU, self.on_toggle_ai_features, self.menu_ai_features)
         self.Bind(wx.EVT_MENU, self.on_view_full_log, self.menu_view_log)
+        self.Bind(wx.EVT_MENU, self.on_view_changelog, self.menu_view_changelog)
         self.Bind(wx.EVT_MENU, self.on_check_updates, self.menu_update)
         self.Bind(wx.EVT_MENU, self.on_reinstall_checker, self.menu_install)
         self.Bind(wx.EVT_MENU, self.on_open_app_log, self.menu_open_app_log)
@@ -3894,6 +4233,9 @@ class MainFrame(wx.Frame):
         )
         if not has_issues and self._issues_visible:
             self._set_issues_panel_visible(False)
+            return
+        if has_issues and show_issues_always() and not self._issues_visible:
+            self._set_issues_panel_visible(True)
             return
         self.show_issues_btn.Enable(has_issues)
         if self._issues_visible:
@@ -4529,6 +4871,9 @@ class MainFrame(wx.Frame):
                 "The publication was changed, but the re-check could not be completed.\n\n"
                 "{detail}"
             ).format(detail=(result.error_message or "").strip() or _("Unknown error."))
+            changelog = getattr(pending, "changelog_path", "") or ""
+            if changelog:
+                msg += "\n\n" + _("Edit log:\n{path}").format(path=changelog)
             if has_backup:
                 msg += "\n\n" + _(
                     "Do you want to revert to the backup created before the fix?"
@@ -4541,14 +4886,72 @@ class MainFrame(wx.Frame):
                 )
                 if answer == wx.YES:
                     self._revert_applied_fix(pending)
+                else:
+                    try:
+                        from .edit_log import log_fix_validation
+
+                        log_fix_validation(
+                            target_path=pending.target_path,
+                            issue=pending.issue,
+                            backup_path=pending.backup_path,
+                            outcome="recheck_failed_kept",
+                            detail=result.error_message or "",
+                        )
+                    except OSError:
+                        pass
             else:
+                try:
+                    from .edit_log import log_fix_validation
+
+                    log_fix_validation(
+                        target_path=pending.target_path,
+                        issue=pending.issue,
+                        backup_path=pending.backup_path,
+                        outcome="recheck_failed_no_backup",
+                        detail=result.error_message or "",
+                    )
+                except OSError:
+                    pass
                 wx.MessageBox(msg, _("Re-check failed"), wx.OK | wx.ICON_WARNING, self)
             return
 
-        report = evaluate_fix_outcome(pending.issue, pending.before_result, result)
+        report = evaluate_fix_outcome(
+            pending.issue,
+            pending.before_result,
+            result,
+            batch_mode=bool(getattr(pending, "batch_mode", False)),
+        )
         lines: list[str] = []
 
-        if report.target_resolved:
+        if report.batch_mode:
+            if report.target_resolved:
+                lines.append(
+                    _(
+                        "All matching issues with code {code} appear to be resolved "
+                        "({before} → {after})."
+                    ).format(
+                        code=pending.issue.code or _("(no code)"),
+                        before=report.matched_before,
+                        after=report.matched_after,
+                    )
+                )
+            else:
+                lines.append(
+                    _(
+                        "Matching issues with code {code}: {before} before, "
+                        "{after} after the batch fix."
+                    ).format(
+                        code=pending.issue.code or _("(no code)"),
+                        before=report.matched_before,
+                        after=report.matched_after,
+                    )
+                )
+            patch_count = int(getattr(pending, "patch_count", 0) or 0)
+            if patch_count:
+                lines.append(
+                    _("Patches applied: {n}.").format(n=patch_count)
+                )
+        elif report.target_resolved:
             lines.append(
                 _("The targeted issue appears to be resolved (code: {code}).").format(
                     code=pending.issue.code or _("(no code)")
@@ -4615,7 +5018,23 @@ class MainFrame(wx.Frame):
 
         body = "\n".join(lines)
 
+        changelog = getattr(pending, "changelog_path", "") or ""
+        if changelog:
+            body += "\n\n" + _("Edit log:\n{path}").format(path=changelog)
+
         if not report.has_concerns:
+            try:
+                from .edit_log import log_fix_validation
+
+                log_fix_validation(
+                    target_path=pending.target_path,
+                    issue=pending.issue,
+                    backup_path=pending.backup_path,
+                    outcome="confirmed",
+                    detail=_("The targeted issue appears to be resolved."),
+                )
+            except OSError:
+                pass
             wx.MessageBox(
                 body,
                 _("Fix confirmed"),
@@ -4625,6 +5044,18 @@ class MainFrame(wx.Frame):
             return
 
         if not has_backup:
+            try:
+                from .edit_log import log_fix_validation
+
+                log_fix_validation(
+                    target_path=pending.target_path,
+                    issue=pending.issue,
+                    backup_path=pending.backup_path,
+                    outcome="concerns_no_backup",
+                    detail=body,
+                )
+            except OSError:
+                pass
             wx.MessageBox(
                 body
                 + "\n\n"
@@ -4648,12 +5079,27 @@ class MainFrame(wx.Frame):
         )
         if answer == wx.YES:
             self._revert_applied_fix(pending)
+        else:
+            try:
+                from .edit_log import log_fix_validation
+
+                log_fix_validation(
+                    target_path=pending.target_path,
+                    issue=pending.issue,
+                    backup_path=pending.backup_path,
+                    outcome="concerns_kept",
+                    detail=body,
+                )
+            except OSError:
+                pass
 
     def _revert_applied_fix(self, pending) -> None:
         from .epub_package import restore_from_backup
 
         try:
             restore_from_backup(pending.backup_path, pending.restore_to)
+            for bak, restore_to in getattr(pending, "extra_backups", None) or []:
+                restore_from_backup(bak, restore_to)
         except OSError as exc:
             wx.MessageBox(
                 _("Could not revert to the backup:\n{detail}").format(detail=str(exc)),
@@ -4662,8 +5108,23 @@ class MainFrame(wx.Frame):
                 self,
             )
             return
+        try:
+            from .edit_log import log_fix_reverted
+
+            log_fix_reverted(
+                target_path=pending.target_path,
+                issue=pending.issue,
+                backup_path=pending.backup_path,
+                restore_to=pending.restore_to,
+            )
+        except OSError:
+            pass
+        revert_msg = _("The publication was reverted to the backup.")
+        changelog = getattr(pending, "changelog_path", "") or ""
+        if changelog:
+            revert_msg += "\n\n" + _("Edit log:\n{path}").format(path=changelog)
         wx.MessageBox(
-            _("The publication was reverted to the backup."),
+            revert_msg,
             _("Reverted"),
             wx.OK | wx.ICON_INFORMATION,
             self,
@@ -4682,6 +5143,12 @@ class MainFrame(wx.Frame):
             return
         update_settings(ai_features_enabled=bool(self.menu_ai_features.IsChecked()))
         self._apply_ai_features_visibility()
+
+    def on_toggle_show_issues_always(self, _event: wx.CommandEvent) -> None:
+        enabled = bool(self.menu_show_issues_always.IsChecked())
+        update_settings(show_issues_always=enabled)
+        # Apply immediately when turning on and a result already has issues.
+        self._update_show_issues_button()
 
     def on_issues_list_focus(self, event: wx.FocusEvent) -> None:
         event.Skip()
@@ -4730,6 +5197,8 @@ class MainFrame(wx.Frame):
         clear_item = menu.Append(wx.ID_ANY, _("C&lear results\tCtrl+Shift+N"))
         menu.AppendSeparator()
         log_item = menu.Append(wx.ID_ANY, _("View full &log\tCtrl+L"))
+        changelog_item = menu.Append(wx.ID_ANY, _("View edit &changelog…\tCtrl+Shift+G"))
+        changelog_item.Enable(self._changelog_path_if_present() is not None)
         menu.Bind(wx.EVT_MENU, self.on_view_html_report, view_html)
         menu.Bind(wx.EVT_MENU, self.on_save_html_report, save_html)
         menu.Bind(wx.EVT_MENU, self.on_view_text_report, view_text)
@@ -4737,8 +5206,57 @@ class MainFrame(wx.Frame):
         menu.Bind(wx.EVT_MENU, self.on_copy_summary, copy_item)
         menu.Bind(wx.EVT_MENU, self.on_clear_results, clear_item)
         menu.Bind(wx.EVT_MENU, self.on_view_full_log, log_item)
+        menu.Bind(wx.EVT_MENU, self.on_view_changelog, changelog_item)
         self.PopupMenu(menu)
         menu.Destroy()
+
+    def _current_publication_path(self) -> Path | None:
+        """Best path for the publication currently in focus (result or path field)."""
+        if self._last_result is not None and self._last_result.target_path:
+            path = Path(self._last_result.target_path).expanduser()
+            if path.exists():
+                return path
+        path = self._current_path()
+        if path is not None:
+            path = path.expanduser()
+            if path.exists():
+                return path
+        return None
+
+    def _changelog_path_if_present(self) -> Path | None:
+        from .edit_log import find_changelog
+
+        return find_changelog(self._current_publication_path())
+
+    def on_view_changelog(self, _event: wx.CommandEvent) -> None:
+        path = self._changelog_path_if_present()
+        if path is None:
+            wx.MessageBox(
+                _(
+                    "No CheckMate edit changelog was found for this publication.\n\n"
+                    "A changelog is created beside the file (or inside an exploded "
+                    "folder) when you apply an AI fix."
+                ),
+                _("No changelog"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            wx.MessageBox(
+                _("Could not read the changelog:\n{error}").format(error=exc),
+                _("Error"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+        from .changelog_dialog import ChangelogDialog
+
+        dlg = ChangelogDialog(self, path=path, markdown_text=text)
+        dlg.ShowModal()
+        dlg.Destroy()
 
     def _require_result(self, empty_title: str) -> CheckResult | None:
         if self._last_result is None:
