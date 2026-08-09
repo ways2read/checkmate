@@ -30,7 +30,11 @@ from .litellm_client import (
     ensure_credentials_ready,
     litellm_available,
 )
-from .resources import authoritative_guidance_for_fix
+from .resources import (
+    authoritative_guidance_for_fix,
+    kb_article_body_for_prompt,
+    kb_article_body_prompt_block,
+)
 from .session import ExplainSession
 
 logger = logging.getLogger(__name__)
@@ -216,7 +220,12 @@ STRICT RULES:
 """
 
 
-def build_fix_user_prompt(ctx: dict[str, str], issue: Issue | None = None) -> str:
+def build_fix_user_prompt(
+    ctx: dict[str, str],
+    issue: Issue | None = None,
+    *,
+    kb_body: str = "",
+) -> str:
     lang = _language_name()
     member = ctx.get("file_member") or ""
     kind = ctx.get("member_kind") or fix_member_kind(member)
@@ -236,6 +245,10 @@ def build_fix_user_prompt(ctx: dict[str, str], issue: Issue | None = None) -> st
         if guidance:
             lines.append("")
             lines.append(guidance)
+    body_block = kb_article_body_prompt_block(kb_body, for_fix=True)
+    if body_block:
+        lines.append("")
+        lines.append(body_block)
     if ctx.get("publication_kind"):
         lines.append(f"- Publication kind: {ctx['publication_kind']}")
     if ctx.get("tool"):
@@ -521,6 +534,8 @@ STRICT RULES:
 def build_batch_fix_user_prompt(
     ctx: dict[str, str],
     issue: Issue | None = None,
+    *,
+    kb_body: str = "",
 ) -> str:
     lang = _language_name()
     lines = [
@@ -540,6 +555,10 @@ def build_batch_fix_user_prompt(
         if guidance:
             lines.append("")
             lines.append(guidance)
+    body_block = kb_article_body_prompt_block(kb_body, for_fix=True)
+    if body_block:
+        lines.append("")
+        lines.append(body_block)
     if ctx.get("publication_kind"):
         lines.append(f"- Publication kind: {ctx['publication_kind']}")
     if ctx.get("tool"):
@@ -821,6 +840,7 @@ def propose_batch_fix(
         issue, result, target_path=path_for_gate
     )
     matched_count = len(matched)
+    kb_body = kb_article_body_for_prompt(issue)
     try:
         session = ExplainSession.create()
     except RuntimeError as e:
@@ -848,7 +868,7 @@ def propose_batch_fix(
     try:
         text = session.ask(
             system=build_batch_fix_system_prompt(),
-            user=build_batch_fix_user_prompt(ctx, issue=issue),
+            user=build_batch_fix_user_prompt(ctx, issue=issue, kb_body=kb_body),
             max_tokens=_FIX_MAX_TOKENS,
         )
     except ProviderError as e:
@@ -1003,6 +1023,7 @@ def propose_fix(
     ctx = gather_issue_context(issue, result, target_path=target_path)
     member_kind = fix_member_kind(ctx.get("file_member"))
     ctx["member_kind"] = member_kind
+    kb_body = kb_article_body_for_prompt(issue)
     try:
         session = ExplainSession.create()
     except RuntimeError as e:
@@ -1030,7 +1051,7 @@ def propose_fix(
     try:
         text = session.ask(
             system=build_fix_system_prompt(),
-            user=build_fix_user_prompt(ctx, issue=issue),
+            user=build_fix_user_prompt(ctx, issue=issue, kb_body=kb_body),
             max_tokens=_FIX_MAX_TOKENS,
         )
     except ProviderError as e:
@@ -1102,6 +1123,102 @@ def propose_fix(
     preview = format_fix_preview(proposal)
     logger.info("Fix request completed model=%s", session.model)
     return FixResult(ok=True, text=preview, proposal=proposal, session=session)
+
+
+def ask_fix_followup(
+    session: ExplainSession,
+    question: str,
+    *,
+    issue: Issue | None = None,
+    check_result: CheckResult | None = None,
+    cancel_event: threading.Event | None = None,
+    status_callback: Callable[[str], None] | None = None,
+) -> FixResult:
+    """
+    Continue a fix conversation (e.g. replace a placeholder ISBN with a real one).
+
+    When the model returns an updated JSON patch, include it on the result so
+    Apply can use the revised proposal.
+    """
+    from .session import ProviderError
+
+    q = (question or "").strip()
+    if not q:
+        return FixResult(ok=False, error_key="empty_question", session=session)
+    if cancel_event is not None and cancel_event.is_set():
+        return FixResult(ok=False, error_key="cancelled", session=session)
+
+    lang = _language_name()
+    if status_callback is not None:
+        try:
+            status_callback(_("Thinking…"))
+        except Exception:
+            pass
+    logger.info("Fix follow-up request starting model=%s", session.model)
+    try:
+        text = session.followup(
+            f"Follow-up about the proposed fix for this validation issue.\n"
+            f"Reply entirely in {lang}.\n\n"
+            f"If the user asks to change or refine the fix (for example a real "
+            f"ISBN instead of a placeholder, different markup, or another file), "
+            f"reply with an updated ## {_('Proposed fix')} section and exactly ONE "
+            f"complete fenced json code block in the same format as before "
+            f"(fields file, original, replacement).\n"
+            f"If they only ask a clarifying question, answer conversationally "
+            f"without a JSON block.\n\n"
+            f"Question:\n{q}"
+        )
+    except ProviderError as e:
+        return FixResult(
+            ok=False,
+            error_key=e.error_key,
+            text=e.detail,
+            session=session,
+        )
+    except Exception as e:
+        logger.exception("Fix follow-up provider error")
+        return FixResult(
+            ok=False, error_key="provider_error", text=str(e), session=session
+        )
+
+    if cancel_event is not None and cancel_event.is_set():
+        return FixResult(ok=False, error_key="cancelled", session=session)
+
+    proposal = None
+    batch = None
+    if issue is not None:
+        try:
+            from .context import gather_issue_context
+
+            target = None
+            if check_result is not None:
+                target = (check_result.target_path or "").strip() or None
+            ctx = gather_issue_context(
+                issue, check_result, target_path=target
+            )
+            path_for_gate = target or ctx.get("target_path") or None
+        except Exception:
+            ctx = {}
+            path_for_gate = None
+        proposal, _err = _try_parse_usable(
+            text or "",
+            ctx=ctx,
+            target_path=path_for_gate,
+            finish_reason=session.last_finish_reason,
+        )
+        if proposal is None:
+            batch = parse_batch_fix_proposal(text or "")
+            if batch is not None and not batch.patches:
+                batch = None
+
+    logger.info("Fix follow-up request completed model=%s", session.model)
+    return FixResult(
+        ok=True,
+        text=text or "",
+        proposal=proposal,
+        batch=batch,
+        session=session,
+    )
 
 
 def apply_proposed_fix(

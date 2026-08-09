@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 import re
 
 from ..models import Issue
+from ..settings import ai_send_kb_article_body
 from .ace_kb_map import kb_resource_for_ace_code, normalize_kb_url
 from .epubcheck_kb_map import (
     epubcheck_messages_resource,
     kb_resource_for_epubcheck_code,
     looks_like_epubcheck_code,
 )
+
+logger = logging.getLogger(__name__)
+
+# Cap for optional KB article plain text in explain/fix prompts.
+_MAX_KB_BODY_CHARS = 12_000
 
 # Injected into the system prompt; models should prefer these over inventing URLs.
 RESOURCE_MAP: dict[str, list[tuple[str, str]]] = {
@@ -252,3 +259,69 @@ def authoritative_guidance_for_fix(issue: Issue) -> str:
         "- If the reference suggests a fix that cannot be applied as a unique local "
         "replace, omit the JSON block and explain why."
     )
+
+
+def kb_article_body_for_prompt(issue: Issue) -> str:
+    """
+    Plain-text DAISY KB article body for explain/fix prompts, or empty.
+
+    Honours ``ai_send_kb_article_body`` (default off). Uses the offline cache,
+    downloading the English article on demand when missing. Only applies when
+    the primary reference is a kb.daisy.org article (not the EPUBCheck catalog).
+    """
+    if not ai_send_kb_article_body():
+        return ""
+    primary = primary_kb_resource(issue)
+    if not primary:
+        return ""
+    _title, url = primary
+    if "kb.daisy.org" not in (url or "").lower():
+        return ""
+
+    from ..kb.fetch import (
+        ensure_article_cached,
+        extract_article_fragment,
+        html_to_plain_text,
+    )
+    from ..kb.store import en_file_path, en_relative_path_from_url
+
+    en_rel = en_relative_path_from_url(url)
+    if not en_rel:
+        return ""
+    try:
+        if not ensure_article_cached(en_rel, also_ja=False):
+            return ""
+        path = en_file_path(en_rel)
+        if not path.is_file():
+            return ""
+        html = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        logger.debug("KB article body unavailable for %s", en_rel, exc_info=True)
+        return ""
+
+    fragment = extract_article_fragment(html)
+    plain = html_to_plain_text(fragment or html)
+    if not plain:
+        return ""
+    if len(plain) > _MAX_KB_BODY_CHARS:
+        plain = plain[:_MAX_KB_BODY_CHARS] + "\n…"
+    return plain
+
+
+def kb_article_body_prompt_block(body: str, *, for_fix: bool = False) -> str:
+    """Fenced prompt block for an already-loaded KB article body."""
+    text = (body or "").strip()
+    if not text:
+        return ""
+    if for_fix:
+        intro = (
+            "Knowledge Base article body (authoritative remediation guidance; "
+            "do not copy markup from here into \"original\" / \"replacement\" — "
+            "use Exact file text for those):"
+        )
+    else:
+        intro = (
+            "Knowledge Base article body (authoritative; align What this means / "
+            "Why it matters / How to fix with this text):"
+        )
+    return f"{intro}\n```\n{text}\n```"

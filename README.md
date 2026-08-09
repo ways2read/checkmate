@@ -9,7 +9,8 @@ Those checkers are Java command-line tools. This app wraps them so you can open
 a publication and see a clear result — **Passed**, **Passed with warnings**, or
 **Failed** — without typing `java -jar` commands or reading a long console log
 first. `.ebrl` files use eBraille Checker; `.epub` files use stock EPUBCheck
-plus Ace by DAISY when available; `.pdf` files use veraPDF against PDF/UA-2;
+plus Ace by DAISY when available; `.pdf` files use veraPDF against the PDF/UA
+profile chosen in **Tools → Settings…** (default PDF/UA-2);
 exploded folders are classified automatically.
 
 Built with [wxPython](https://wxpython.org/) for native widgets and screen reader
@@ -47,8 +48,8 @@ support on Windows, macOS, and Linux.
 - **AI overview** (same FIDO AI gate): dedicated **AI overview** button (and
   **Report** menu when AI is enabled); whole-report briefing — themes,
   priorities, and next steps based on the unique issue codes (not a full file
-  dump). View, save, or copy the result like other AI replies. Toggle with
-  **Tools → Enable AI features** (hidden when FIDO AI is unavailable).
+  dump). View, save, or copy the result like other AI replies. Toggle under
+  **Tools → Settings…** (hidden when FIDO AI is unavailable).
 - **Suggest fix with AI** (EPUB and eBraille only, when FIDO AI settings are present):
   from the same issue details dialog, ask for a minimal suggested markup patch,
   preview before/after, then **Apply fix and validate** to the exploded folder or packaged
@@ -67,7 +68,12 @@ support on Windows, macOS, and Linux.
   Packaged rewrite uses the same EPUB-safe extract/rebuild approach as FIDO.
 - Copy summary; view or save text / HTML reports (**Report** menu) — HTML
   reports embed an EPUB/eBraille cover image when present, or the first page
-  of a PDF; **Clear results** returns to the launch state
+  of a PDF; reports and the result pane name the validation profile / ruleset
+  that ran (PDF/UA, EPUBCheck profile, ebraille, Ace axe-core); **Clear results**
+  returns to the launch state
+- **Tools → Settings…**: general preferences (show issues always, completion
+  sounds, AI features) and checker profiles (veraPDF PDF/UA-1 or PDF/UA-2;
+  EPUBCheck profile). eBraille always uses the `ebraille` profile
 - Status bar shows installed checker versions, and Ace / Pipeline when detected
 - UI languages: English, Français, Español, Deutsch, Português, Dansk,
   Nederlands, Suomi, हिन्दी, Norsk, Русский, Svenska (remembered;
@@ -147,9 +153,10 @@ uv run checkmate
 2. While a check runs, the **Result** pane shows living progress (Ace streams
    document status; other tools show elapsed time). When finished, focus moves
    to the summary; expand **Show issues** to review the list (filterable), or enable
-   **Tools → Show issues always** to open the list automatically after checks that find issues.
+   **Show issues always** under **Tools → Settings…** to open the list automatically
+   after checks that find issues.
    A short completion sound plays when the check finishes (passed vs failed);
-   turn that off under **Tools → Play completion sounds**.
+   turn that off under **Tools → Settings…**.
 3. Use **Report → View full log** (`Ctrl+L`) only when you need the raw
    checker output.
 4. **Tools → Re-check publication** (`F5`) re-runs the current path after you
@@ -204,7 +211,7 @@ Under that folder:
 - `checker/` — downloaded or updated eBraille Checker releases
 - `epubcheck/` — downloaded or updated EPUBCheck releases
 - `verapdf/` — downloaded or updated veraPDF CLI installs
-- `settings.json` — remembered UI language and preferences (e.g. Show issues always, Play completion sounds)
+- `settings.json` — remembered UI language and preferences (e.g. Show issues always, Play completion sounds, veraPDF / EPUBCheck profiles)
 
 Packaged builds also include `checker/`, `epubcheck/`, and `verapdf/` beside the
 executable (or inside the `.app` bundle on macOS).
@@ -254,7 +261,8 @@ eBraille (exploded folder):
 java -Xss4m -jar path\to\ebraille-checker.jar -mode exp --profile ebraille path\to\folder
 ```
 
-EPUB (packaged):
+EPUB (packaged; add `--profile …` when a non-default EPUBCheck profile is
+selected in Settings):
 
 ```bash
 java -Xss4m -jar path\to\epubcheck.jar publication.epub
@@ -266,7 +274,8 @@ EPUB (exploded folder):
 java -Xss4m -jar path\to\epubcheck.jar -mode exp path\to\folder
 ```
 
-PDF (PDF/UA-2 via veraPDF; falls back to PDF/UA-1 if veraPDF crashes on UA-2):
+PDF (veraPDF flavour from **Tools → Settings…**, default PDF/UA-2; falls back
+to PDF/UA-1 if veraPDF crashes on UA-2 when that profile was selected):
 
 ```bash
 java -Djava.awt.headless=true -jar path\to\cli-*.jar --flavour ua2 --format json publication.pdf
@@ -352,6 +361,7 @@ checkmate/
     i18n.py            # UI language registry + core translations
     i18n_extra.py      # Additional language catalogs (da/nl/fi/hi/nb/ru/sv)
     settings.py        # Persisted preferences
+    settings_dialog.py # Tools → Settings… (prefs + validation profiles)
     paths.py           # App data and bundle locations
     subprocess_util.py # Quiet subprocess helpers (Windows)
     fido_settings.py   # Read FIDO AI keys/models (no FIDO import)

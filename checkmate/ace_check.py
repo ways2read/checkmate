@@ -363,28 +363,26 @@ def _issues_from_ace_report(data: dict) -> list[Issue]:
             message = str(result.get("dct:description") or "").strip()
             help_url = ""
             help_title = ""
+            help_text = ""
             help_block = test.get("help") or {}
             if isinstance(help_block, dict):
-                help_msg = str(help_block.get("dct:description") or "").strip()
+                help_text = str(help_block.get("dct:description") or "").strip()
                 help_url = str(help_block.get("url") or "").strip()
                 help_title = str(help_block.get("dct:title") or "").strip()
-                extras = [p for p in (help_msg, help_url) if p]
-                if extras:
-                    if message:
-                        message = f"{message} — " + " — ".join(extras)
-                    else:
-                        message = " — ".join(extras)
             if not message:
                 message = str(test.get("dct:description") or code).strip()
+            impact = str(test.get("earl:impact") or "").strip()
             issues.append(
                 Issue(
-                    severity=_severity_from_impact(test.get("earl:impact")),
+                    severity=_severity_from_impact(impact),
                     code=code,
                     message=message,
                     location=_location_for_assertion(doc_url, assertion),
                     source=ACE_DISPLAY_NAME,
                     help_url=help_url,
                     help_title=help_title,
+                    help_text=help_text,
+                    impact=impact,
                 )
             )
     return issues

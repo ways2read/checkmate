@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from checkmate.ai.ace_kb_map import kb_resource_for_ace_code, normalize_kb_url
 from checkmate.ai.epubcheck_kb_map import (
@@ -10,11 +13,12 @@ from checkmate.ai.epubcheck_kb_map import (
     kb_resource_for_epubcheck_code,
     normalize_epubcheck_code,
 )
-from checkmate.ai.explain import build_system_prompt
+from checkmate.ai.explain import build_system_prompt, build_user_prompt
 from checkmate.ai.fix import build_fix_user_prompt
 from checkmate.ai.resources import (
     authoritative_guidance_for_explain,
     authoritative_guidance_for_fix,
+    kb_article_body_for_prompt,
     primary_kb_resource,
     resources_for_issue,
     resources_prompt_block,
@@ -171,6 +175,109 @@ class AuthoritativeGuidanceTests(unittest.TestCase):
         guidance = authoritative_guidance_for_explain(issue)
         self.assertIn("Do not invent conformance requirements", guidance)
         self.assertNotIn("Primary reference", guidance)
+
+
+class KbArticleBodyPromptTests(unittest.TestCase):
+    def test_disabled_by_default(self) -> None:
+        issue = Issue(Severity.ERROR, "image-alt", "missing alt", source="Ace")
+        with mock.patch(
+            "checkmate.ai.resources.ai_send_kb_article_body", return_value=False
+        ):
+            self.assertEqual(kb_article_body_for_prompt(issue), "")
+
+    def test_ace_includes_cached_body_when_enabled(self) -> None:
+        issue = Issue(Severity.ERROR, "image-alt", "missing alt", source="Ace")
+        slim = (
+            '<!DOCTYPE html><html lang="en" data-cm-kb="article"><body>'
+            '<div id="cm-kb-body"><h1>Images</h1>'
+            "<p>Provide a text alternative for every image.</p>"
+            "</div></body></html>"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            en_path = root / "en" / "docs" / "html" / "images.html"
+            en_path.parent.mkdir(parents=True)
+            en_path.write_text(slim, encoding="utf-8")
+
+            with (
+                mock.patch(
+                    "checkmate.ai.resources.ai_send_kb_article_body",
+                    return_value=True,
+                ),
+                mock.patch(
+                    "checkmate.kb.store.kb_dir",
+                    return_value=root,
+                ),
+                mock.patch(
+                    "checkmate.kb.fetch.kb_dir",
+                    return_value=root,
+                ),
+                mock.patch(
+                    "checkmate.kb.fetch.ensure_article_cached",
+                    return_value=True,
+                ),
+            ):
+                body = kb_article_body_for_prompt(issue)
+        self.assertIn("Provide a text alternative", body)
+        self.assertNotIn("<h1>", body)
+
+        user = build_user_prompt(
+            {"severity": "Error", "code": "image-alt", "message": "missing alt"},
+            kb_body=body,
+        )
+        self.assertIn("Knowledge Base article body", user)
+        self.assertIn("Provide a text alternative", user)
+
+        fix_user = build_fix_user_prompt(
+            {"code": "image-alt", "message": "missing alt", "member_kind": "html"},
+            issue=issue,
+            kb_body=body,
+        )
+        self.assertIn("Knowledge Base article body", fix_user)
+        self.assertIn("do not copy markup from here", fix_user)
+
+    def test_epubcheck_catalog_primary_has_no_body(self) -> None:
+        issue = Issue(
+            Severity.ERROR,
+            "OPF-049",
+            'Item id "x" was not found in the manifest.',
+            source="EPUBCheck",
+        )
+        with mock.patch(
+            "checkmate.ai.resources.ai_send_kb_article_body", return_value=True
+        ):
+            self.assertEqual(kb_article_body_for_prompt(issue), "")
+
+
+class EpubAceMergeTests(unittest.TestCase):
+    def test_merge_preserves_ace_impact_and_help(self) -> None:
+        from checkmate.checker import _merge_epubcheck_and_ace
+        from checkmate.models import CheckResult, Verdict
+
+        epub = CheckResult(verdict=Verdict.PASSED, issues=[], tool_name="EPUBCheck")
+        ace = CheckResult(
+            verdict=Verdict.FAILED,
+            issues=[
+                Issue(
+                    severity=Severity.ERROR,
+                    code="pagebreak-label",
+                    message="missing label",
+                    source="Ace",
+                    help_url="https://kb.daisy.org/publishing/docs/navigation/pagelist.html",
+                    help_title="Page List",
+                    help_text="Page breaks need accessible names.",
+                    impact="serious",
+                )
+            ],
+            tool_name="Ace",
+        )
+        merged = _merge_epubcheck_and_ace(epub, ace)
+        self.assertEqual(len(merged.issues), 1)
+        issue = merged.issues[0]
+        self.assertEqual(issue.impact, "serious")
+        self.assertEqual(issue.help_title, "Page List")
+        self.assertEqual(issue.help_text, "Page breaks need accessible names.")
+        self.assertTrue(issue.help_url.endswith("pagelist.html"))
 
 
 if __name__ == "__main__":

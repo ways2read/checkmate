@@ -11,7 +11,12 @@ from ..i18n import _, get_language, language_display_name
 from ..models import CheckResult, Issue
 from .context import gather_issue_context
 from .litellm_client import ensure_credentials_ready, litellm_available
-from .resources import authoritative_guidance_for_explain, resources_prompt_block
+from .resources import (
+    authoritative_guidance_for_explain,
+    kb_article_body_for_prompt,
+    kb_article_body_prompt_block,
+    resources_prompt_block,
+)
 from .session import ExplainSession, ProviderError
 
 logger = logging.getLogger(__name__)
@@ -78,7 +83,7 @@ Rules:
 """
 
 
-def build_user_prompt(ctx: dict[str, str]) -> str:
+def build_user_prompt(ctx: dict[str, str], *, kb_body: str = "") -> str:
     lang = _language_name()
     lines = [
         f"Explain this validation issue. Reply entirely in {lang}.",
@@ -100,6 +105,10 @@ def build_user_prompt(ctx: dict[str, str]) -> str:
         lines.append("```")
         lines.append(ctx["file_excerpt"])
         lines.append("```")
+    body_block = kb_article_body_prompt_block(kb_body, for_fix=False)
+    if body_block:
+        lines.append("")
+        lines.append(body_block)
     return "\n".join(lines)
 
 
@@ -172,6 +181,7 @@ def explain_issue(
         return ExplainResult(ok=False, error_key="cancelled")
 
     ctx = gather_issue_context(issue, result, target_path=target_path)
+    kb_body = kb_article_body_for_prompt(issue)
     try:
         session = ExplainSession.create()
     except RuntimeError as e:
@@ -194,7 +204,7 @@ def explain_issue(
     try:
         text = session.ask(
             system=build_system_prompt(issue),
-            user=build_user_prompt(ctx),
+            user=build_user_prompt(ctx, kb_body=kb_body),
             max_tokens=DEFAULT_EXPLAIN_MAX_TOKENS,
         )
     except ProviderError as e:
@@ -336,6 +346,7 @@ def error_message_for_key(key: str | None, detail: str = "") -> str:
         "empty_question": _("Enter a follow-up question."),
         "provider_error": _("The AI provider returned an error."),
         "no_session": _("Explain the issue first, then ask a follow-up."),
+        "no_source": _("Could not read the local article."),
     }
     base = mapping.get(key or "", _("Could not explain this issue."))
     if detail and key in {"provider_error", "timeout", "network", "no_key", "no_model"}:

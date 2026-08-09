@@ -52,9 +52,12 @@ Resolution (`resolve_litellm_model_and_key()`) splits `"Provider: model id"`, lo
 
 **CheckMate-local settings** (separate from FIDO), e.g. `%LOCALAPPDATA%\CheckMate\settings.json`:
 
-- `ai_features_enabled` — Tools → Enable AI features
+- `ai_features_enabled` — Tools → Settings… (Enable AI features)
 - `ai_send_file_context` — whether file excerpts are included in explain/fix prompts (default on)
-- `show_issues_always` — Tools → Show issues always (default off; opens the issues list automatically after a check that finds issues)
+- `ai_send_kb_article_body` — Tools → Settings… (Include Knowledge Base article text in AI prompts; default off). See **Authoritative guidance** below: URL-only steering vs sending the article body (more tokens; often better answers because KB pages include current guidance and code samples).
+- `show_issues_always` — Tools → Settings… (Show issues always; default off; opens the issues list automatically after a check that finds issues)
+- `verapdf_flavour` — Tools → Settings… (`ua1` / `ua2`; default `ua2`)
+- `epubcheck_profile` — Tools → Settings… (EPUBCheck `--profile`; default `default`)
 
 AI features are offered when FIDO settings/keys are present (or unlock supplies credentials).
 
@@ -167,7 +170,8 @@ Available after a successful **overview** or **issue explain**. The dialog keeps
 
 1. **Issue fields** — severity, source, code, location, message, tool, publication kind  
 2. **File excerpt** (if `ai_send_file_context` and EPUB/eBraille) — ~±20 lines around the hit, or OPF structural region / capped OPF; Ace locations resolved via CSS/HTML hints when needed  
-3. **Trusted resources** — curated URLs per checker (`ai/resources.py`):
+3. **KB article body** (if `ai_send_kb_article_body` and a primary DAISY KB URL is known) — offline plain-text article (capped); downloaded on demand if not cached  
+4. **Trusted resources** — curated URLs per checker (`ai/resources.py`):
    - **Ace:** specific DAISY KB article first (rule id map in `ai/ace_kb_map.py`, or Ace report help URL), then KB homepage / Ace docs
    - **EPUBCheck:** mapped DAISY KB article first when the code is accessibility-oriented (`ACC_*` and selected `HTM_*` / `NAV_*` in `ai/epubcheck_kb_map.py`); otherwise the official [EPUBCheck message reference](https://www.w3.org/publishing/epubcheck/docs/messages/) first; then EPUB a11y guidelines / KB homepage  
    - The model may only cite these under “Learn more”
@@ -179,7 +183,11 @@ When a **primary** reference is known (Ace KB article, EPUBCheck→KB map, or EP
 - The Explain system prompt includes an **AUTHORITATIVE GUIDANCE** block naming that reference
 - The model is told to align *What this means* / *Why it matters* / *How to fix* with it, and not invent conflicting requirements
 - Learn more should list that reference first
-- This is **prompt steering**, not RAG: the URL is provided; the page body is not fetched into the prompt
+
+Two modes for how much of that reference the model actually sees:
+
+1. **Default (URL steering only)** — The prompt names the primary article and its URL. The model is steered to treat that page as authoritative, but it does **not** receive the article text. It must rely on training knowledge plus the checker message (and optional file excerpt). Cheaper; usually adequate when the model already “knows” the topic.
+2. **Optional article body** (`ai_send_kb_article_body`) — The user prompt also includes a capped plain-text copy of the offline DAISY KB article (Ace help URL / rule map, or EPUBCheck codes mapped to a `kb.daisy.org` page — not the EPUBCheck message catalog). That supplies up-to-date KB wording and often concrete code samples the model would not otherwise have. More tokens; expected to produce better, more faithful remediation guidance. Off by default so the cost/quality trade-off can be evaluated.
 
 ### Prompt shape
 
@@ -193,7 +201,7 @@ When a **primary** reference is known (Ace KB article, EPUBCheck→KB map, or EP
 
 Rules: authoritative guidance when available (else “don’t invent conformance requirements”); prefer concrete EPUB/eBraille steps; “Learn more” only as markdown links from the trusted list.
 
-**User** — issue metadata + optional fenced file excerpt.
+**User** — issue metadata + optional fenced file excerpt + optional fenced KB article body.
 
 ### Params
 
@@ -226,7 +234,7 @@ Rules: authoritative guidance when available (else “don’t invent conformance
 
 Key rules: minimal edit; never empty `original` (insert-via-replace using a unique nearby anchor); prefer short snippets; may patch related OPF when that’s where the fix belongs; omit JSON if no safe automated fix.
 
-**User** — issue metadata, optional **AUTHORITATIVE GUIDANCE** (primary Ace KB article, EPUBCheck→KB map, or EPUBCheck message catalog when known — prefer that remediation approach, but still copy patch text only from file excerpts), FILE TYPE guidance, cross-file guidance, **Exact file text** (raw excerpt for copying `original`), optional **Related package document** OPF excerpt.
+**User** — issue metadata, optional **AUTHORITATIVE GUIDANCE** (primary Ace KB article, EPUBCheck→KB map, or EPUBCheck message catalog when known — prefer that remediation approach, but still copy patch text only from file excerpts), optional **KB article body** (when `ai_send_kb_article_body` is on and a DAISY KB article is primary), FILE TYPE guidance, cross-file guidance, **Exact file text** (raw excerpt for copying `original`), optional **Related package document** OPF excerpt.
 
 The UI shows a preview (`format_fix_preview()`: Proposed fix / File / Before / After) before the user applies anything.
 

@@ -140,6 +140,13 @@ def verapdf_dir() -> Path:
     return path
 
 
+def kb_dir() -> Path:
+    """On-demand offline DAISY Publishing Knowledge Base mirror."""
+    path = app_data_dir() / "kb"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def version_file() -> Path:
     return checker_dir() / "installed_version.txt"
 

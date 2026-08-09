@@ -946,10 +946,13 @@ def issue_details_markdown(issue: "Issue", *, count: int = 1) -> str:
 
     none = _("(none)")
     parts = [
-        f"## {_('Severity')}\n\n{issue.severity.label}\n",
-        f"## {_('Source')}\n\n{issue.source or '—'}\n",
         f"## {_('Code')}\n\n{issue.code or '—'}\n",
+        f"## {_('Severity')}\n\n{issue.severity.label}\n",
     ]
+    impact = (getattr(issue, "impact", "") or "").strip()
+    if impact:
+        parts.append(f"## {_('Impact')}\n\n{impact.title()}\n")
+    parts.append(f"## {_('Source')}\n\n{issue.source or '—'}\n")
     if count > 1:
         parts.append(f"## {_('Occurrences')}\n\n{count}\n")
     parts.extend(
@@ -958,7 +961,280 @@ def issue_details_markdown(issue: "Issue", *, count: int = 1) -> str:
             f"## {_('Message')}\n\n{issue.message or none}\n",
         ]
     )
+    help_title, help_text, help_url = _issue_help_fields(issue)
+    if help_title or help_text or help_url:
+        help_bits: list[str] = [f"## {_('Help')}\n"]
+        if help_title:
+            help_bits.append(f"**{help_title}**\n")
+        if help_text:
+            help_bits.append(f"{help_text}\n")
+        if help_url:
+            help_bits.append(f"{help_url}\n")
+        parts.append("\n".join(help_bits))
     return "\n".join(parts)
+
+
+def _issue_help_fields(issue: "Issue") -> tuple[str, str, str]:
+    """
+    Title, remediation text, and URL for the details Help section.
+
+    Prefers Ace (or other checker) help fields; falls back to the mapped
+    Knowledge Base article when present.
+    """
+    from .ace_kb_map import normalize_kb_url
+    from .resources import primary_kb_resource
+
+    title = (getattr(issue, "help_title", "") or "").strip()
+    text = (getattr(issue, "help_text", "") or "").strip()
+    url = normalize_kb_url((getattr(issue, "help_url", "") or "").strip())
+    if title or text or url:
+        return title, text, url
+    kb = primary_kb_resource(issue)
+    if kb:
+        return (kb[0] or "").strip(), "", normalize_kb_url(kb[1] or "")
+    return "", "", ""
+
+
+def _issue_details_dialog_css() -> str:
+    """Brand tokens from the AI page, tightened for the issue-details WebView."""
+    return (
+        _ai_browser_css()
+        + """
+    :root {
+      --fatal-fg: #7f1d1d;
+      --fatal-bg: #fef2f2;
+      --error-fg: #991b1b;
+      --error-bg: #fef2f2;
+      --warning-fg: #9a3412;
+      --warning-bg: #fff7ed;
+      --info-fg: #1e3a8a;
+      --info-bg: #eff6ff;
+      --usage-fg: #334155;
+      --usage-bg: #e8eef5;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --fatal-fg: #fecaca;
+        --fatal-bg: #7f1d1d;
+        --error-fg: #fecaca;
+        --error-bg: #7f1d1d;
+        --warning-fg: #fed7aa;
+        --warning-bg: #7c2d12;
+        --info-fg: #bfdbfe;
+        --info-bg: #1e3a8a;
+        --usage-fg: #cbd5e1;
+        --usage-bg: #334155;
+      }
+    }
+    main {
+      max-width: none;
+      margin: 0;
+      padding: 0.7rem 0.8rem 0.9rem;
+    }
+    .issue-meta {
+      margin-bottom: 0.75rem;
+      padding: 0.7rem 0.8rem;
+      grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+    }
+    .issue-meta h2 {
+      font-size: 0.7rem;
+    }
+    .issue-meta p {
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+    .code-block .code-text {
+      display: inline-block;
+      font-size: 1.05rem;
+      line-height: 1.35;
+      padding: 0.15rem 0;
+    }
+    .sev {
+      display: inline-block;
+      font-weight: 700;
+      font-size: 0.78rem;
+      line-height: 1.2;
+      padding: 0.22rem 0.55rem;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      letter-spacing: 0.01em;
+    }
+    .sev-fatal {
+      color: var(--fatal-fg);
+      background: var(--fatal-bg);
+      border-color: color-mix(in srgb, var(--fatal-fg) 30%, transparent);
+    }
+    .sev-error {
+      color: var(--error-fg);
+      background: var(--error-bg);
+      border-color: color-mix(in srgb, var(--error-fg) 30%, transparent);
+    }
+    .sev-warning {
+      color: var(--warning-fg);
+      background: var(--warning-bg);
+      border-color: color-mix(in srgb, var(--warning-fg) 30%, transparent);
+    }
+    .sev-info {
+      color: var(--info-fg);
+      background: var(--info-bg);
+      border-color: color-mix(in srgb, var(--info-fg) 30%, transparent);
+    }
+    .sev-usage, .sev-unknown {
+      color: var(--usage-fg);
+      background: var(--usage-bg);
+      border-color: color-mix(in srgb, var(--usage-fg) 30%, transparent);
+    }
+    .field-block {
+      margin: 0 0 0.7rem;
+      padding: 0.7rem 0.8rem;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .field-block:last-child { margin-bottom: 0; }
+    .field-block h2 {
+      margin: 0 0 0.35rem;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border: 0;
+      padding: 0;
+    }
+    .field-value {
+      margin: 0;
+      font-size: 0.95rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-wrap: break-word;
+    }
+    .field-value a {
+      font-weight: 600;
+    }
+    .help-title {
+      margin: 0 0 0.35rem;
+      font-size: 1rem;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+    .code-text {
+      font-family: var(--mono);
+      font-size: 0.92em;
+      font-weight: 600;
+    }
+"""
+    )
+
+
+def issue_details_page(
+    issue: "Issue",
+    *,
+    count: int = 1,
+    tab_exit: bool = True,
+) -> str:
+    """
+    Compact branded HTML for the in-dialog issue-details WebView.
+
+    Checker fields are HTML-escaped (not markdown) so raw markup in messages
+    cannot inject structure. Works for all checker types via the Issue model.
+    """
+    from ..i18n import _, get_language
+    from ..models import Severity
+
+    none = _("(none)")
+    sev = issue.severity if isinstance(issue.severity, Severity) else Severity.UNKNOWN
+    sev_class = {
+        Severity.FATAL: "fatal",
+        Severity.ERROR: "error",
+        Severity.WARNING: "warning",
+        Severity.INFO: "info",
+        Severity.USAGE: "usage",
+        Severity.UNKNOWN: "unknown",
+    }.get(sev, "unknown")
+
+    def esc(text: str) -> str:
+        return html.escape(text or "", quote=False)
+
+    meta_items = [
+        (
+            _("Severity"),
+            f'<p><span class="sev sev-{sev_class}">{esc(sev.label)}</span></p>',
+        ),
+    ]
+    impact = (getattr(issue, "impact", "") or "").strip()
+    if impact:
+        meta_items.append((_("Impact"), f"<p>{esc(impact.title())}</p>"))
+    meta_items.append((_("Source"), f"<p>{esc(issue.source or '—')}</p>"))
+    if count > 1:
+        meta_items.append((_("Occurrences"), f"<p>{int(count)}</p>"))
+
+    meta_html = "".join(
+        f'<div class="meta-item"><h2>{esc(label)}</h2>{value}</div>'
+        for label, value in meta_items
+    )
+    code_html = f"""
+<section class="field-block code-block">
+<h2>{esc(_("Code"))}</h2>
+<p class="field-value"><code class="code-text">{esc(issue.code or "—")}</code></p>
+</section>
+"""
+    location = esc(issue.location or none)
+    message = esc(issue.message or none)
+    help_title, help_text, help_url = _issue_help_fields(issue)
+    help_html = ""
+    if help_title or help_text or help_url:
+        bits: list[str] = []
+        if help_title:
+            bits.append(f'<p class="help-title">{esc(help_title)}</p>')
+        if help_text:
+            bits.append(f'<p class="field-value">{esc(help_text)}</p>')
+        if help_url:
+            safe_href = html.escape(help_url, quote=True)
+            bits.append(
+                f'<p class="field-value"><a href="{safe_href}">{esc(help_url)}</a></p>'
+            )
+        help_html = f"""
+<section class="field-block">
+<h2>{esc(_("Help"))}</h2>
+{"".join(bits)}
+</section>
+"""
+    title = html.escape(_("Issue details"), quote=False)
+    tab_script = _WEBVIEW_TAB_EXIT_SCRIPT if tab_exit else ""
+    body_attrs = ' tabindex="-1"' if tab_exit else ""
+    return f"""<!DOCTYPE html>
+<html lang="{html.escape(get_language())}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{title}</title>
+<style>{_issue_details_dialog_css()}
+</style>
+</head>
+<body{body_attrs}>
+<main>
+{code_html}
+<section class="issue-meta" aria-label="{title}">
+{meta_html}
+</section>
+<section class="field-block">
+<h2>{esc(_("Location"))}</h2>
+<p class="field-value">{location}</p>
+</section>
+<section class="field-block">
+<h2>{esc(_("Message"))}</h2>
+<p class="field-value">{message}</p>
+</section>
+{help_html}
+</main>
+{tab_script}
+</body>
+</html>
+"""
 
 
 def export_explanation_markdown(

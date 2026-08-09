@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -21,10 +22,19 @@ from .checker import (
 )
 from .fido_settings import fido_settings_present
 from .i18n import (
-    LANGUAGES,
     _,
+    _normalize_lang_code,
+    custom_language_codes,
+    effective_languages,
+    export_custom_language,
     get_language,
+    import_custom_language,
+    is_builtin_language,
+    is_custom_language,
+    language_display_name,
     load_language,
+    read_custom_catalog,
+    remove_custom_language,
     set_language,
 )
 from .java_util import detect_java
@@ -44,9 +54,10 @@ from .publication import is_checkable_path
 from .report_export import format_text_report, report_title, save_report
 from .settings import (
     ai_features_enabled,
+    ai_translation_warning_shown,
+    mark_ai_translation_warning_shown,
     read_settings,
     show_issues_always,
-    sounds_enabled,
     update_settings,
 )
 from .updater import (
@@ -60,6 +71,12 @@ from .updater import (
     install_release,
 )
 from .warmup import run_startup_warmup
+from .kb.viewer import (
+    open_knowledge_base_home,
+    open_knowledge_base_url,
+    run_kb_update_with_progress,
+)
+from .kb.store import is_kb_url
 
 ProgressEvent, EVT_PROGRESS = wx.lib.newevent.NewEvent()
 ResultEvent, EVT_RESULT = wx.lib.newevent.NewEvent()
@@ -76,7 +93,9 @@ OverviewAiEvent, EVT_OVERVIEW_AI = wx.lib.newevent.NewEvent()
 _USE_DATAVIEW_ISSUES = sys.platform != "win32"
 
 
-def _create_ai_html_view(parent: wx.Window) -> tuple[wx.Window, bool]:
+def _create_ai_html_view(
+    parent: wx.Window, *, name: str | None = None
+) -> tuple[wx.Window, bool]:
     """
     Prefer ``wx.html2.WebView`` (Edge/WebKit) for structured HTML that screen
     readers can browse. Fall back to a read-only TextCtrl when no backend works.
@@ -85,6 +104,7 @@ def _create_ai_html_view(parent: wx.Window) -> tuple[wx.Window, bool]:
     focus / Escape inside modal dialogs. Escape/Tab exit are handled in-page via
     ``checkmate://`` navigations so WebView2 cannot swallow those keys.
     """
+    accessible_name = name or _("AI explanation")
     try:
         import wx.html2 as html2
     except ImportError:
@@ -128,10 +148,10 @@ def _create_ai_html_view(parent: wx.Window) -> tuple[wx.Window, bool]:
                 continue
             if view is None:
                 continue
-            view.SetName(_("AI explanation"))
+            view.SetName(accessible_name)
             if hasattr(view, "SetAccessibleName"):
                 try:
-                    view.SetAccessibleName(_("AI explanation"))
+                    view.SetAccessibleName(accessible_name)
                 except Exception:
                     pass
             try:
@@ -148,7 +168,7 @@ def _create_ai_html_view(parent: wx.Window) -> tuple[wx.Window, bool]:
         | wx.TE_READONLY
         | wx.TE_WORDWRAP
         | wx.BORDER_SUNKEN,
-        name=_("AI explanation"),
+        name=accessible_name,
     )
     _ensure_win_tab_stop(text)
     return text, False
@@ -338,6 +358,21 @@ def _try_set_focus(window: wx.Window | None) -> bool:
         return True
     except Exception:
         return False
+
+
+def _pulse_ui_translate(
+    dlg: wx.ProgressDialog,
+    msg: str,
+    result: dict,
+    cancel_event: threading.Event,
+) -> None:
+    try:
+        cont, _skip = dlg.Pulse(msg)
+        if not cont:
+            result["abort"] = True
+            cancel_event.set()
+    except Exception:
+        pass
 
 
 def _present_progress_dialog(dlg: wx.Window, message: str) -> None:
@@ -1288,8 +1323,22 @@ class IssuesList:
         return int(self.ctrl.GetFirstSelected())
 
 
+def _issue_details_dialog_title(issue: Issue) -> str:
+    """Window title: generic label, plus checker code when known."""
+    base = _("Issue details")
+    code = (issue.code or "").strip()
+    if code:
+        return f"{base} — {code}"
+    return base
+
+
 class IssueDetailDialog(wx.Dialog):
-    """Full issue text in a keyboard-navigable, read-only view."""
+    """Issue details with optional Knowledge Base / Explain / Fix pages."""
+
+    _PAGE_ISSUE = "issue"
+    _PAGE_KB = "kb"
+    _PAGE_EXPLAIN = "explain"
+    _PAGE_FIX = "fix"
 
     def __init__(
         self,
@@ -1301,19 +1350,23 @@ class IssueDetailDialog(wx.Dialog):
     ) -> None:
         super().__init__(
             parent,
-            title=_("Issue details"),
+            title=_issue_details_dialog_title(issue),
             style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX,
         )
         self._issue = issue
         self._issue_count = max(1, int(count))
         self._check_result = check_result
-        self._session = None
+        self._explain_session = None
+        self._fix_session = None
         self._busy = False
-        self._ai_markdown = ""
-        self._ai_plain = False
+        self._explain_markdown = ""
+        self._explain_plain = False
+        self._fix_markdown = ""
+        self._fix_plain = False
         self._ai_output_is_webview = False
         self._ai_focus_after_load = False
         self._ai_view_realized = False
+        self._ai_painted_channel: str | None = None
         self._fix_proposal = None
         self._batch_proposal = None
         self.applied_fix_verify = None
@@ -1323,6 +1376,12 @@ class IssueDetailDialog(wx.Dialog):
         self._show_ai = ai_features_enabled()
         self._show_fix = self._show_ai and self._fix_available_for_result(check_result)
         self._matching_like_this = 1
+        self._notebook: wx.Notebook | None = None
+        self._page_keys: list[str] = [self._PAGE_ISSUE]
+        self._active_page_key = self._PAGE_ISSUE
+        self._kb_panel = None
+        self._kb_en_rel = ""
+        self._kb_host = None
         if self._show_fix and check_result is not None:
             from .ai.context import issues_matching_seed
 
@@ -1333,15 +1392,176 @@ class IssueDetailDialog(wx.Dialog):
             self.SetSize((780, 760))
             self.SetMinSize((700, 520))
         else:
-            self.SetSize((640, 420))
-            self.SetMinSize((480, 320))
+            self.SetSize((640, 560))
+            self.SetMinSize((480, 360))
+
+        self._kb_title = ""
+        self._kb_url = ""
+        try:
+            from .ai.resources import primary_kb_resource
+            from .kb.store import en_relative_path_from_url, is_kb_url
+
+            kb = primary_kb_resource(issue)
+            if kb and is_kb_url(kb[1]):
+                self._kb_title, self._kb_url = kb[0], kb[1]
+                self._kb_en_rel = en_relative_path_from_url(self._kb_url) or ""
+        except Exception:
+            pass
+        self._show_kb = bool(self._kb_url and self._kb_en_rel)
+        self._use_notebook = self._show_ai or self._show_kb
+
+        self._build_details_plain(issue, count)
         root = wx.BoxSizer(wx.VERTICAL)
 
+        if self._show_ai:
+            model_row = wx.BoxSizer(wx.HORIZONTAL)
+            model_label = wx.StaticText(self, label=_("Model:"))
+            model_row.Add(model_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+            self.ai_model_ctrl = _FocusableReadOnlyText(
+                self,
+                value=self._ai_model_display_text(),
+                style=wx.TE_READONLY | wx.BORDER_SUNKEN,
+                name=_("AI model"),
+            )
+            self.ai_model_ctrl.SetToolTip(
+                _("AI model selected in FIDO (read-only)")
+            )
+            _ensure_win_tab_stop(self.ai_model_ctrl)
+            model_row.Add(self.ai_model_ctrl, 1, wx.EXPAND)
+            root.Add(model_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
+
+            self.ai_status = wx.StaticText(self, label="")
+            self.ai_status.SetName(_("AI status"))
+            root.Add(self.ai_status, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 6)
+
+        if self._use_notebook:
+            self._notebook = wx.Notebook(self, name=_("Issue details pages"))
+            self._page_keys = [self._PAGE_ISSUE]
+            if self._show_kb:
+                self._page_keys.append(self._PAGE_KB)
+            if self._show_ai:
+                self._page_keys.append(self._PAGE_EXPLAIN)
+                if self._show_fix:
+                    self._page_keys.append(self._PAGE_FIX)
+
+            # Shared content hosts live in one panel; tab change shows/hides them.
+            self._content_panel = wx.Panel(self)
+            self._build_details_host(self._content_panel)
+            content_sizer = wx.BoxSizer(wx.VERTICAL)
+            content_sizer.Add(self._details_host, 1, wx.EXPAND)
+            if self._show_kb:
+                self._build_kb_host_placeholder(self._content_panel)
+                content_sizer.Add(self._kb_host, 1, wx.EXPAND)
+            if self._show_ai:
+                self._build_ai_host_placeholder(self._content_panel)
+                content_sizer.Add(self._ai_output_host, 1, wx.EXPAND)
+            else:
+                self._ai_output_host = None  # type: ignore[assignment]
+                self.ai_output = None  # type: ignore[assignment]
+            self._content_panel.SetSizer(content_sizer)
+
+            self._issue_controls = None
+            self._explain_controls = (
+                self._build_explain_controls(self) if self._show_ai else None
+            )
+            self._fix_controls = (
+                self._build_fix_controls(self) if self._show_fix else None
+            )
+
+            for key, label in (
+                (self._PAGE_ISSUE, _("Issue")),
+                (self._PAGE_KB, _("Knowledge Base")),
+                (self._PAGE_EXPLAIN, _("Explain")),
+                (self._PAGE_FIX, _("Fix")),
+            ):
+                if key not in self._page_keys:
+                    continue
+                page = wx.Panel(self._notebook)
+                page.SetMinSize((-1, 1))
+                self._notebook.AddPage(page, label)
+
+            root.Add(self._notebook, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
+            root.Add(self._content_panel, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
+            if self._explain_controls is not None:
+                root.Add(self._explain_controls, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+            if self._fix_controls is not None:
+                root.Add(self._fix_controls, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+
+            self._notebook.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self._on_notebook_page)
+            if self._show_ai:
+                self.Bind(EVT_EXPLAIN_AI, self._on_explain_ai_event)
+                self.Bind(EVT_FIX_AI, self._on_fix_ai_event)
+                self.Bind(EVT_APPLY_FIX, self._on_apply_fix_event)
+        else:
+            self._build_details_host(self)
+            root.Add(self._details_host, 1, wx.EXPAND | wx.ALL, 12)
+            self._issue_controls = None
+            self._explain_controls = None
+            self._fix_controls = None
+            self._ai_output_host = None  # type: ignore[assignment]
+            self.ai_output = None  # type: ignore[assignment]
+            self._kb_host = None
+
+        export = wx.BoxSizer(wx.HORIZONTAL)
+        self.view_browser_btn = wx.Button(self, label=_("View in browser"))
+        self.view_browser_btn.SetToolTip(_("Open the current view in your web browser"))
+        export.Add(self.view_browser_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+
+        self.save_html_btn = wx.Button(self, label=_("Save as HTML…"))
+        self.save_html_btn.SetToolTip(_("Save the current view as an HTML file"))
+        export.Add(self.save_html_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+
+        self.save_md_btn = wx.Button(self, label=_("Save as Markdown…"))
+        self.save_md_btn.SetToolTip(_("Save the AI explanation as a Markdown file"))
+        export.Add(self.save_md_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+
+        self.copy_btn = wx.Button(self, label=_("Copy to clipboard"))
+        self.copy_btn.SetToolTip(_("Copy the current view to the clipboard"))
+        export.Add(self.copy_btn, 0, wx.ALIGN_CENTER_VERTICAL)
+        # Alias used by older AI helpers.
+        self.copy_ai_btn = self.copy_btn
+        root.Add(export, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
+
+        self.view_browser_btn.Bind(wx.EVT_BUTTON, self._on_view_browser)
+        self.save_html_btn.Bind(wx.EVT_BUTTON, self._on_save_html)
+        self.save_md_btn.Bind(wx.EVT_BUTTON, self._on_save_markdown)
+        self.copy_btn.Bind(wx.EVT_BUTTON, self._on_copy_clipboard)
+
+        footer = wx.BoxSizer(wx.HORIZONTAL)
+        footer.AddStretchSpacer(1)
+        close_btn = wx.Button(self, id=wx.ID_CLOSE, label=_("Close"))
+        close_btn.Bind(wx.EVT_BUTTON, self._on_close_dialog)
+        footer.Add(close_btn, 0, wx.ALIGN_CENTER_VERTICAL)
+        root.Add(footer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+
+        self.SetSizer(root)
+        self.CentreOnParent()
+        self.SetEscapeId(wx.ID_CLOSE)
+        self.SetAffirmativeId(wx.ID_CLOSE)
+        self.Bind(wx.EVT_CLOSE, self._on_close_dialog)
+        self.Bind(wx.EVT_CHAR_HOOK, self._on_dialog_char_hook)
+        close_btn.SetDefault()
+
+        self._apply_active_page(self._PAGE_ISSUE, initial=True)
+        if self._details_is_webview:
+            _try_set_focus(self._details_host)
+        else:
+            _try_set_focus(self.details_view)
+            try:
+                if hasattr(self.details_view, "SetInsertionPoint"):
+                    self.details_view.SetInsertionPoint(0)
+            except RuntimeError:
+                pass
+
+    def _build_details_plain(self, issue: Issue, count: int) -> None:
         lines = [
-            _("Severity: {value}", value=issue.severity.label),
-            _("Source: {value}", value=issue.source or "—"),
             _("Code: {value}", value=issue.code or "—"),
+            _("Severity: {value}", value=issue.severity.label),
         ]
+        impact = (issue.impact or "").strip()
+        if impact:
+            lines.append(_("Impact: {value}", value=impact.title()))
+        lines.append(_("Source: {value}", value=issue.source or "—"))
         if count > 1:
             lines.append(_("Occurrences: {n}", n=count))
         lines.extend(
@@ -1354,186 +1574,291 @@ class IssueDetailDialog(wx.Dialog):
                 issue.message or _("(none)"),
             ]
         )
-        body = "\n".join(lines)
-        text = wx.TextCtrl(
-            self,
-            value=body,
-            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_WORDWRAP | wx.BORDER_SUNKEN,
-            name=_("Issue details"),
+        from .ai.markdown_html import _issue_help_fields
+
+        help_title, help_text, help_url = _issue_help_fields(issue)
+        if help_title or help_text or help_url:
+            lines.extend(["", _("Help")])
+            if help_title:
+                lines.append(help_title)
+            if help_text:
+                lines.append(help_text)
+            if help_url:
+                lines.append(help_url)
+        self._details_plain = "\n".join(lines)
+
+    def _build_details_host(self, parent: wx.Window) -> None:
+        self._details_is_webview = False
+        self._details_host = _AiHtmlHostPanel(parent, name=_("Issue details"))
+        self._details_host.SetMinSize((-1, 200))
+        details_sizer = wx.BoxSizer(wx.VERTICAL)
+        self._details_host.SetSizer(details_sizer)
+        view, is_webview = _create_ai_html_view(
+            self._details_host, name=_("Issue details")
         )
-        text.SetMinSize((-1, 120))
-        # With AI: details 1/3, explainer 2/3. Without AI: details fills the dialog.
-        root.Add(text, 1, wx.EXPAND | wx.ALL, 12)
+        view.SetMinSize((-1, 200))
+        if is_webview:
+            import wx.html2 as html2
 
-        if self._show_ai:
-            # Prefer a plain sizer over StaticBoxSizer: Edge WebView mouse/scrollbar
-            # scrolling is broken when nested in a wx.StaticBox (wxWidgets #25058).
-            ai_sizer = wx.BoxSizer(wx.VERTICAL)
-            ai_heading = wx.StaticText(self, label=_("AI assistance"))
-            heading_font = ai_heading.GetFont()
-            if heading_font.IsOk():
-                heading_font.SetWeight(wx.FONTWEIGHT_BOLD)
-                ai_heading.SetFont(heading_font)
-            ai_sizer.Add(ai_heading, 0, wx.LEFT | wx.RIGHT | wx.TOP, 6)
+            from .ai.markdown_html import issue_details_page
 
-            top_row = wx.BoxSizer(wx.HORIZONTAL)
-            self.explain_btn = wx.Button(self, label=_("Explain with AI"))
-            self.explain_btn.SetToolTip(
-                _(
-                    "Ask AI to explain this issue in plain language "
-                    "(uses FIDO AI settings)"
-                )
+            view.Bind(html2.EVT_WEBVIEW_NAVIGATING, self._on_details_webview_navigating)
+            view.SetPage(
+                issue_details_page(
+                    self._issue, count=self._issue_count, tab_exit=True
+                ),
+                "",
             )
-            top_row.Add(self.explain_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
-
-            if self._show_fix:
-                self.fix_btn = wx.Button(self, label=_("Suggest fix with AI"))
-                self.fix_btn.SetToolTip(
-                    _(
-                        "Ask AI to suggest a minimal markup fix for this EPUB "
-                        "or eBraille issue (uses FIDO AI settings)"
-                    )
-                )
-                top_row.Add(self.fix_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
-                self.fix_all_btn = wx.Button(self, label=_("Suggest all like this…"))
-                self.fix_all_btn.SetToolTip(
-                    _(
-                        "Ask AI to suggest unique fixes for every issue with the "
-                        "same checker code in this report (uses FIDO AI settings)"
-                    )
-                )
-                self.fix_all_btn.Enable(self._matching_like_this > 1)
-                top_row.Add(
-                    self.fix_all_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8
-                )
-
-            model_label = wx.StaticText(self, label=_("Model:"))
-            top_row.Add(model_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
-            self.ai_model_ctrl = _FocusableReadOnlyText(
-                self,
-                value=self._ai_model_display_text(),
-                style=wx.TE_READONLY | wx.BORDER_SUNKEN,
-                name=_("AI model"),
-            )
-            self.ai_model_ctrl.SetToolTip(
-                _("AI model selected in FIDO (read-only)")
-            )
-            _ensure_win_tab_stop(self.ai_model_ctrl)
-            top_row.Add(self.ai_model_ctrl, 1, wx.EXPAND)
-            ai_sizer.Add(top_row, 0, wx.EXPAND | wx.ALL, 6)
-
-            self.ai_status = wx.StaticText(self, label="")
-            # Give status a name so screen readers can find the announcement.
-            self.ai_status.SetName(_("AI status"))
-            ai_sizer.Add(self.ai_status, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
-
-            # Placeholder — Edge/WebKit WebView creation is slow; finish after show.
-            self._ai_output_host = _AiHtmlHostPanel(self, name=_("AI explanation"))
-            self._ai_output_host.SetMinSize((-1, 240))
-            host_sizer = wx.BoxSizer(wx.VERTICAL)
-            self._ai_loading_label = wx.StaticText(
-                self._ai_output_host, label=_("Loading AI view…")
-            )
-            host_sizer.Add(self._ai_loading_label, 0, wx.ALL, 8)
-            self._ai_output_host.SetSizer(host_sizer)
-            _win_clear_tab_stop(self._ai_output_host)
-            ai_sizer.Add(
-                self._ai_output_host, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6
-            )
-            self.ai_output = self._ai_output_host  # until realized
-
-            follow_row = wx.BoxSizer(wx.HORIZONTAL)
-            self.followup_ctrl = wx.TextCtrl(
-                self,
-                value="",
-                style=wx.TE_PROCESS_ENTER,
-                name=_("Follow-up question"),
-            )
-            if hasattr(self.followup_ctrl, "SetHint"):
-                self.followup_ctrl.SetHint(_("Ask a follow-up question…"))
-            self.ask_btn = wx.Button(self, label=_("Ask"))
-            self.ask_btn.Enable(False)
-            follow_row.Add(self.followup_ctrl, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
-            follow_row.Add(self.ask_btn, 0)
-            ai_sizer.Add(follow_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
-
-            actions = wx.BoxSizer(wx.HORIZONTAL)
-            if self._show_fix:
-                self.apply_fix_btn = wx.Button(self, label=_("Apply fix and validate"))
-                self.apply_fix_btn.SetToolTip(
-                    _(
-                        "Write the proposed fix into the publication, "
-                        "then re-check and confirm whether the issue is resolved"
-                    )
-                )
-                self.apply_fix_btn.Enable(False)
-                actions.Add(
-                    self.apply_fix_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6
-                )
-                self.apply_fix_btn.Bind(wx.EVT_BUTTON, self._on_apply_fix)
-
-            self.view_browser_btn = wx.Button(self, label=_("View in browser"))
-            self.view_browser_btn.SetToolTip(
-                _("Open the explanation in your web browser")
-            )
-            self.view_browser_btn.Enable(False)
-            actions.Add(
-                self.view_browser_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6
+        else:
+            if hasattr(view, "ChangeValue"):
+                view.ChangeValue(self._details_plain)
+            else:
+                view.SetValue(self._details_plain)
+        details_sizer.Add(view, 1, wx.EXPAND)
+        self.details_view = view
+        self._details_is_webview = is_webview
+        _wire_ai_html_host(self._details_host, view, is_webview=is_webview)
+        if is_webview:
+            wx.CallLater(
+                100,
+                lambda h=self._details_host, v=view: _refresh_ai_html_tab_stops(
+                    h, v, is_webview=True
+                ),
             )
 
-            self.save_html_btn = wx.Button(self, label=_("Save as HTML…"))
-            self.save_html_btn.SetToolTip(_("Save the explanation as an HTML file"))
-            self.save_html_btn.Enable(False)
-            actions.Add(self.save_html_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+    def _build_ai_host_placeholder(self, parent: wx.Window) -> None:
+        self._ai_output_host = _AiHtmlHostPanel(parent, name=_("AI explanation"))
+        self._ai_output_host.SetMinSize((-1, 200))
+        host_sizer = wx.BoxSizer(wx.VERTICAL)
+        self._ai_loading_label = wx.StaticText(
+            self._ai_output_host, label=_("Loading AI view…")
+        )
+        host_sizer.Add(self._ai_loading_label, 0, wx.ALL, 8)
+        self._ai_output_host.SetSizer(host_sizer)
+        _win_clear_tab_stop(self._ai_output_host)
+        self.ai_output = self._ai_output_host  # until realized
+        self._ai_output_host.Hide()
 
-            self.save_md_btn = wx.Button(self, label=_("Save as Markdown…"))
-            self.save_md_btn.SetToolTip(_("Save the explanation as a Markdown file"))
-            self.save_md_btn.Enable(False)
-            actions.Add(self.save_md_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+    def _build_kb_host_placeholder(self, parent: wx.Window) -> None:
+        self._kb_host = wx.Panel(parent, name=_("Knowledge Base"))
+        self._kb_host.SetMinSize((-1, 200))
+        host_sizer = wx.BoxSizer(wx.VERTICAL)
+        loading = wx.StaticText(self._kb_host, label=_("Loading…"))
+        host_sizer.Add(loading, 0, wx.ALL, 8)
+        self._kb_host.SetSizer(host_sizer)
+        self._kb_panel = None
+        self._kb_host.Hide()
 
-            self.copy_ai_btn = wx.Button(self, label=_("Copy to clipboard"))
-            self.copy_ai_btn.SetToolTip(
-                _("Copy the explanation markdown to the clipboard")
+    def _realize_kb_panel(self) -> None:
+        """Create the embedded KB article panel on first visit to the KB tab."""
+        if not self._show_kb or self._kb_panel is not None:
+            return
+        host = self._kb_host
+        if host is None:
+            return
+        try:
+            if not host:
+                return
+        except RuntimeError:
+            return
+        from .kb.viewer import KnowledgeBaseArticlePanel
+
+        sizer = host.GetSizer()
+        if sizer is not None:
+            sizer.Clear(delete_windows=True)
+        else:
+            sizer = wx.BoxSizer(wx.VERTICAL)
+            host.SetSizer(sizer)
+        self._kb_panel = KnowledgeBaseArticlePanel(
+            host,
+            en_rel=self._kb_en_rel,
+            on_content_ready=lambda: wx.CallAfter(self._refresh_export_enabled),
+        )
+        sizer.Add(self._kb_panel, 1, wx.EXPAND)
+        host.Layout()
+        try:
+            self.Layout()
+        except RuntimeError:
+            pass
+        wx.CallAfter(self._kb_panel.start_initial_load)
+
+    def _build_explain_controls(self, parent: wx.Window) -> wx.Panel:
+        panel = wx.Panel(parent)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        self.explain_btn = wx.Button(panel, label=_("Explain with AI"))
+        self.explain_btn.SetToolTip(
+            _(
+                "Ask AI to explain this issue in plain language "
+                "(uses FIDO AI settings)"
             )
-            self.copy_ai_btn.Enable(False)
-            actions.Add(self.copy_ai_btn, 0, wx.ALIGN_CENTER_VERTICAL)
+        )
+        self.explain_btn.Bind(wx.EVT_BUTTON, self._on_explain)
+        sizer.Add(self.explain_btn, 0, wx.TOP | wx.BOTTOM, 4)
 
-            ai_sizer.Add(actions, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+        follow_row = wx.BoxSizer(wx.HORIZONTAL)
+        self.followup_ctrl = wx.TextCtrl(
+            panel,
+            value="",
+            style=wx.TE_PROCESS_ENTER,
+            name=_("Follow-up question"),
+        )
+        if hasattr(self.followup_ctrl, "SetHint"):
+            self.followup_ctrl.SetHint(_("Ask a follow-up question…"))
+        self.ask_btn = wx.Button(panel, label=_("Ask"))
+        self.ask_btn.Enable(False)
+        follow_row.Add(self.followup_ctrl, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        follow_row.Add(self.ask_btn, 0)
+        sizer.Add(follow_row, 0, wx.EXPAND | wx.TOP | wx.BOTTOM, 4)
+        self.ask_btn.Bind(wx.EVT_BUTTON, self._on_ask_followup)
+        self.followup_ctrl.Bind(wx.EVT_TEXT_ENTER, self._on_ask_followup)
+        panel.SetSizer(sizer)
+        panel.Hide()
+        return panel
 
-            root.Add(ai_sizer, 2, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+    def _build_fix_controls(self, parent: wx.Window) -> wx.Panel:
+        panel = wx.Panel(parent)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        self.fix_btn = wx.Button(panel, label=_("Suggest fix with AI"))
+        self.fix_btn.SetToolTip(
+            _(
+                "Ask AI to suggest a minimal markup fix for this EPUB "
+                "or eBraille issue (uses FIDO AI settings)"
+            )
+        )
+        self.fix_btn.Bind(wx.EVT_BUTTON, self._on_fix)
+        row.Add(self.fix_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
 
-            self.explain_btn.Bind(wx.EVT_BUTTON, self._on_explain)
-            if self._show_fix:
-                self.fix_btn.Bind(wx.EVT_BUTTON, self._on_fix)
-                self.fix_all_btn.Bind(wx.EVT_BUTTON, self._on_fix_all)
-            self.ask_btn.Bind(wx.EVT_BUTTON, self._on_ask_followup)
-            self.followup_ctrl.Bind(wx.EVT_TEXT_ENTER, self._on_ask_followup)
-            self.view_browser_btn.Bind(wx.EVT_BUTTON, self._on_view_ai_browser)
-            self.save_html_btn.Bind(wx.EVT_BUTTON, self._on_save_ai_html)
-            self.save_md_btn.Bind(wx.EVT_BUTTON, self._on_save_ai_markdown)
-            self.copy_ai_btn.Bind(wx.EVT_BUTTON, self._on_copy_ai_clipboard)
-            self.Bind(EVT_EXPLAIN_AI, self._on_explain_ai_event)
-            self.Bind(EVT_FIX_AI, self._on_fix_ai_event)
-            self.Bind(EVT_APPLY_FIX, self._on_apply_fix_event)
-            # WebView is realized by the parent while the opening progress is shown.
+        self.fix_all_btn = wx.Button(panel, label=_("Suggest all like this…"))
+        self.fix_all_btn.SetToolTip(
+            _(
+                "Ask AI to suggest unique fixes for every issue with the "
+                "same checker code in this report (uses FIDO AI settings)"
+            )
+        )
+        self.fix_all_btn.Enable(self._matching_like_this > 1)
+        self.fix_all_btn.Bind(wx.EVT_BUTTON, self._on_fix_all)
+        row.Add(self.fix_all_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
 
-        footer = wx.BoxSizer(wx.HORIZONTAL)
-        footer.AddStretchSpacer(1)
-        close_btn = wx.Button(self, id=wx.ID_CLOSE, label=_("Close"))
-        close_btn.Bind(wx.EVT_BUTTON, self._on_close_dialog)
-        footer.Add(close_btn, 0, wx.ALIGN_CENTER_VERTICAL)
-        root.Add(footer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        self.apply_fix_btn = wx.Button(panel, label=_("Apply fix and validate"))
+        self.apply_fix_btn.SetToolTip(
+            _(
+                "Write the proposed fix into the publication, "
+                "then re-check and confirm whether the issue is resolved"
+            )
+        )
+        self.apply_fix_btn.Enable(False)
+        self.apply_fix_btn.Bind(wx.EVT_BUTTON, self._on_apply_fix)
+        row.Add(self.apply_fix_btn, 0, wx.ALIGN_CENTER_VERTICAL)
+        sizer.Add(row, 0, wx.EXPAND | wx.TOP | wx.BOTTOM, 4)
 
-        self.SetSizer(root)
-        self.CentreOnParent()
-        # Modal dialogs must EndModal — Close() alone can leave ShowModal hung.
-        self.SetEscapeId(wx.ID_CLOSE)
-        self.SetAffirmativeId(wx.ID_CLOSE)
-        self.Bind(wx.EVT_CLOSE, self._on_close_dialog)
-        self.Bind(wx.EVT_CHAR_HOOK, self._on_dialog_char_hook)
-        close_btn.SetDefault()
-        text.SetFocus()
-        text.SetInsertionPoint(0)
+        follow_row = wx.BoxSizer(wx.HORIZONTAL)
+        self.fix_followup_ctrl = wx.TextCtrl(
+            panel,
+            value="",
+            style=wx.TE_PROCESS_ENTER,
+            name=_("Follow-up question"),
+        )
+        if hasattr(self.fix_followup_ctrl, "SetHint"):
+            self.fix_followup_ctrl.SetHint(_("Ask a follow-up question…"))
+        self.fix_ask_btn = wx.Button(panel, label=_("Ask"))
+        self.fix_ask_btn.Enable(False)
+        follow_row.Add(
+            self.fix_followup_ctrl, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6
+        )
+        follow_row.Add(self.fix_ask_btn, 0)
+        sizer.Add(follow_row, 0, wx.EXPAND | wx.TOP | wx.BOTTOM, 4)
+        self.fix_ask_btn.Bind(wx.EVT_BUTTON, self._on_ask_followup)
+        self.fix_followup_ctrl.Bind(wx.EVT_TEXT_ENTER, self._on_ask_followup)
+
+        panel.SetSizer(sizer)
+        panel.Hide()
+        return panel
+
+    def _page_key_for_selection(self, sel: int) -> str:
+        if 0 <= sel < len(self._page_keys):
+            return self._page_keys[sel]
+        return self._PAGE_ISSUE
+
+    def _on_notebook_page(self, event: wx.BookCtrlEvent) -> None:
+        event.Skip()
+        self._apply_active_page(self._page_key_for_selection(event.GetSelection()))
+
+    def _apply_active_page(self, key: str, *, initial: bool = False) -> None:
+        self._active_page_key = key
+        show_issue = key == self._PAGE_ISSUE
+        show_kb = key == self._PAGE_KB
+        show_explain = key == self._PAGE_EXPLAIN
+        show_fix = key == self._PAGE_FIX
+
+        self._details_host.Show(show_issue)
+        if self._kb_host is not None:
+            self._kb_host.Show(show_kb)
+        if self._show_ai and self._ai_output_host is not None:
+            self._ai_output_host.Show(show_explain or show_fix)
+
+        if self._issue_controls is not None:
+            self._issue_controls.Show(show_issue)
+        if self._explain_controls is not None:
+            self._explain_controls.Show(show_explain)
+        if self._fix_controls is not None:
+            self._fix_controls.Show(show_fix)
+
+        if not initial:
+            if show_kb:
+                self._realize_kb_panel()
+            if self._show_ai and (show_explain or show_fix):
+                if not getattr(self, "_ai_view_realized", False):
+                    self._realize_ai_html_view()
+                else:
+                    self._paint_active_ai_channel(focus=False)
+
+        self._refresh_export_enabled()
+        try:
+            self.Layout()
+            if getattr(self, "_content_panel", None) is not None:
+                self._content_panel.Layout()
+        except RuntimeError:
+            pass
+
+    def _active_is_ai_page(self) -> bool:
+        return self._active_page_key in (self._PAGE_EXPLAIN, self._PAGE_FIX)
+
+    def _ai_channel_key(self, page: str | None = None) -> str:
+        key = self._active_page_key if page is None else page
+        return "fix" if key == self._PAGE_FIX else "explain"
+
+    def _ai_markdown_for(self, channel: str | None = None) -> str:
+        ch = channel or self._ai_channel_key()
+        return self._fix_markdown if ch == "fix" else self._explain_markdown
+
+    def _ai_plain_for(self, channel: str | None = None) -> bool:
+        ch = channel or self._ai_channel_key()
+        return self._fix_plain if ch == "fix" else self._explain_plain
+
+    def _store_ai_channel(
+        self,
+        markdown_text: str,
+        *,
+        plain: bool,
+        channel: str,
+    ) -> None:
+        from .ai.markdown_html import with_ai_disclaimer
+
+        raw = markdown_text or ""
+        stored = raw if plain else with_ai_disclaimer(raw)
+        if channel == "fix":
+            self._fix_markdown = stored
+            self._fix_plain = plain
+        else:
+            self._explain_markdown = stored
+            self._explain_plain = plain
+
+    def _ai_channel_title(self, channel: str | None = None) -> str:
+        ch = channel or self._ai_channel_key()
+        if ch == "fix":
+            return _("Suggested fix")
+        return _("AI explanation")
 
     def _realize_ai_html_view(self) -> None:
         """Create the WebView after the dialog is visible (avoids a long freeze)."""
@@ -1565,7 +1890,9 @@ class IssueDetailDialog(wx.Dialog):
             from .ai.markdown_html import ai_idle_placeholder_page
 
             view.SetPage(
-                ai_idle_placeholder_page(title=_("AI explanation"), tab_exit=True),
+                ai_idle_placeholder_page(
+                    title=self._ai_channel_title(), tab_exit=True
+                ),
                 "",
             )
         else:
@@ -1578,6 +1905,7 @@ class IssueDetailDialog(wx.Dialog):
         self.ai_output = view
         self._ai_output_is_webview = is_webview
         self._ai_view_realized = True
+        self._ai_painted_channel = None
         _wire_ai_html_host(host, view, is_webview=is_webview)
         host.Layout()
         self.Layout()
@@ -1605,9 +1933,8 @@ class IssueDetailDialog(wx.Dialog):
         if hasattr(self, "ai_status") and not self._busy:
             if self.ai_status.GetLabel() == _("Loading AI view…"):
                 self.ai_status.SetLabel("")
-        # If content arrived before the view was ready, paint it now.
-        if (self._ai_markdown or "").strip() or self._ai_plain:
-            self._set_ai_content(self._ai_markdown, plain=self._ai_plain, focus=False)
+        # Paint whichever AI page is active (explain or fix may already have text).
+        self._paint_active_ai_channel(focus=False)
 
     @staticmethod
     def _fix_available_for_result(check_result: CheckResult | None) -> bool:
@@ -1621,6 +1948,69 @@ class IssueDetailDialog(wx.Dialog):
             return
         event.Skip()
 
+    def _on_open_kb_article(self, _event: wx.CommandEvent) -> None:
+        if self._show_kb:
+            self._select_page(self._PAGE_KB)
+            return
+        url = (self._kb_url or "").strip()
+        if not url:
+            return
+        open_knowledge_base_url(self, url)
+
+    def _open_kb_link_in_dialog(self, url: str) -> None:
+        """Prefer the KB tab when present; otherwise open the standalone viewer."""
+        if self._show_kb:
+            self._select_page(self._PAGE_KB)
+            self._realize_kb_panel()
+            panel = self._kb_panel
+            if panel is not None:
+                from .kb.store import en_relative_path_from_url
+
+                en_rel = en_relative_path_from_url(url)
+                if en_rel:
+                    panel.load_article(en_rel)
+                    return
+        open_knowledge_base_url(self, url)
+
+    def _on_details_webview_navigating(self, event) -> None:
+        """Tab/Escape leave the details WebView; open http(s) externally."""
+        url = (event.GetURL() or "").strip()
+        action = _webview_host_action(url)
+        if action == "close":
+            event.Veto()
+            wx.CallAfter(self._on_close_dialog)
+            return
+        if action in ("next", "prev"):
+            event.Veto()
+            wx.CallAfter(self._leave_details_webview, action == "next")
+            return
+        if url.startswith(("http://", "https://", "mailto:")):
+            event.Veto()
+            if url.startswith(("http://", "https://")) and is_kb_url(url):
+                wx.CallAfter(self._open_kb_link_in_dialog, url)
+                return
+            try:
+                webbrowser.open(url)
+            except OSError:
+                pass
+            return
+        event.Skip()
+
+    def _leave_details_webview(self, forward: bool) -> None:
+        """Move dialog focus out of the issue-details WebView."""
+        if forward:
+            if _try_set_focus(getattr(self, "view_browser_btn", None)):
+                return
+            close_btn = self.FindWindowById(wx.ID_CLOSE)
+            _try_set_focus(close_btn)
+            return
+        if self._notebook is not None and _try_set_focus(self._notebook):
+            return
+        if _try_set_focus(getattr(self, "ai_model_ctrl", None)):
+            return
+        close_btn = self.FindWindowById(wx.ID_CLOSE)
+        _try_set_focus(close_btn)
+
     def _on_close_dialog(self, event: wx.Event | None = None) -> None:
         # Guard against SetEscapeId + CHAR_HOOK both firing: a second pass would
         # see IsModal() False and Destroy() while ShowModal is still unwinding,
@@ -1633,6 +2023,12 @@ class IssueDetailDialog(wx.Dialog):
         self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
         if self._ai_cancel is not None:
             self._ai_cancel.set()
+        panel = getattr(self, "_kb_panel", None)
+        if panel is not None:
+            try:
+                panel.mark_closing()
+            except Exception:
+                pass
         # Do not reclaim focus onto this dialog after teardown.
         self._close_ai_progress(reclaim_focus=False)
         try:
@@ -1669,8 +2065,9 @@ class IssueDetailDialog(wx.Dialog):
             return
         self.ai_model_ctrl.SetValue(self._ai_model_display_text())
 
-    def _has_ai_content(self) -> bool:
-        return bool((self._ai_markdown or "").strip()) or self._ai_plain
+    def _has_ai_content(self, channel: str | None = None) -> bool:
+        ch = channel or self._ai_channel_key()
+        return bool((self._ai_markdown_for(ch) or "").strip()) or self._ai_plain_for(ch)
 
     def _set_apply_fix_enabled(self, enabled: bool) -> None:
         if not self._show_fix:
@@ -1679,26 +2076,60 @@ class IssueDetailDialog(wx.Dialog):
         self.apply_fix_btn.Enable(enabled and has_proposal)
 
     def _set_ai_export_enabled(self, enabled: bool) -> None:
-        if not self._show_ai:
-            return
-        self.view_browser_btn.Enable(enabled)
-        self.save_html_btn.Enable(enabled)
-        self.save_md_btn.Enable(enabled)
-        self.copy_ai_btn.Enable(enabled)
+        # Kept for call sites; refresh based on the active page.
+        self._refresh_export_enabled()
+
+    def _refresh_export_enabled(self) -> None:
+        on_ai = self._show_ai and self._active_is_ai_page()
+        on_kb = self._active_page_key == self._PAGE_KB
+        has_ai = self._has_ai_content()
+        if on_ai:
+            can = (not self._busy) and has_ai
+            self.view_browser_btn.Enable(can)
+            self.save_html_btn.Enable(can)
+            self.copy_btn.Enable(can)
+            self.save_md_btn.Enable(can)
+            self.save_md_btn.Show(True)
+        elif on_kb:
+            panel = self._kb_panel
+            can = (not self._busy) and bool(panel is not None and panel.content_ready)
+            self.view_browser_btn.Enable(can or (panel is not None and bool(panel.online_url())))
+            self.save_html_btn.Enable(can)
+            self.copy_btn.Enable(can)
+            self.save_md_btn.Enable(False)
+            self.save_md_btn.Show(self._show_ai)
+        else:
+            # Issue page — always exportable.
+            self.view_browser_btn.Enable(not self._busy)
+            self.save_html_btn.Enable(not self._busy)
+            self.copy_btn.Enable(not self._busy)
+            self.save_md_btn.Enable(False)
+            self.save_md_btn.Show(self._show_ai)
+        try:
+            self.Layout()
+        except RuntimeError:
+            pass
+
+    def _issue_browser_html(self) -> str:
+        from .ai.markdown_html import issue_details_page
+
+        return issue_details_page(
+            self._issue, count=self._issue_count, tab_exit=False
+        )
 
     def _ai_export_markdown(self) -> str:
         from .ai.markdown_html import export_explanation_markdown
 
         return export_explanation_markdown(
             self._issue,
-            self._ai_markdown,
+            self._ai_markdown_for(),
             count=self._issue_count,
         )
 
     def _ai_browser_html(self) -> str:
         from .ai.markdown_html import markdown_to_browser_page
 
-        title = _("AI explanation")
+        title = self._ai_channel_title()
         code = (self._issue.code or "").strip()
         if code:
             title = f"{title} — {code}"
@@ -1718,6 +2149,9 @@ class IssueDetailDialog(wx.Dialog):
             return
         if url.startswith(("http://", "https://", "mailto:")):
             event.Veto()
+            if url.startswith(("http://", "https://")) and is_kb_url(url):
+                wx.CallAfter(self._open_kb_link_in_dialog, url)
+                return
             try:
                 webbrowser.open(url)
             except OSError:
@@ -1728,18 +2162,33 @@ class IssueDetailDialog(wx.Dialog):
     def _leave_ai_webview(self, forward: bool) -> None:
         """Move dialog focus out of the WebView after Tab-at-boundary / Ctrl+Tab."""
         if forward:
-            if _try_set_focus(getattr(self, "followup_ctrl", None)):
-                return
-            if _try_set_focus(getattr(self, "ask_btn", None)):
+            if self._active_page_key == self._PAGE_EXPLAIN:
+                if _try_set_focus(getattr(self, "explain_btn", None)):
+                    return
+                if _try_set_focus(getattr(self, "followup_ctrl", None)):
+                    return
+                if _try_set_focus(getattr(self, "ask_btn", None)):
+                    return
+            elif self._active_page_key == self._PAGE_FIX:
+                if _try_set_focus(getattr(self, "fix_btn", None)):
+                    return
+                if _try_set_focus(getattr(self, "fix_followup_ctrl", None)):
+                    return
+                if _try_set_focus(getattr(self, "fix_ask_btn", None)):
+                    return
+                if _try_set_focus(getattr(self, "apply_fix_btn", None)):
+                    return
+            if _try_set_focus(getattr(self, "view_browser_btn", None)):
                 return
             close_btn = self.FindWindowById(wx.ID_CLOSE)
             _try_set_focus(close_btn)
             return
+        if self._notebook is not None and _try_set_focus(self._notebook):
+            return
         if _try_set_focus(getattr(self, "ai_model_ctrl", None)):
             return
-        if self._show_fix and _try_set_focus(getattr(self, "fix_btn", None)):
-            return
-        _try_set_focus(getattr(self, "explain_btn", None))
+        close_btn = self.FindWindowById(wx.ID_CLOSE)
+        _try_set_focus(close_btn)
 
     def _on_ai_webview_loaded(self, event) -> None:
         """After SetPage, move focus into the WebView for screen-reader review."""
@@ -1757,28 +2206,31 @@ class IssueDetailDialog(wx.Dialog):
         if not self._ai_focus_after_load:
             return
         self._ai_focus_after_load = False
-        if _markdown_has_latest_followup(getattr(self, "_ai_markdown", "") or ""):
+        md = self._ai_markdown_for()
+        if _markdown_has_latest_followup(md or ""):
             self._schedule_reveal_latest_followup()
         else:
             self._schedule_ai_output_focus()
 
-    def _ai_dialog_html(self, *, plain: bool = False) -> str:
+    def _ai_dialog_html(self, *, plain: bool = False, channel: str | None = None) -> str:
         """HTML document for the in-dialog WebView (same styling as browser view)."""
         from .ai.markdown_html import markdown_to_browser_page
 
         # Keep the <title> generic. Appending the Ace/EPUBCheck code (e.g.
         # aria-required-children) makes Narrator/NVDA announce it as the
         # document name, which sounds like a dialog accessibility error.
-        title = _("AI explanation")
+        ch = channel or self._ai_channel_key()
+        title = self._ai_channel_title(ch)
+        body = self._ai_markdown_for(ch)
         if plain:
             return markdown_to_browser_page(
-                self._ai_markdown or "",
+                body or "",
                 title=title,
                 plain=True,
                 tab_exit=True,
             )
         return markdown_to_browser_page(
-            self._ai_markdown or "",
+            body or "",
             title=title,
             plain=False,
             tab_exit=True,
@@ -1891,75 +2343,171 @@ class IssueDetailDialog(wx.Dialog):
             return True
         return _try_set_focus(view)
 
-    def _set_ai_content(
-        self,
-        markdown_text: str,
-        *,
-        plain: bool = False,
-        focus: bool = False,
-    ) -> None:
-        from .ai.markdown_html import with_ai_disclaimer
-
+    def _paint_active_ai_channel(self, *, focus: bool = False) -> None:
+        """Show the stored Explain or Fix transcript in the shared AI WebView."""
         if getattr(self, "_closing", False):
             return
-        self._ai_plain = plain
-        raw = markdown_text or ""
-        self._ai_markdown = raw if plain else with_ai_disclaimer(raw)
+        if not self._active_is_ai_page():
+            return
         if not getattr(self, "_ai_view_realized", False):
-            self._set_ai_export_enabled(self._has_ai_content())
+            return
+        channel = self._ai_channel_key()
+        markdown_text = self._ai_markdown_for(channel)
+        plain = self._ai_plain_for(channel)
+        has = bool((markdown_text or "").strip()) or plain
+        self._ai_painted_channel = channel
+        if not has:
+            if self._ai_output_is_webview:
+                from .ai.markdown_html import ai_idle_placeholder_page
+
+                self._ai_focus_after_load = False
+                self.ai_output.SetPage(
+                    ai_idle_placeholder_page(
+                        title=self._ai_channel_title(channel), tab_exit=True
+                    ),
+                    "",
+                )
+            else:
+                self.ai_output.SetValue(_("AI-generated responses will be shown here."))
+            self._set_ai_export_enabled(False)
             return
         if self._ai_output_is_webview:
-            # Focus once LOADED fires so NVDA/JAWS land in the document.
             self._ai_focus_after_load = bool(focus)
-            self.ai_output.SetPage(self._ai_dialog_html(plain=plain), "")
-            # If LOADED already ran synchronously it cleared the flag — schedule
-            # once as fallback. Do not also schedule while waiting for LOADED.
+            self.ai_output.SetPage(
+                self._ai_dialog_html(plain=plain, channel=channel), ""
+            )
             if focus and not self._ai_focus_after_load:
-                if _markdown_has_latest_followup(self._ai_markdown or ""):
+                if channel == "explain" and _markdown_has_latest_followup(
+                    markdown_text or ""
+                ):
+                    self._schedule_reveal_latest_followup()
+                elif channel == "fix" and _markdown_has_latest_followup(
+                    markdown_text or ""
+                ):
                     self._schedule_reveal_latest_followup()
                 else:
                     self._schedule_ai_output_focus()
         else:
-            self.ai_output.SetValue(self._ai_markdown)
-            if _markdown_has_latest_followup(self._ai_markdown or ""):
+            self.ai_output.SetValue(markdown_text)
+            if _markdown_has_latest_followup(markdown_text or ""):
                 if focus:
                     self._schedule_reveal_latest_followup()
             else:
                 self.ai_output.SetInsertionPoint(0)
                 if focus:
                     self._schedule_ai_output_focus()
-        self._set_ai_export_enabled(self._has_ai_content())
+        self._set_ai_export_enabled(True)
 
-    def _on_view_ai_browser(self, _event: wx.Event) -> None:
-        if not self._has_ai_content():
+    def _set_ai_content(
+        self,
+        markdown_text: str,
+        *,
+        plain: bool = False,
+        focus: bool = False,
+        channel: str | None = None,
+    ) -> None:
+        if getattr(self, "_closing", False):
+            return
+        ch = channel or self._ai_channel_key()
+        self._store_ai_channel(markdown_text, plain=plain, channel=ch)
+        if not getattr(self, "_ai_view_realized", False):
+            self._set_ai_export_enabled(self._has_ai_content())
+            return
+        # Only paint when the user is looking at this channel (or no AI page yet).
+        if self._active_is_ai_page() and self._ai_channel_key() != ch:
+            self._refresh_export_enabled()
+            return
+        self._paint_active_ai_channel(focus=focus)
+
+    def _on_view_browser(self, _event: wx.Event) -> None:
+        if self._active_is_ai_page():
+            if not self._has_ai_content():
+                return
+            html = self._ai_browser_html()
+            prefix = "checkmate-explain-"
+            use_temp = True
+        elif self._active_page_key == self._PAGE_KB:
+            panel = self._kb_panel
+            if panel is None:
+                return
+            # Prefer the live online article when exporting "View in browser".
+            url = panel.online_url()
+            if url:
+                try:
+                    webbrowser.open(url)
+                    if self._show_ai and hasattr(self, "ai_status"):
+                        self.ai_status.SetLabel(_("Opened in browser."))
+                except OSError as exc:
+                    wx.MessageBox(
+                        _(
+                            "Could not open the Knowledge Base article in a browser:\n{error}",
+                            error=exc,
+                        ),
+                        _("Error"),
+                        wx.OK | wx.ICON_ERROR,
+                        self,
+                    )
+                return
+            html = panel.export_html()
+            if not html.strip():
+                return
+            prefix = "checkmate-kb-"
+            use_temp = True
+        else:
+            html = self._issue_browser_html()
+            prefix = "checkmate-issue-"
+            use_temp = True
+        if not use_temp:
             return
         try:
-            fd, name = tempfile.mkstemp(
-                prefix="checkmate-explain-",
-                suffix=".html",
-                text=True,
-            )
+            fd, name = tempfile.mkstemp(prefix=prefix, suffix=".html", text=True)
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(self._ai_browser_html())
+                fh.write(html)
             webbrowser.open(Path(name).as_uri())
-            self.ai_status.SetLabel(_("Opened in browser."))
+            if self._show_ai and hasattr(self, "ai_status"):
+                self.ai_status.SetLabel(_("Opened in browser."))
         except OSError as exc:
-            wx.MessageBox(
-                _("Could not open the explanation in a browser:\n{error}", error=exc),
-                _("Error"),
-                wx.OK | wx.ICON_ERROR,
-                self,
-            )
+            if self._active_is_ai_page():
+                msg = _(
+                    "Could not open the explanation in a browser:\n{error}",
+                    error=exc,
+                )
+            elif self._active_page_key == self._PAGE_KB:
+                msg = _(
+                    "Could not open the Knowledge Base article in a browser:\n{error}",
+                    error=exc,
+                )
+            else:
+                msg = _(
+                    "Could not open the issue details in a browser:\n{error}",
+                    error=exc,
+                )
+            wx.MessageBox(msg, _("Error"), wx.OK | wx.ICON_ERROR, self)
 
-    def _on_save_ai_html(self, _event: wx.Event) -> None:
-        if not self._has_ai_content():
-            return
+    def _on_save_html(self, _event: wx.Event) -> None:
         from .ai.markdown_html import explanation_filename_stem
 
-        stem = explanation_filename_stem(self._issue.code)
+        if self._active_is_ai_page():
+            if not self._has_ai_content():
+                return
+            stem = explanation_filename_stem(self._issue.code)
+            title = _("Save AI explanation as HTML")
+            html = self._ai_browser_html()
+        elif self._active_page_key == self._PAGE_KB:
+            panel = self._kb_panel
+            if panel is None or not panel.content_ready:
+                return
+            stem = explanation_filename_stem(self._kb_en_rel or "kb-article")
+            title = _("Save Knowledge Base article as HTML")
+            html = panel.export_html()
+        else:
+            code = (self._issue.code or "issue").strip() or "issue"
+            stem = explanation_filename_stem(code)
+            title = _("Save issue details as HTML")
+            html = self._issue_browser_html()
         with wx.FileDialog(
             self,
-            _("Save AI explanation as HTML"),
+            title,
             defaultFile=f"{stem}.html",
             wildcard=_("HTML files (*.html)|*.html;*.htm|All files (*.*)|*.*"),
             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
@@ -1968,8 +2516,9 @@ class IssueDetailDialog(wx.Dialog):
                 return
             path = Path(dlg.GetPath())
         try:
-            path.write_text(self._ai_browser_html(), encoding="utf-8")
-            self.ai_status.SetLabel(_("Saved to {path}", path=path))
+            path.write_text(html, encoding="utf-8")
+            if self._show_ai and hasattr(self, "ai_status"):
+                self.ai_status.SetLabel(_("Saved to {path}", path=path))
         except OSError as exc:
             wx.MessageBox(
                 _("Could not save the explanation:\n{error}", error=exc),
@@ -1978,8 +2527,8 @@ class IssueDetailDialog(wx.Dialog):
                 self,
             )
 
-    def _on_save_ai_markdown(self, _event: wx.Event) -> None:
-        if not self._has_ai_content():
+    def _on_save_markdown(self, _event: wx.Event) -> None:
+        if not self._active_is_ai_page() or not self._has_ai_content():
             return
         from .ai.markdown_html import explanation_filename_stem
 
@@ -1998,7 +2547,8 @@ class IssueDetailDialog(wx.Dialog):
             path = Path(dlg.GetPath())
         try:
             path.write_text(self._ai_export_markdown(), encoding="utf-8")
-            self.ai_status.SetLabel(_("Saved to {path}", path=path))
+            if hasattr(self, "ai_status"):
+                self.ai_status.SetLabel(_("Saved to {path}", path=path))
         except OSError as exc:
             wx.MessageBox(
                 _("Could not save the explanation:\n{error}", error=exc),
@@ -2007,24 +2557,38 @@ class IssueDetailDialog(wx.Dialog):
                 self,
             )
 
-    def _on_copy_ai_clipboard(self, _event: wx.Event) -> None:
-        if not self._has_ai_content():
-            return
-        text = self._ai_markdown or ""
+    def _on_copy_clipboard(self, _event: wx.Event) -> None:
+        if self._active_is_ai_page():
+            if not self._has_ai_content():
+                return
+            text = self._ai_markdown_for() or ""
+            if self._active_page_key == self._PAGE_FIX:
+                copied_msg = _("The suggested fix was copied to the clipboard.")
+            else:
+                copied_msg = _("The explanation was copied to the clipboard.")
+        elif self._active_page_key == self._PAGE_KB:
+            panel = self._kb_panel
+            if panel is None or not panel.content_ready:
+                return
+            text = panel.export_plain()
+            copied_msg = _("The Knowledge Base article was copied to the clipboard.")
+        else:
+            text = self._details_plain or ""
+            copied_msg = _("The issue details were copied to the clipboard.")
         if wx.TheClipboard.Open():
             try:
                 wx.TheClipboard.SetData(wx.TextDataObject(text))
             finally:
                 wx.TheClipboard.Close()
-            self.ai_status.SetLabel(_("Copied to clipboard."))
-            # Modal confirmation so screen readers announce the result.
+            if self._show_ai and hasattr(self, "ai_status"):
+                self.ai_status.SetLabel(_("Copied to clipboard."))
             wx.MessageBox(
-                _("The explanation was copied to the clipboard."),
+                copied_msg,
                 _("Copied to clipboard"),
                 wx.OK | wx.ICON_INFORMATION,
                 self,
             )
-            self.copy_ai_btn.SetFocus()
+            self.copy_btn.SetFocus()
         else:
             wx.MessageBox(
                 _("Could not copy to the clipboard."),
@@ -2036,15 +2600,22 @@ class IssueDetailDialog(wx.Dialog):
     def _set_busy(self, busy: bool, status: str = "") -> None:
         self._busy = busy
         if not self._show_ai:
+            self._refresh_export_enabled()
             return
         self.explain_btn.Enable(not busy)
         if self._show_fix:
             self.fix_btn.Enable(not busy)
             self.fix_all_btn.Enable((not busy) and self._matching_like_this > 1)
             self._set_apply_fix_enabled(not busy)
-        self.ask_btn.Enable(not busy and self._session is not None)
+            if hasattr(self, "fix_ask_btn"):
+                self.fix_ask_btn.Enable(
+                    not busy and self._fix_session is not None
+                )
+            if hasattr(self, "fix_followup_ctrl"):
+                self.fix_followup_ctrl.Enable(not busy)
+        self.ask_btn.Enable(not busy and self._explain_session is not None)
         self.followup_ctrl.Enable(not busy)
-        self._set_ai_export_enabled(not busy and self._has_ai_content())
+        self._refresh_export_enabled()
         if status:
             self.ai_status.SetLabel(status)
         elif not busy:
@@ -2164,12 +2735,22 @@ class IssueDetailDialog(wx.Dialog):
             self.ai_status.SetLabel(_("Could not load AI libraries."))
         wx.MessageBox(msg, _("Error"), wx.OK | wx.ICON_ERROR, self)
 
+    def _select_page(self, key: str) -> None:
+        if self._notebook is None:
+            self._apply_active_page(key)
+            return
+        try:
+            idx = self._page_keys.index(key)
+        except ValueError:
+            return
+        if self._notebook.GetSelection() != idx:
+            self._notebook.ChangeSelection(idx)
+        self._apply_active_page(key)
+
     def _on_explain(self, _event: wx.Event) -> None:
         if self._busy:
             return
-        self._fix_proposal = None
-        self._batch_proposal = None
-        self._set_apply_fix_enabled(False)
+        self._select_page(self._PAGE_EXPLAIN)
         cancel = self._open_ai_progress(
             _("Explain with AI"), _("Loading AI libraries…")
         )
@@ -2212,6 +2793,7 @@ class IssueDetailDialog(wx.Dialog):
     def _on_fix(self, _event: wx.Event) -> None:
         if self._busy or not self._show_fix:
             return
+        self._select_page(self._PAGE_FIX)
         self._fix_proposal = None
         self._batch_proposal = None
         self._set_apply_fix_enabled(False)
@@ -2256,6 +2838,7 @@ class IssueDetailDialog(wx.Dialog):
             return
         if self._matching_like_this <= 1:
             return
+        self._select_page(self._PAGE_FIX)
         self._fix_proposal = None
         self._batch_proposal = None
         self._set_apply_fix_enabled(False)
@@ -2296,18 +2879,30 @@ class IssueDetailDialog(wx.Dialog):
         threading.Thread(target=work, daemon=True).start()
 
     def _on_ask_followup(self, _event: wx.Event) -> None:
-        if self._busy or self._session is None:
+        channel = self._ai_channel_key()
+        if channel == "fix":
+            session = self._fix_session
+            question_ctrl = getattr(self, "fix_followup_ctrl", None)
+            page = self._PAGE_FIX
+        else:
+            session = self._explain_session
+            question_ctrl = self.followup_ctrl
+            page = self._PAGE_EXPLAIN
+        if self._busy or session is None or question_ctrl is None:
             return
-        question = self.followup_ctrl.GetValue().strip()
+        question = question_ctrl.GetValue().strip()
         if not question:
             return
+        self._select_page(page)
         cancel = self._open_ai_progress(_("Follow-up"), _("Loading AI libraries…"))
         self._set_busy(True, _("Loading AI libraries…"))
-        session = self._session
         status_cb = self._ai_status_callback
+        issue = self._issue
+        check_result = self._check_result
 
         def work() -> None:
             from .ai.explain import ExplainResult, ask_followup
+            from .ai.fix import FixResult, ask_fix_followup
             from .ai.litellm_client import preload_litellm
 
             ok, detail = preload_litellm()
@@ -2327,28 +2922,54 @@ class IssueDetailDialog(wx.Dialog):
 
             wx.CallAfter(_thinking)
             try:
-                out = ask_followup(
-                    session,
-                    question,
-                    cancel_event=cancel,
-                    status_callback=status_cb,
-                )
+                if channel == "fix":
+                    out = ask_fix_followup(
+                        session,
+                        question,
+                        issue=issue,
+                        check_result=check_result,
+                        cancel_event=cancel,
+                        status_callback=status_cb,
+                    )
+                else:
+                    out = ask_followup(
+                        session,
+                        question,
+                        cancel_event=cancel,
+                        status_callback=status_cb,
+                    )
             except Exception as exc:
-                out = ExplainResult(
-                    ok=False,
-                    error_key="provider_error",
-                    text=str(exc),
-                    session=session,
-                )
+                if channel == "fix":
+                    out = FixResult(
+                        ok=False,
+                        error_key="provider_error",
+                        text=str(exc),
+                        session=session,
+                    )
+                else:
+                    out = ExplainResult(
+                        ok=False,
+                        error_key="provider_error",
+                        text=str(exc),
+                        session=session,
+                    )
             # Prefer showing a completed reply over a late cancel race with the
             # progress dialog (Pulse can flip to cancelled while the reply lands).
             if cancel.is_set() and not (out.ok and (out.text or "").strip()):
                 return
             try:
-                wx.PostEvent(
-                    self,
-                    ExplainAiEvent(kind="followup", result=out, question=question),
-                )
+                if channel == "fix":
+                    wx.PostEvent(
+                        self,
+                        FixAiEvent(result=out, question=question),
+                    )
+                else:
+                    wx.PostEvent(
+                        self,
+                        ExplainAiEvent(
+                            kind="followup", result=out, question=question
+                        ),
+                    )
             except RuntimeError:
                 return
 
@@ -2368,19 +2989,19 @@ class IssueDetailDialog(wx.Dialog):
                 self.ai_status.SetLabel(_("Cancelled."))
                 return
             msg = error_message_for_key(result.error_key, detail=result.text or "")
-            self._set_ai_content(msg, plain=True, focus=True)
+            self._set_ai_content(msg, plain=True, focus=True, channel="explain")
             self.ai_status.SetLabel(_("Could not explain this issue."))
             if result.session is not None:
-                self._session = result.session
+                self._explain_session = result.session
                 self.ask_btn.Enable(True)
             return
 
-        self._session = result.session
+        self._explain_session = result.session
         self.ask_btn.Enable(True)
         if kind == "followup":
             question = getattr(event, "question", "") or ""
-            self._ai_markdown = append_followup_markdown(
-                self._ai_markdown,
+            md = append_followup_markdown(
+                self._explain_markdown,
                 heading=_("Follow-up"),
                 question=question,
                 answer=result.text or "",
@@ -2388,7 +3009,6 @@ class IssueDetailDialog(wx.Dialog):
             # Defer SetPage until after ProgressDialog teardown / Layout so Edge
             # WebView2 reliably paints the updated document (follow-ups were
             # landing in markdown but staying off-screen or unpainted).
-            md = self._ai_markdown
 
             def _paint_followup() -> None:
                 if not self._ai_dialog_alive():
@@ -2399,7 +3019,7 @@ class IssueDetailDialog(wx.Dialog):
                 except RuntimeError:
                     return
                 # Paint without diving Win32 focus into Edge (see close hang).
-                self._set_ai_content(md, focus=False)
+                self._set_ai_content(md, focus=False, channel="explain")
                 self.followup_ctrl.SetValue("")
                 self.ai_status.SetLabel(_("Done"))
                 # Scroll in-document via page script / one JS pass only.
@@ -2425,7 +3045,7 @@ class IssueDetailDialog(wx.Dialog):
                 pass
             return
 
-        self._set_ai_content(result.text or "", focus=True)
+        self._set_ai_content(result.text or "", focus=True, channel="explain")
         try:
             from .telemetry import log_ai_explain
 
@@ -2436,8 +3056,10 @@ class IssueDetailDialog(wx.Dialog):
 
     def _on_fix_ai_event(self, event: FixAiEvent) -> None:
         from .ai.fix import error_message_for_key
+        from .ai.markdown_html import append_followup_markdown
 
         result = event.result
+        question = (getattr(event, "question", "") or "").strip()
         self._close_ai_progress()
         self._set_busy(False)
         self._refresh_ai_model_display()
@@ -2446,21 +3068,84 @@ class IssueDetailDialog(wx.Dialog):
                 self.ai_status.SetLabel(_("Cancelled."))
                 return
             msg = error_message_for_key(result.error_key, detail=result.text or "")
-            self._fix_proposal = None
-            self._batch_proposal = None
-            self._set_apply_fix_enabled(False)
-            self._set_ai_content(msg, plain=True, focus=True)
-            self.ai_status.SetLabel(_("Could not propose a fix."))
+            if not question:
+                self._fix_proposal = None
+                self._batch_proposal = None
+                self._set_apply_fix_enabled(False)
+            self._set_ai_content(msg, plain=True, focus=True, channel="fix")
+            self.ai_status.SetLabel(
+                _("Could not continue the fix conversation.")
+                if question
+                else _("Could not propose a fix.")
+            )
             if result.session is not None:
-                self._session = result.session
-                self.ask_btn.Enable(True)
+                self._fix_session = result.session
+                if hasattr(self, "fix_ask_btn"):
+                    self.fix_ask_btn.Enable(True)
             return
 
-        self._session = result.session
-        self.ask_btn.Enable(True)
+        self._fix_session = result.session
+        if hasattr(self, "fix_ask_btn"):
+            self.fix_ask_btn.Enable(True)
+
+        if question:
+            # Follow-up on the proposed fix (e.g. supply a real ISBN).
+            if result.proposal is not None:
+                self._fix_proposal = result.proposal
+                self._batch_proposal = None
+            elif result.batch is not None:
+                self._batch_proposal = result.batch
+                self._fix_proposal = None
+            md = append_followup_markdown(
+                self._fix_markdown,
+                heading=_("Follow-up"),
+                question=question,
+                answer=result.text or "",
+            )
+
+            def _paint_fix_followup() -> None:
+                if not self._ai_dialog_alive():
+                    return
+                try:
+                    if not self:
+                        return
+                except RuntimeError:
+                    return
+                self._set_ai_content(md, focus=False, channel="fix")
+                if hasattr(self, "fix_followup_ctrl"):
+                    self.fix_followup_ctrl.SetValue("")
+                if result.proposal is not None or result.batch is not None:
+                    self._set_apply_fix_enabled(True)
+                    self.ai_status.SetLabel(
+                        _("Fix updated. Review, then Apply fix and validate.")
+                    )
+                else:
+                    self.ai_status.SetLabel(_("Done"))
+                if self._ai_output_is_webview and _markdown_has_latest_followup(md):
+                    wx.CallLater(
+                        120,
+                        lambda: self._ai_dialog_alive()
+                        and _webview_run_script(
+                            self.ai_output, _WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS
+                        ),
+                    )
+                try:
+                    _try_set_focus(getattr(self, "fix_followup_ctrl", None))
+                except RuntimeError:
+                    pass
+
+            wx.CallAfter(_paint_fix_followup)
+            try:
+                from .telemetry import log_ai_fix
+
+                log_ai_fix(applied=False)
+            except Exception:
+                pass
+            return
+
         self._fix_proposal = result.proposal
         self._batch_proposal = result.batch
-        self._set_ai_content(result.text or "", focus=True)
+        self._set_ai_content(result.text or "", focus=True, channel="fix")
         try:
             from .telemetry import log_ai_fix
 
@@ -2805,6 +3490,9 @@ class AiOverviewDialog(wx.Dialog):
             return
         if url.startswith(("http://", "https://", "mailto:")):
             event.Veto()
+            if url.startswith(("http://", "https://")) and is_kb_url(url):
+                wx.CallAfter(open_knowledge_base_url, self, url)
+                return
             try:
                 webbrowser.open(url)
             except OSError:
@@ -3305,6 +3993,111 @@ class AiOverviewDialog(wx.Dialog):
             return False
 
 
+class AddLanguageDialog(wx.Dialog):
+    """Choose a preset or custom UI language to AI-translate."""
+
+    def __init__(self, parent: wx.Window) -> None:
+        from .i18n_ai import UI_LANGUAGE_PRESETS
+
+        super().__init__(
+            parent,
+            title=_("Add language"),
+            style=wx.DEFAULT_DIALOG_STYLE,
+        )
+        self._presets = list(UI_LANGUAGE_PRESETS)
+        root = wx.BoxSizer(wx.VERTICAL)
+
+        intro = wx.StaticText(
+            self,
+            label=_(
+                "Choose a language CheckMate does not ship. AI will translate "
+                "the UI strings and save them on this computer."
+            ),
+        )
+        intro.Wrap(420)
+        root.Add(intro, 0, wx.ALL, 12)
+
+        choice_row = wx.BoxSizer(wx.HORIZONTAL)
+        choice_row.Add(
+            wx.StaticText(self, label=_("Language:")),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            8,
+        )
+        labels = [f"{native} ({display})" for _c, native, display in self._presets]
+        labels.append(_("Custom…"))
+        self._custom_index = len(labels) - 1
+        self.lang_choice = wx.Choice(self, choices=labels)
+        self.lang_choice.SetSelection(0)
+        self.lang_choice.SetName(_("Language"))
+        self.lang_choice.Bind(wx.EVT_CHOICE, self._on_choice)
+        choice_row.Add(self.lang_choice, 1, wx.EXPAND)
+        root.Add(choice_row, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, 12)
+
+        self.custom_panel = wx.Panel(self)
+        custom_sizer = wx.FlexGridSizer(3, 2, 8, 8)
+        custom_sizer.AddGrowableCol(1, 1)
+        custom_sizer.Add(
+            wx.StaticText(self.custom_panel, label=_("Code:")),
+            0,
+            wx.ALIGN_CENTER_VERTICAL,
+        )
+        self.code_ctrl = wx.TextCtrl(self.custom_panel)
+        self.code_ctrl.SetHint(_("e.g. it, zh-hans"))
+        self.code_ctrl.SetName(_("Language code"))
+        custom_sizer.Add(self.code_ctrl, 1, wx.EXPAND)
+        custom_sizer.Add(
+            wx.StaticText(self.custom_panel, label=_("Menu name:")),
+            0,
+            wx.ALIGN_CENTER_VERTICAL,
+        )
+        self.native_ctrl = wx.TextCtrl(self.custom_panel)
+        self.native_ctrl.SetHint(_("Native name shown in the Language menu"))
+        self.native_ctrl.SetName(_("Menu name"))
+        custom_sizer.Add(self.native_ctrl, 1, wx.EXPAND)
+        custom_sizer.Add(
+            wx.StaticText(self.custom_panel, label=_("English name:")),
+            0,
+            wx.ALIGN_CENTER_VERTICAL,
+        )
+        self.display_ctrl = wx.TextCtrl(self.custom_panel)
+        self.display_ctrl.SetHint(_("English name for AI prompts"))
+        self.display_ctrl.SetName(_("English name"))
+        custom_sizer.Add(self.display_ctrl, 1, wx.EXPAND)
+        self.custom_panel.SetSizer(custom_sizer)
+        root.Add(self.custom_panel, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, 12)
+
+        btns = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
+        if btns:
+            root.Add(btns, 0, wx.ALL | wx.EXPAND, 12)
+        self.SetSizer(root)
+        self._on_choice(None)
+        self.Fit()
+        self.CentreOnParent()
+
+    def _on_choice(self, _event: wx.CommandEvent | None) -> None:
+        custom = self.lang_choice.GetSelection() == self._custom_index
+        self.custom_panel.Enable(custom)
+        self.custom_panel.Show(custom)
+        self.Layout()
+        self.Fit()
+
+    def selection(self) -> tuple[str, str, str] | None:
+        """Return (code, native_name, display_name) or None if invalid."""
+        sel = self.lang_choice.GetSelection()
+        if sel < 0:
+            return None
+        if sel == self._custom_index:
+            code = _normalize_lang_code(self.code_ctrl.GetValue())
+            native = self.native_ctrl.GetValue().strip()
+            display = self.display_ctrl.GetValue().strip()
+            if not code or not native or not display:
+                return None
+            return code, native, display
+        code, native, display = self._presets[sel]
+        return code, native, display
+
+
 class AboutDialog(wx.Dialog):
     """About box with multiple clickable links (native AboutBox allows only one)."""
 
@@ -3447,9 +4240,7 @@ class MainFrame(wx.Frame):
         self._overview_progress: wx.ProgressDialog | None = None
         self._overview_progress_timer: wx.Timer | None = None
         self.menu_ai_overview: wx.MenuItem | None = None
-        self.menu_ai_features: wx.MenuItem | None = None
-        self.menu_show_issues_always: wx.MenuItem | None = None
-        self.menu_sounds: wx.MenuItem | None = None
+        self.menu_settings: wx.MenuItem | None = None
         self._lang_menu_items: dict[str, wx.MenuItem] = {}
         self._issues_visible = True
         self._issues_height_delta = 0
@@ -4051,37 +4842,13 @@ class MainFrame(wx.Frame):
             wx.ID_ANY, _("&Re-check publication\tF5")
         )
         tools_menu.AppendSeparator()
-        self.menu_show_issues_always = tools_menu.AppendCheckItem(
-            wx.ID_ANY, _("Show &issues always")
+        self.menu_settings = tools_menu.Append(
+            wx.ID_PREFERENCES, _("&Settings…")
         )
-        self.menu_show_issues_always.Check(show_issues_always())
-        self.menu_show_issues_always.SetHelp(
+        self.menu_settings.SetHelp(
             _(
-                "When checked, open the issues list automatically after a check "
-                "that finds issues (instead of pressing Show issues)"
-            )
-        )
-        self.menu_sounds = tools_menu.AppendCheckItem(
-            wx.ID_ANY, _("Play completion &sounds")
-        )
-        self.menu_sounds.Check(sounds_enabled())
-        self.menu_sounds.SetHelp(
-            _(
-                "Play a short sound when a check finishes "
-                "(different tones for passed and failed)"
-            )
-        )
-        tools_menu.AppendSeparator()
-        self.menu_ai_features = tools_menu.AppendCheckItem(
-            wx.ID_ANY, _("Enable &AI features")
-        )
-        ai_available = fido_settings_present()
-        self.menu_ai_features.Enable(ai_available)
-        self.menu_ai_features.Check(ai_available and ai_features_enabled())
-        self.menu_ai_features.SetHelp(
-            _(
-                "Show or hide AI features when FIDO AI is available "
-                "(useful for training)"
+                "General preferences and checker validation profiles "
+                "(PDF/UA, EPUBCheck)"
             )
         )
         tools_menu.AppendSeparator()
@@ -4096,7 +4863,8 @@ class MainFrame(wx.Frame):
         lang_menu = wx.Menu()
         self._lang_menu_items = {}
         current = get_language()
-        for code, label in LANGUAGES.items():
+        languages = effective_languages()
+        for code, label in languages.items():
             item = lang_menu.AppendRadioItem(wx.ID_ANY, label)
             self._lang_menu_items[code] = item
             if code == current:
@@ -4106,9 +4874,55 @@ class MainFrame(wx.Frame):
                 lambda _e, lang=code: self.on_language_selected(lang),
                 item,
             )
+        customs = custom_language_codes()
+        if customs:
+            lang_menu.AppendSeparator()
+            for code in customs:
+                native = languages.get(code, code)
+                manage = wx.Menu()
+                update_item = manage.Append(wx.ID_ANY, _("Update translations…"))
+                export_item = manage.Append(wx.ID_ANY, _("Export…"))
+                remove_item = manage.Append(wx.ID_ANY, _("Remove…"))
+                self.Bind(
+                    wx.EVT_MENU,
+                    lambda _e, lang=code: self.on_update_custom_language(lang),
+                    update_item,
+                )
+                self.Bind(
+                    wx.EVT_MENU,
+                    lambda _e, lang=code: self.on_export_custom_language(lang),
+                    export_item,
+                )
+                self.Bind(
+                    wx.EVT_MENU,
+                    lambda _e, lang=code: self.on_remove_custom_language(lang),
+                    remove_item,
+                )
+                lang_menu.AppendSubMenu(
+                    manage,
+                    _("Manage {name}…").format(name=native),
+                )
+        lang_menu.AppendSeparator()
+        self.menu_add_language = lang_menu.Append(wx.ID_ANY, _("&Add language…"))
+        self.menu_import_language = lang_menu.Append(
+            wx.ID_ANY, _("&Import language…")
+        )
         menubar.Append(lang_menu, _("&Language"))
 
         help_menu = wx.Menu()
+        self.menu_knowledge_base = help_menu.Append(
+            wx.ID_ANY, _("&Knowledge Base…")
+        )
+        self.menu_knowledge_base.SetHelp(
+            _("Open the offline DAISY Accessible Publishing Knowledge Base")
+        )
+        self.menu_update_kb = help_menu.Append(
+            wx.ID_ANY, _("&Update Knowledge Base…")
+        )
+        self.menu_update_kb.SetHelp(
+            _("Download or refresh Knowledge Base articles from kb.daisy.org")
+        )
+        help_menu.AppendSeparator()
         self.menu_open_app_log = help_menu.Append(
             wx.ID_ANY, _("Open debugging &log…")
         )
@@ -4230,19 +5044,17 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_copy_summary, self.menu_copy)
         self.Bind(wx.EVT_MENU, self.on_clear_results, self.menu_clear)
         self.Bind(wx.EVT_MENU, self.on_check, self.menu_check)
-        self.Bind(
-            wx.EVT_MENU,
-            self.on_toggle_show_issues_always,
-            self.menu_show_issues_always,
-        )
-        self.Bind(wx.EVT_MENU, self.on_toggle_sounds, self.menu_sounds)
-        self.Bind(wx.EVT_MENU, self.on_toggle_ai_features, self.menu_ai_features)
+        self.Bind(wx.EVT_MENU, self.on_settings, self.menu_settings)
         self.Bind(wx.EVT_MENU, self.on_view_full_log, self.menu_view_log)
         self.Bind(wx.EVT_MENU, self.on_view_changelog, self.menu_view_changelog)
         self.Bind(wx.EVT_MENU, self.on_check_updates, self.menu_update)
         self.Bind(wx.EVT_MENU, self.on_reinstall_checker, self.menu_install)
+        self.Bind(wx.EVT_MENU, self.on_knowledge_base, self.menu_knowledge_base)
+        self.Bind(wx.EVT_MENU, self.on_update_knowledge_base, self.menu_update_kb)
         self.Bind(wx.EVT_MENU, self.on_open_app_log, self.menu_open_app_log)
         self.Bind(wx.EVT_MENU, self.on_about, self.menu_about)
+        self.Bind(wx.EVT_MENU, self.on_add_language, self.menu_add_language)
+        self.Bind(wx.EVT_MENU, self.on_import_language, self.menu_import_language)
         self.Bind(wx.EVT_MENU, lambda _e: self.Close(), id=wx.ID_EXIT)
         self.SetAcceleratorTable(
             wx.AcceleratorTable(
@@ -4255,6 +5067,371 @@ class MainFrame(wx.Frame):
             return
         set_language(lang)
         self._apply_ui_language()
+        self._maybe_show_ai_translation_warning(lang)
+
+    def _maybe_show_ai_translation_warning(self, lang: str) -> None:
+        """One-time notice when switching away from English."""
+        code = _normalize_lang_code(lang)
+        if not code or code.split("-", 1)[0] == "en":
+            return
+        if ai_translation_warning_shown():
+            return
+        wx.MessageBox(
+            _(
+                "Some CheckMate translations are generated by AI "
+                "(including Knowledge Base articles and languages added with AI) "
+                "and may contain mistakes."
+            ),
+            _("Language"),
+            wx.OK | wx.ICON_INFORMATION,
+            self,
+        )
+        mark_ai_translation_warning_shown()
+
+    def _ai_required_for_language_tools(self) -> bool:
+        if not ai_features_enabled():
+            wx.MessageBox(
+                _(
+                    "AI features must be enabled in Settings to add or update "
+                    "UI languages."
+                ),
+                _("Add language"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return False
+        if not fido_settings_present():
+            wx.MessageBox(
+                _(
+                    "Configure FIDO AI settings before translating UI languages."
+                ),
+                _("Add language"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return False
+        return True
+
+    def _run_ui_translation(
+        self,
+        *,
+        code: str,
+        native_name: str,
+        display_name: str,
+        force: bool,
+        title: str,
+    ) -> bool:
+        from .ai.explain import error_message_for_key
+        from .i18n_ai import ensure_ui_translation
+
+        cancel_event = threading.Event()
+        dlg = wx.ProgressDialog(
+            title,
+            _("Preparing…"),
+            maximum=100,
+            parent=self,
+            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE | wx.PD_CAN_ABORT,
+        )
+        result: dict = {"tr": None, "abort": False}
+
+        def progress(msg: str) -> None:
+            if result["abort"]:
+                return
+            wx.CallAfter(_pulse_ui_translate, dlg, msg, result, cancel_event)
+
+        def worker() -> None:
+            try:
+                result["tr"] = ensure_ui_translation(
+                    code=code,
+                    native_name=native_name,
+                    display_name=display_name,
+                    force=force,
+                    progress=progress,
+                    cancel_event=cancel_event,
+                )
+            except Exception as exc:  # noqa: BLE001
+                from .i18n_ai import UiTranslationResult
+
+                result["tr"] = UiTranslationResult(
+                    error_key="provider_error", detail=str(exc)
+                )
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+        while t.is_alive():
+            wx.MilliSleep(50)
+            wx.YieldIfNeeded()
+            if dlg.WasCancelled():
+                result["abort"] = True
+                cancel_event.set()
+        try:
+            dlg.Destroy()
+        except Exception:
+            pass
+
+        tr = result.get("tr")
+        if tr is None:
+            return False
+        if tr.error_key == "cancelled":
+            return False
+        if not tr.ok:
+            msg = error_message_for_key(tr.error_key, detail=tr.detail or "")
+            if tr.error_key in ("builtin_code", "exists", "install_failed"):
+                msg = _(
+                    "Could not save the language catalog ({detail})."
+                ).format(detail=tr.error_key)
+            wx.MessageBox(msg, title, wx.OK | wx.ICON_ERROR, self)
+            return False
+        return True
+
+    def on_add_language(self, _event: wx.CommandEvent | None = None) -> None:
+        if not self._ai_required_for_language_tools():
+            return
+        dlg = AddLanguageDialog(self)
+        try:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            sel = dlg.selection()
+        finally:
+            dlg.Destroy()
+        if not sel:
+            wx.MessageBox(
+                _("Enter a valid language code, menu name, and English name."),
+                _("Add language"),
+                wx.OK | wx.ICON_WARNING,
+                self,
+            )
+            return
+        code, native, display = sel
+        if is_builtin_language(code):
+            wx.MessageBox(
+                _("“{code}” is already included with CheckMate.").format(
+                    code=code
+                ),
+                _("Add language"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        force = False
+        if is_custom_language(code):
+            answer = wx.MessageBox(
+                _(
+                    "A custom catalog for “{code}” already exists. "
+                    "Update its translations?"
+                ).format(code=code),
+                _("Add language"),
+                wx.YES_NO | wx.ICON_QUESTION,
+                self,
+            )
+            if answer != wx.YES:
+                return
+            force = False
+        if not self._run_ui_translation(
+            code=code,
+            native_name=native,
+            display_name=display,
+            force=force,
+            title=_("Adding language"),
+        ):
+            return
+        set_language(code)
+        self._apply_ui_language()
+        self._maybe_show_ai_translation_warning(code)
+
+    def on_update_custom_language(self, lang: str) -> None:
+        if not self._ai_required_for_language_tools():
+            return
+        catalog = read_custom_catalog(lang)
+        if catalog is None:
+            wx.MessageBox(
+                _("No custom catalog found for “{code}”.").format(code=lang),
+                _("Update translations"),
+                wx.OK | wx.ICON_WARNING,
+                self,
+            )
+            return
+        if not self._run_ui_translation(
+            code=lang,
+            native_name=str(catalog.get("native_name") or lang),
+            display_name=str(
+                catalog.get("display_name") or language_display_name(lang)
+            ),
+            force=False,
+            title=_("Updating translations"),
+        ):
+            return
+        if get_language() == lang:
+            self._apply_ui_language()
+        else:
+            self._build_menubar()
+        wx.MessageBox(
+            _("Translations for {name} were updated.").format(
+                name=catalog.get("native_name") or lang
+            ),
+            _("Update translations"),
+            wx.OK | wx.ICON_INFORMATION,
+            self,
+        )
+
+    def on_export_custom_language(self, lang: str) -> None:
+        catalog = read_custom_catalog(lang)
+        if catalog is None:
+            wx.MessageBox(
+                _("No custom catalog found for “{code}”.").format(code=lang),
+                _("Export language"),
+                wx.OK | wx.ICON_WARNING,
+                self,
+            )
+            return
+        default_name = f"checkmate-ui-{lang}.json"
+        with wx.FileDialog(
+            self,
+            _("Export language catalog"),
+            defaultFile=default_name,
+            wildcard=_("JSON files (*.json)|*.json"),
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        ) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            path = Path(dlg.GetPath())
+        try:
+            export_custom_language(lang, path)
+        except (OSError, ValueError) as exc:
+            wx.MessageBox(
+                _("Could not export the language catalog:\n{detail}").format(
+                    detail=exc
+                ),
+                _("Export language"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+        wx.MessageBox(
+            _("Exported {name} to:\n{path}").format(
+                name=catalog.get("native_name") or lang, path=path
+            ),
+            _("Export language"),
+            wx.OK | wx.ICON_INFORMATION,
+            self,
+        )
+
+    def on_remove_custom_language(self, lang: str) -> None:
+        catalog = read_custom_catalog(lang)
+        name = (catalog or {}).get("native_name") or lang
+        answer = wx.MessageBox(
+            _("Remove the custom language “{name}” from this computer?").format(
+                name=name
+            ),
+            _("Remove language"),
+            wx.YES_NO | wx.ICON_QUESTION,
+            self,
+        )
+        if answer != wx.YES:
+            return
+        try:
+            remove_custom_language(lang)
+        except ValueError as exc:
+            wx.MessageBox(
+                _("Could not remove the language:\n{detail}").format(detail=exc),
+                _("Remove language"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+        self._apply_ui_language()
+
+    def on_import_language(self, _event: wx.CommandEvent | None = None) -> None:
+        with wx.FileDialog(
+            self,
+            _("Import language catalog"),
+            wildcard=_("JSON files (*.json)|*.json"),
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+        ) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            path = Path(dlg.GetPath())
+        try:
+            raw = path.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            code = _normalize_lang_code(str((data or {}).get("code", "")))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            wx.MessageBox(
+                _("This file is not a valid CheckMate UI language catalog."),
+                _("Import language"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+        overwrite = False
+        if code and is_custom_language(code):
+            answer = wx.MessageBox(
+                _(
+                    "A custom catalog for “{code}” already exists. Overwrite it?"
+                ).format(code=code),
+                _("Import language"),
+                wx.YES_NO | wx.ICON_QUESTION,
+                self,
+            )
+            if answer != wx.YES:
+                return
+            overwrite = True
+        try:
+            installed = import_custom_language(path, overwrite=overwrite)
+        except ValueError as exc:
+            key = str(exc)
+            if key == "builtin_code":
+                msg = _(
+                    "Cannot import over a built-in CheckMate language."
+                )
+            elif key == "exists":
+                msg = _("A catalog for this language already exists.")
+            elif key in (
+                "invalid_format",
+                "invalid_catalog",
+                "invalid_version",
+                "invalid_code",
+                "missing_names",
+                "empty_strings",
+            ):
+                msg = _(
+                    "This file is not a valid CheckMate UI language catalog."
+                )
+            else:
+                msg = _("Could not import the language catalog:\n{detail}").format(
+                    detail=key
+                )
+            wx.MessageBox(msg, _("Import language"), wx.OK | wx.ICON_ERROR, self)
+            return
+        except (OSError, json.JSONDecodeError) as exc:
+            wx.MessageBox(
+                _("Could not import the language catalog:\n{detail}").format(
+                    detail=exc
+                ),
+                _("Import language"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+
+        name = language_display_name(installed)
+        catalog = read_custom_catalog(installed)
+        if catalog:
+            name = str(catalog.get("native_name") or name)
+        switch = wx.MessageBox(
+            _(
+                "Imported “{name}”. Switch CheckMate to this language now?"
+            ).format(name=name),
+            _("Import language"),
+            wx.YES_NO | wx.ICON_QUESTION,
+            self,
+        )
+        if switch == wx.YES:
+            set_language(installed)
+            self._apply_ui_language()
+            self._maybe_show_ai_translation_warning(installed)
+        else:
+            self._build_menubar()
 
     def _apply_ui_language(self) -> None:
         """Refresh visible UI strings after a language change."""
@@ -5256,20 +6433,18 @@ class MainFrame(wx.Frame):
         update_settings(unique_codes=bool(self.unique_codes_cb.GetValue()))
         self._populate_issues()
 
-    def on_toggle_ai_features(self, _event: wx.CommandEvent) -> None:
-        if not fido_settings_present():
-            return
-        update_settings(ai_features_enabled=bool(self.menu_ai_features.IsChecked()))
-        self._apply_ai_features_visibility()
+    def on_settings(self, _event: wx.CommandEvent) -> None:
+        from .settings_dialog import SettingsDialog
 
-    def on_toggle_show_issues_always(self, _event: wx.CommandEvent) -> None:
-        enabled = bool(self.menu_show_issues_always.IsChecked())
-        update_settings(show_issues_always=enabled)
-        # Apply immediately when turning on and a result already has issues.
-        self._update_show_issues_button()
-
-    def on_toggle_sounds(self, _event: wx.CommandEvent) -> None:
-        update_settings(sounds_enabled=bool(self.menu_sounds.IsChecked()))
+        prev_ai = ai_features_enabled()
+        with SettingsDialog(self) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            dlg.apply()
+        if ai_features_enabled() != prev_ai:
+            self._apply_ai_features_visibility()
+        else:
+            self._update_show_issues_button()
 
     def on_issues_list_focus(self, event: wx.FocusEvent) -> None:
         event.Skip()
@@ -5921,6 +7096,12 @@ class MainFrame(wx.Frame):
                 wx.OK | wx.ICON_ERROR,
                 self,
             )
+
+    def on_knowledge_base(self, _event: wx.CommandEvent) -> None:
+        open_knowledge_base_home(self)
+
+    def on_update_knowledge_base(self, _event: wx.CommandEvent) -> None:
+        run_kb_update_with_progress(self)
 
     def on_about(self, _event: wx.CommandEvent) -> None:
         with AboutDialog(self) as dlg:

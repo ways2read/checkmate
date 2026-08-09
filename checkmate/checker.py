@@ -17,6 +17,12 @@ from .paths import (
     verapdf_uses_bundled_copy,
 )
 from .publication import PublicationKind, classify_publication
+from .settings import (
+    DEFAULT_EPUBCHECK_PROFILE,
+    epubcheck_profile,
+    verapdf_flavour,
+    verapdf_flavour_label,
+)
 from .subprocess_util import format_elapsed, run_capturing
 from .updater import (
     EBRAILLE_TOOL,
@@ -95,6 +101,7 @@ def build_command(
     *,
     kind: PublicationKind,
     exploded: bool | None = None,
+    profile: str | None = None,
 ) -> list[str]:
     if exploded is None:
         exploded = is_exploded_path(target)
@@ -106,11 +113,30 @@ def build_command(
     ]
     if kind == PublicationKind.EBRAILLE:
         cmd.extend(["--profile", "ebraille"])
+    elif kind == PublicationKind.EPUB:
+        epub_profile = profile if profile is not None else epubcheck_profile()
+        if epub_profile and epub_profile != DEFAULT_EPUBCHECK_PROFILE:
+            cmd.extend(["--profile", epub_profile])
     if exploded:
         cmd.extend(["-mode", "exp"])
     cmd.extend(["--json", "-"])
     cmd.append(str(target))
     return cmd
+
+
+def _ensure_meta(result: CheckResult, *pairs: tuple[str, str]) -> CheckResult:
+    """Append missing ``extra_meta`` rows (does not replace existing labels)."""
+    existing = {label for label, _ in result.extra_meta}
+    for label, value in pairs:
+        if not value or label in existing:
+            continue
+        result.extra_meta.append((label, value))
+    return result
+
+
+def _ensure_validation_profile(result: CheckResult, profile: str) -> CheckResult:
+    """Ensure a Validation profile row is present for reports / result pane."""
+    return _ensure_meta(result, ("Validation profile", profile))
 
 
 def _location_from_loc_object(loc) -> str:
@@ -831,7 +857,7 @@ def parse_verapdf_output(
     data = _extract_json_object(stdout) or _extract_json_object(combined)
     if data is None:
         verdict = Verdict.PASSED if exit_code == 0 else Verdict.FAILED
-        return CheckResult(
+        result = CheckResult(
             verdict=verdict,
             raw_log=combined,
             exit_code=exit_code,
@@ -839,6 +865,7 @@ def parse_verapdf_output(
             if exit_code == 0
             else "Could not parse structured results; see the full log.",
         )
+        return _ensure_validation_profile(result, verapdf_flavour_label(flavour))
 
     extra_meta = _verapdf_extra_meta(data)
     version_from_json = ""
@@ -852,7 +879,7 @@ def parse_verapdf_output(
     exception = _verapdf_task_exception(data)
     if exception is not None:
         error_message = _verapdf_tool_error_message(exception, flavour=flavour)
-        return CheckResult(
+        result = CheckResult(
             verdict=Verdict.ERROR,
             raw_log=_compose_raw_log(
                 "\n".join(p for p in (stderr,) if p),
@@ -865,11 +892,12 @@ def parse_verapdf_output(
             extra_meta=display_meta,
             tool_version=version_from_json,
         )
+        return _ensure_validation_profile(result, verapdf_flavour_label(flavour))
 
     issues = _issues_from_verapdf_json(data)
     counts = _counts_from_verapdf_json(data, issues)
     verdict = _verdict_from_counts(counts, exit_code)
-    return CheckResult(
+    result = CheckResult(
         verdict=verdict,
         fatals=counts["fatals"],
         errors=counts["errors"],
@@ -887,6 +915,7 @@ def parse_verapdf_output(
         extra_meta=display_meta,
         tool_version=version_from_json,
     )
+    return _ensure_validation_profile(result, verapdf_flavour_label(flavour))
 
 
 def build_verapdf_command(
@@ -1046,8 +1075,10 @@ def run_check(
             )
 
     if kind == PublicationKind.PDF:
-        # Prefer PDF/UA-2; some files trigger an internal veraPDF NPE on UA-2,
-        # so fall back to PDF/UA-1 (still accessibility) when that happens.
+        # Honour Settings flavour (default PDF/UA-2). Some files trigger an
+        # internal veraPDF NPE on UA-2; fall back to PDF/UA-1 only when the
+        # user chose UA-2.
+        chosen_flavour = verapdf_flavour()
         label = f"Checking with {tool.display_name}…"
         _emit_progress(progress, label)
         try:
@@ -1055,7 +1086,7 @@ def run_check(
                 java=java,
                 jar=jar,
                 target=target,
-                flavour="ua2",
+                flavour=chosen_flavour,
                 progress=progress,
                 progress_label=label,
             )
@@ -1081,7 +1112,8 @@ def run_check(
             )
 
         if (
-            result.verdict == Verdict.ERROR
+            chosen_flavour == "ua2"
+            and result.verdict == Verdict.ERROR
             and result.error_message
             and "internal error" in result.error_message.lower()
         ):
@@ -1119,6 +1151,11 @@ def run_check(
     label = f"Checking with {tool.display_name}…"
     _emit_progress(progress, label)
 
+    if kind == PublicationKind.EBRAILLE:
+        validation_profile = "ebraille"
+    else:
+        validation_profile = epubcheck_profile()
+
     with tempfile.TemporaryDirectory(prefix="ebraille-gui-") as tmp:
         json_path = Path(tmp) / "report.json"
         cmd = [
@@ -1129,6 +1166,11 @@ def run_check(
         ]
         if kind == PublicationKind.EBRAILLE:
             cmd.extend(["--profile", "ebraille"])
+        elif (
+            kind == PublicationKind.EPUB
+            and validation_profile != DEFAULT_EPUBCHECK_PROFILE
+        ):
+            cmd.extend(["--profile", validation_profile])
         if exploded:
             cmd.extend(["-mode", "exp"])
         cmd.extend(["--json", str(json_path), str(target)])
@@ -1149,10 +1191,13 @@ def run_check(
             )
         except subprocess.TimeoutExpired:
             return _stamp_result(
-                CheckResult(
-                    verdict=Verdict.ERROR,
-                    command=cmd,
-                    error_message="Check timed out after 10 minutes.",
+                _ensure_validation_profile(
+                    CheckResult(
+                        verdict=Verdict.ERROR,
+                        command=cmd,
+                        error_message="Check timed out after 10 minutes.",
+                    ),
+                    validation_profile,
                 ),
                 target=target,
                 tool=tool,
@@ -1160,10 +1205,13 @@ def run_check(
             )
         except OSError as exc:
             return _stamp_result(
-                CheckResult(
-                    verdict=Verdict.ERROR,
-                    command=cmd,
-                    error_message=f"Failed to start Java: {exc}",
+                _ensure_validation_profile(
+                    CheckResult(
+                        verdict=Verdict.ERROR,
+                        command=cmd,
+                        error_message=f"Failed to start Java: {exc}",
+                    ),
+                    validation_profile,
                 ),
                 target=target,
                 tool=tool,
@@ -1191,17 +1239,20 @@ def run_check(
             )
             verdict = _verdict_from_counts(counts, proc.returncode)
             epub_result = _stamp_result(
-                CheckResult(
-                    verdict=verdict,
-                    fatals=counts["fatals"],
-                    errors=counts["errors"],
-                    warnings=counts["warnings"],
-                    infos=counts["infos"],
-                    usages=counts["usages"],
-                    issues=issues,
-                    raw_log=_compose_raw_log(raw_log, data=data, issues=issues),
-                    exit_code=proc.returncode,
-                    command=cmd,
+                _ensure_validation_profile(
+                    CheckResult(
+                        verdict=verdict,
+                        fatals=counts["fatals"],
+                        errors=counts["errors"],
+                        warnings=counts["warnings"],
+                        infos=counts["infos"],
+                        usages=counts["usages"],
+                        issues=issues,
+                        raw_log=_compose_raw_log(raw_log, data=data, issues=issues),
+                        exit_code=proc.returncode,
+                        command=cmd,
+                    ),
+                    validation_profile,
                 ),
                 target=target,
                 tool=tool,
@@ -1220,7 +1271,10 @@ def run_check(
         ):
             result.command = cmd
             epub_result = _stamp_result(
-                result, target=target, tool=tool, checked_at=checked_at
+                _ensure_validation_profile(result, validation_profile),
+                target=target,
+                tool=tool,
+                checked_at=checked_at,
             )
             return _with_optional_ace(
                 epub_result, target=target, kind=kind, progress=progress
@@ -1239,17 +1293,19 @@ def run_check(
             else:
                 log = note
             epub_result = _stamp_result(
-                CheckResult(
-                    verdict=verdict,
-                    fatals=summary["fatals"],
-                    errors=summary["errors"],
-                    warnings=summary["warnings"],
-                    infos=summary["infos"],
-                    usages=summary["usages"],
-                    issues=[],
-                    raw_log=log,
-                    exit_code=proc.returncode,
-                    command=cmd,
+                _ensure_validation_profile(
+                    CheckResult(
+                        verdict=verdict,
+                        fatals=summary["fatals"],
+                        errors=summary["errors"],
+                        warnings=summary["warnings"],
+                        infos=summary["infos"],
+                        usages=summary["usages"],
+                        raw_log=log,
+                        exit_code=proc.returncode,
+                        command=cmd,
+                    ),
+                    validation_profile,
                 ),
                 target=target,
                 tool=tool,
@@ -1261,7 +1317,10 @@ def run_check(
 
         result.command = cmd
         epub_result = _stamp_result(
-            result, target=target, tool=tool, checked_at=checked_at
+            _ensure_validation_profile(result, validation_profile),
+            target=target,
+            tool=tool,
+            checked_at=checked_at,
         )
         return _with_optional_ace(
             epub_result, target=target, kind=kind, progress=progress
@@ -1327,6 +1386,10 @@ def _merge_epubcheck_and_ace(
             message=issue.message,
             location=issue.location,
             source=issue.source or EPUBCHECK_TOOL.display_name,
+            help_url=issue.help_url,
+            help_title=issue.help_title,
+            help_text=issue.help_text,
+            impact=issue.impact,
         )
         for issue in epub_result.issues
     ]
@@ -1337,6 +1400,10 @@ def _merge_epubcheck_and_ace(
             message=issue.message,
             location=issue.location,
             source=issue.source or ACE_DISPLAY_NAME,
+            help_url=issue.help_url,
+            help_title=issue.help_title,
+            help_text=issue.help_text,
+            impact=issue.impact,
         )
         for issue in ace_result.issues
     ]
@@ -1402,6 +1469,8 @@ def _merge_epubcheck_and_ace(
         extra_meta.append(("EPUBCheck version", epub_ver))
     if ace_ver:
         extra_meta.append(("Ace version", ace_ver))
+    if not any(label == "Ace rules" for label, _ in extra_meta):
+        extra_meta.append(("Ace rules", "Full axe-core ruleset"))
 
     # Keep tool_version empty so "Checker: EPUBCheck + Ace v5.3.0 + Ace …"
     # does not look like two Ace products. Versions live in extra_meta.

@@ -76,6 +76,10 @@ class Issue:
     # Optional Ace (or other) help link for AI "Learn more" and UI.
     help_url: str = ""
     help_title: str = ""
+    # Ace help dct:description (remediation tip); empty when not provided.
+    help_text: str = ""
+    # Ace earl:impact (critical / serious / moderate / minor); empty for others.
+    impact: str = ""
 
     def summary_line(self) -> str:
         parts = [self.severity.label]
