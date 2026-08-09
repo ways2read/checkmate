@@ -148,6 +148,9 @@ class ChangelogDialog(wx.Dialog):
             event.Veto()
             wx.CallAfter(self._on_close, None)
             return
+        if action in ("page_prev", "page_next"):
+            event.Veto()
+            return
         if action in ("next", "prev"):
             event.Veto()
             wx.CallAfter(self._leave_webview, action == "next")

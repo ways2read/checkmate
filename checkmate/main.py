@@ -322,17 +322,77 @@ def _webview_host_action(url: str) -> str | None:
     """
     Return host action for in-page ``checkmate://`` navigations, else None.
 
-    ``next`` / ``prev`` move dialog focus out of the WebView; ``close`` closes
-    the modal. Edge may append a slash or empty path segment.
+    ``next`` / ``prev`` move dialog focus out of the WebView; ``page_prev`` /
+    ``page_next`` switch notebook pages; ``close`` closes the modal. Edge may
+    append a slash or empty path segment.
     """
     u = (url or "").strip().lower()
     if u.startswith("checkmate://focus-next"):
         return "next"
     if u.startswith("checkmate://focus-prev"):
         return "prev"
+    if u.startswith("checkmate://page-prev"):
+        return "page_prev"
+    if u.startswith("checkmate://page-next"):
+        return "page_next"
     if u.startswith("checkmate://close"):
         return "close"
     return None
+
+
+def _add_followup_question_row(
+    parent: wx.Window,
+    sizer: wx.Sizer,
+    *,
+    on_ask,
+    ask_enabled: bool = False,
+) -> tuple[wx.TextCtrl, wx.Button]:
+    """
+    Follow-up edit + Ask, with a real StaticText label for screen readers.
+
+    Windows cue banners (SetHint) are not exposed to MSAA/UIA; a preceding
+    static label is what Narrator/NVDA announce when the edit is focused.
+    """
+    label_text = _("Ask a follow-up question…")
+    label = wx.StaticText(parent, label=label_text)
+    # Keep the label out of the Tab cycle; it is the accessible name buddy.
+    _win_clear_tab_stop(label)
+    sizer.Add(label, 0, wx.TOP, 4)
+
+    follow_row = wx.BoxSizer(wx.HORIZONTAL)
+    # Create the edit immediately after the static so MSW treats it as the label.
+    ctrl = wx.TextCtrl(
+        parent,
+        value="",
+        style=wx.TE_PROCESS_ENTER,
+        name=label_text,
+    )
+    ctrl.SetName(label_text)
+    if hasattr(ctrl, "SetAccessibleName"):
+        try:
+            ctrl.SetAccessibleName(label_text)
+        except Exception:
+            pass
+    ask_btn = wx.Button(parent, label=_("Ask"))
+    ask_btn.Enable(ask_enabled)
+    ctrl.Enable(ask_enabled)
+    follow_row.Add(ctrl, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+    follow_row.Add(ask_btn, 0)
+    sizer.Add(follow_row, 0, wx.EXPAND | wx.BOTTOM, 4)
+    ask_btn.Bind(wx.EVT_BUTTON, on_ask)
+    ctrl.Bind(wx.EVT_TEXT_ENTER, on_ask)
+    return ctrl, ask_btn
+
+
+def _popup_menu_below(window: wx.Window, menu: wx.Menu, anchor: wx.Window) -> None:
+    """Show ``menu`` aligned under ``anchor`` (not at the mouse / default corner)."""
+    try:
+        height = int(anchor.GetSize().GetHeight())
+        screen = anchor.ClientToScreen((0, height))
+        pos = window.ScreenToClient(screen)
+        window.PopupMenu(menu, pos)
+    except Exception:
+        window.PopupMenu(menu)
 
 
 def _try_set_focus(window: wx.Window | None) -> bool:
@@ -705,6 +765,41 @@ _WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS = """
 })();
 """.strip()
 
+# Dialog path: scroll only — el.focus() steals Win32 focus into Edge and leaves
+# the SR / keyboard gate (host panel) and document fighting each other.
+_WEBVIEW_SCROLL_LATEST_FOLLOWUP_JS = """
+(function () {
+  try {
+    var el = document.getElementById('cm-latest-followup');
+    if (!el) { return 'none'; }
+    try {
+      var top = 0;
+      try {
+        var rect = el.getBoundingClientRect();
+        top = (window.pageYOffset || document.documentElement.scrollTop || 0)
+          + rect.top - 12;
+      } catch (e0) {
+        top = el.offsetTop || 0;
+      }
+      if (top < 0) top = 0;
+      window.scrollTo(0, top);
+      if (document.documentElement) {
+        document.documentElement.scrollTop = top;
+      }
+      if (document.body) {
+        document.body.scrollTop = top;
+      }
+      el.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'auto' });
+    } catch (e) {
+      try { el.scrollIntoView(true); } catch (e2) {}
+    }
+    return 'scrolled';
+  } catch (e5) {
+    return 'err';
+  }
+})();
+""".strip()
+
 _WEBVIEW_ACTIVATE_DOM_JS_PREV = """
 (function () {
   try {
@@ -1025,7 +1120,8 @@ def _wire_ai_html_host(
             dlg = _dialog()
             if key == wx.WXK_ESCAPE:
                 if dlg is not None and hasattr(dlg, "_on_close_dialog"):
-                    dlg._on_close_dialog(event)  # type: ignore[attr-defined]
+                    # Defer so we are not tearing down inside the key handler.
+                    wx.CallAfter(dlg._on_close_dialog)  # type: ignore[attr-defined]
                     return
             if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER, wx.WXK_SPACE):
                 _focus_ai_html_view(
@@ -1444,8 +1540,31 @@ class IssueDetailDialog(wx.Dialog):
                 if self._show_fix:
                     self._page_keys.append(self._PAGE_FIX)
 
-            # Shared content hosts live in one panel; tab change shows/hides them.
-            self._content_panel = wx.Panel(self)
+            for key, label in (
+                (self._PAGE_ISSUE, _("Issue")),
+                (self._PAGE_KB, _("Knowledge Base")),
+                (self._PAGE_EXPLAIN, _("Explain with AI")),
+                (self._PAGE_FIX, _("Fix with AI")),
+            ):
+                if key not in self._page_keys:
+                    continue
+                page = wx.Panel(self._notebook)
+                page.SetMinSize((-1, 1))
+                self._notebook.AddPage(page, label)
+
+            # Create action panels BEFORE the content/WebView panel so MSW Tab
+            # order (creation / Z-order) matches the visual layout. MoveBefore
+            # during __init__ is unreliable before HWNDs exist.
+            self._issue_controls = None
+            self._explain_actions = (
+                self._build_explain_actions(self) if self._show_ai else None
+            )
+            self._fix_actions = (
+                self._build_fix_actions(self) if self._show_fix else None
+            )
+
+            self._content_panel = wx.Panel(self, style=wx.TAB_TRAVERSAL)
+            _win_ensure_control_parent(self._content_panel)
             self._build_details_host(self._content_panel)
             content_sizer = wx.BoxSizer(wx.VERTICAL)
             content_sizer.Add(self._details_host, 1, wx.EXPAND)
@@ -1460,34 +1579,50 @@ class IssueDetailDialog(wx.Dialog):
                 self.ai_output = None  # type: ignore[assignment]
             self._content_panel.SetSizer(content_sizer)
 
-            self._issue_controls = None
-            self._explain_controls = (
-                self._build_explain_controls(self) if self._show_ai else None
+            self._explain_followup = (
+                self._build_explain_followup(self) if self._show_ai else None
             )
-            self._fix_controls = (
-                self._build_fix_controls(self) if self._show_fix else None
+            self._fix_followup = (
+                self._build_fix_followup(self) if self._show_fix else None
             )
-
-            for key, label in (
-                (self._PAGE_ISSUE, _("Issue")),
-                (self._PAGE_KB, _("Knowledge Base")),
-                (self._PAGE_EXPLAIN, _("Explain")),
-                (self._PAGE_FIX, _("Fix")),
-            ):
-                if key not in self._page_keys:
-                    continue
-                page = wx.Panel(self._notebook)
-                page.SetMinSize((-1, 1))
-                self._notebook.AddPage(page, label)
+            # Aliases used by page show/hide and older helpers.
+            self._explain_controls = self._explain_followup
+            self._fix_controls = self._fix_followup
 
             root.Add(self._notebook, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
+            if self._explain_actions is not None:
+                root.Add(
+                    self._explain_actions,
+                    0,
+                    wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP,
+                    8,
+                )
+            if self._fix_actions is not None:
+                root.Add(
+                    self._fix_actions,
+                    0,
+                    wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP,
+                    8,
+                )
             root.Add(self._content_panel, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
-            if self._explain_controls is not None:
-                root.Add(self._explain_controls, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
-            if self._fix_controls is not None:
-                root.Add(self._fix_controls, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+            if self._explain_followup is not None:
+                root.Add(self._explain_followup, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+            if self._fix_followup is not None:
+                root.Add(self._fix_followup, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
 
             self._notebook.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self._on_notebook_page)
+            self._id_prev_page = wx.NewIdRef()
+            self._id_next_page = wx.NewIdRef()
+            self.Bind(wx.EVT_MENU, self._on_accel_prev_page, id=self._id_prev_page)
+            self.Bind(wx.EVT_MENU, self._on_accel_next_page, id=self._id_next_page)
+            self.SetAcceleratorTable(
+                wx.AcceleratorTable(
+                    [
+                        (wx.ACCEL_CTRL, wx.WXK_PAGEUP, self._id_prev_page),
+                        (wx.ACCEL_CTRL, wx.WXK_PAGEDOWN, self._id_next_page),
+                    ]
+                )
+            )
             if self._show_ai:
                 self.Bind(EVT_EXPLAIN_AI, self._on_explain_ai_event)
                 self.Bind(EVT_FIX_AI, self._on_fix_ai_event)
@@ -1496,6 +1631,10 @@ class IssueDetailDialog(wx.Dialog):
             self._build_details_host(self)
             root.Add(self._details_host, 1, wx.EXPAND | wx.ALL, 12)
             self._issue_controls = None
+            self._explain_actions = None
+            self._explain_followup = None
+            self._fix_actions = None
+            self._fix_followup = None
             self._explain_controls = None
             self._fix_controls = None
             self._ai_output_host = None  # type: ignore[assignment]
@@ -1676,6 +1815,7 @@ class IssueDetailDialog(wx.Dialog):
             host,
             en_rel=self._kb_en_rel,
             on_content_ready=lambda: wx.CallAfter(self._refresh_export_enabled),
+            on_page_nav=self._cycle_notebook_page,
         )
         sizer.Add(self._kb_panel, 1, wx.EXPAND)
         host.Layout()
@@ -1685,10 +1825,14 @@ class IssueDetailDialog(wx.Dialog):
             pass
         wx.CallAfter(self._kb_panel.start_initial_load)
 
-    def _build_explain_controls(self, parent: wx.Window) -> wx.Panel:
-        panel = wx.Panel(parent)
+    def _build_explain_actions(self, parent: wx.Window) -> wx.Panel:
+        """Primary Explain action — lives above the AI WebView."""
+        panel = wx.Panel(parent, style=wx.TAB_TRAVERSAL)
+        _win_clear_tab_stop(panel)
+        _win_ensure_control_parent(panel)
         sizer = wx.BoxSizer(wx.VERTICAL)
-        self.explain_btn = wx.Button(panel, label=_("Explain with AI"))
+        self.explain_btn = wx.Button(panel, label=_("Explain this issue"))
+        _ensure_win_tab_stop(self.explain_btn)
         self.explain_btn.SetToolTip(
             _(
                 "Ask AI to explain this issue in plain language "
@@ -1697,32 +1841,35 @@ class IssueDetailDialog(wx.Dialog):
         )
         self.explain_btn.Bind(wx.EVT_BUTTON, self._on_explain)
         sizer.Add(self.explain_btn, 0, wx.TOP | wx.BOTTOM, 4)
-
-        follow_row = wx.BoxSizer(wx.HORIZONTAL)
-        self.followup_ctrl = wx.TextCtrl(
-            panel,
-            value="",
-            style=wx.TE_PROCESS_ENTER,
-            name=_("Follow-up question"),
-        )
-        if hasattr(self.followup_ctrl, "SetHint"):
-            self.followup_ctrl.SetHint(_("Ask a follow-up question…"))
-        self.ask_btn = wx.Button(panel, label=_("Ask"))
-        self.ask_btn.Enable(False)
-        follow_row.Add(self.followup_ctrl, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
-        follow_row.Add(self.ask_btn, 0)
-        sizer.Add(follow_row, 0, wx.EXPAND | wx.TOP | wx.BOTTOM, 4)
-        self.ask_btn.Bind(wx.EVT_BUTTON, self._on_ask_followup)
-        self.followup_ctrl.Bind(wx.EVT_TEXT_ENTER, self._on_ask_followup)
         panel.SetSizer(sizer)
         panel.Hide()
         return panel
 
-    def _build_fix_controls(self, parent: wx.Window) -> wx.Panel:
-        panel = wx.Panel(parent)
+    def _build_explain_followup(self, parent: wx.Window) -> wx.Panel:
+        """Follow-up row — stays below the AI WebView."""
+        panel = wx.Panel(parent, style=wx.TAB_TRAVERSAL)
+        _win_clear_tab_stop(panel)
+        _win_ensure_control_parent(panel)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        self.followup_ctrl, self.ask_btn = _add_followup_question_row(
+            panel,
+            sizer,
+            on_ask=self._on_ask_followup,
+            ask_enabled=False,
+        )
+        panel.SetSizer(sizer)
+        panel.Hide()
+        return panel
+
+    def _build_fix_actions(self, parent: wx.Window) -> wx.Panel:
+        """Suggest-fix actions — live above the AI WebView."""
+        panel = wx.Panel(parent, style=wx.TAB_TRAVERSAL)
+        _win_clear_tab_stop(panel)
+        _win_ensure_control_parent(panel)
         sizer = wx.BoxSizer(wx.VERTICAL)
         row = wx.BoxSizer(wx.HORIZONTAL)
         self.fix_btn = wx.Button(panel, label=_("Suggest fix with AI"))
+        _ensure_win_tab_stop(self.fix_btn)
         self.fix_btn.SetToolTip(
             _(
                 "Ask AI to suggest a minimal markup fix for this EPUB "
@@ -1733,6 +1880,7 @@ class IssueDetailDialog(wx.Dialog):
         row.Add(self.fix_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
 
         self.fix_all_btn = wx.Button(panel, label=_("Suggest fix for many"))
+        _ensure_win_tab_stop(self.fix_all_btn)
         self.fix_all_btn.SetToolTip(
             _(
                 "Ask AI to suggest unique fixes for every issue with the "
@@ -1741,9 +1889,21 @@ class IssueDetailDialog(wx.Dialog):
         )
         self.fix_all_btn.Enable(self._matching_like_this > 1)
         self.fix_all_btn.Bind(wx.EVT_BUTTON, self._on_fix_all)
-        row.Add(self.fix_all_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        row.Add(self.fix_all_btn, 0, wx.ALIGN_CENTER_VERTICAL)
+        sizer.Add(row, 0, wx.EXPAND | wx.TOP | wx.BOTTOM, 4)
+        panel.SetSizer(sizer)
+        panel.Hide()
+        return panel
 
+    def _build_fix_followup(self, parent: wx.Window) -> wx.Panel:
+        """Apply + follow-up — stay below the AI WebView."""
+        panel = wx.Panel(parent, style=wx.TAB_TRAVERSAL)
+        _win_clear_tab_stop(panel)
+        _win_ensure_control_parent(panel)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        row = wx.BoxSizer(wx.HORIZONTAL)
         self.apply_fix_btn = wx.Button(panel, label=_("Apply fix and validate"))
+        _ensure_win_tab_stop(self.apply_fix_btn)
         self.apply_fix_btn.SetToolTip(
             _(
                 "Write the proposed fix into the publication, "
@@ -1755,24 +1915,12 @@ class IssueDetailDialog(wx.Dialog):
         row.Add(self.apply_fix_btn, 0, wx.ALIGN_CENTER_VERTICAL)
         sizer.Add(row, 0, wx.EXPAND | wx.TOP | wx.BOTTOM, 4)
 
-        follow_row = wx.BoxSizer(wx.HORIZONTAL)
-        self.fix_followup_ctrl = wx.TextCtrl(
+        self.fix_followup_ctrl, self.fix_ask_btn = _add_followup_question_row(
             panel,
-            value="",
-            style=wx.TE_PROCESS_ENTER,
-            name=_("Follow-up question"),
+            sizer,
+            on_ask=self._on_ask_followup,
+            ask_enabled=False,
         )
-        if hasattr(self.fix_followup_ctrl, "SetHint"):
-            self.fix_followup_ctrl.SetHint(_("Ask a follow-up question…"))
-        self.fix_ask_btn = wx.Button(panel, label=_("Ask"))
-        self.fix_ask_btn.Enable(False)
-        follow_row.Add(
-            self.fix_followup_ctrl, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6
-        )
-        follow_row.Add(self.fix_ask_btn, 0)
-        sizer.Add(follow_row, 0, wx.EXPAND | wx.TOP | wx.BOTTOM, 4)
-        self.fix_ask_btn.Bind(wx.EVT_BUTTON, self._on_ask_followup)
-        self.fix_followup_ctrl.Bind(wx.EVT_TEXT_ENTER, self._on_ask_followup)
 
         panel.SetSizer(sizer)
         panel.Hide()
@@ -1802,10 +1950,14 @@ class IssueDetailDialog(wx.Dialog):
 
         if self._issue_controls is not None:
             self._issue_controls.Show(show_issue)
-        if self._explain_controls is not None:
-            self._explain_controls.Show(show_explain)
-        if self._fix_controls is not None:
-            self._fix_controls.Show(show_fix)
+        if getattr(self, "_explain_actions", None) is not None:
+            self._explain_actions.Show(show_explain)
+        if getattr(self, "_explain_followup", None) is not None:
+            self._explain_followup.Show(show_explain)
+        if getattr(self, "_fix_actions", None) is not None:
+            self._fix_actions.Show(show_fix)
+        if getattr(self, "_fix_followup", None) is not None:
+            self._fix_followup.Show(show_fix)
 
         if not initial:
             if show_kb:
@@ -1816,6 +1968,7 @@ class IssueDetailDialog(wx.Dialog):
                 else:
                     self._paint_active_ai_channel(focus=False)
 
+        self._refresh_host_tab_stops()
         self._refresh_export_enabled()
         try:
             self.Layout()
@@ -1823,6 +1976,71 @@ class IssueDetailDialog(wx.Dialog):
                 self._content_panel.Layout()
         except RuntimeError:
             pass
+
+    def _refresh_host_tab_stops(self) -> None:
+        """Keep only the visible page host in the dialog Tab cycle."""
+        details = getattr(self, "_details_host", None)
+        kb = getattr(self, "_kb_host", None)
+        ai = getattr(self, "_ai_output_host", None)
+        key = self._active_page_key
+
+        if details is not None:
+            on_issue = key == self._PAGE_ISSUE
+            if on_issue and getattr(self, "_details_is_webview", False):
+                view = getattr(self, "details_view", None)
+                if view is not None:
+                    _refresh_ai_html_tab_stops(details, view, is_webview=True)
+                if isinstance(details, _AiHtmlHostPanel):
+                    details._accept_kbd_focus = True
+            else:
+                _win_clear_tab_stop(details)
+                if isinstance(details, _AiHtmlHostPanel):
+                    details._accept_kbd_focus = False
+
+        if kb is not None:
+            # KB panel manages its own chrome; keep the host out of the cycle.
+            _win_clear_tab_stop(kb)
+
+        if ai is not None:
+            on_ai = key in (self._PAGE_EXPLAIN, self._PAGE_FIX)
+            ready = (
+                on_ai
+                and getattr(self, "_ai_view_realized", False)
+                and getattr(self, "_ai_output_is_webview", False)
+            )
+            if ready:
+                view = getattr(self, "ai_output", None)
+                if view is not None:
+                    _refresh_ai_html_tab_stops(ai, view, is_webview=True)
+                if isinstance(ai, _AiHtmlHostPanel):
+                    ai._accept_kbd_focus = True
+            else:
+                _win_clear_tab_stop(ai)
+                if isinstance(ai, _AiHtmlHostPanel):
+                    ai._accept_kbd_focus = False
+
+        content = getattr(self, "_content_panel", None)
+        if content is not None:
+            _win_clear_tab_stop(content)
+            _win_ensure_control_parent(content)
+
+        # Action panels must be CONTROLPARENT containers (not tab stops themselves).
+        # If the panel is also WS_TABSTOP, forward Tab can land on/skip the panel
+        # while Shift+Tab still finds the button inside.
+        for panel in (
+            getattr(self, "_explain_actions", None),
+            getattr(self, "_fix_actions", None),
+            getattr(self, "_explain_followup", None),
+            getattr(self, "_fix_followup", None),
+        ):
+            if panel is None:
+                continue
+            try:
+                if panel.IsShown():
+                    _win_clear_tab_stop(panel)
+                    _win_ensure_control_parent(panel)
+            except RuntimeError:
+                pass
 
     def _active_is_ai_page(self) -> bool:
         return self._active_page_key in (self._PAGE_EXPLAIN, self._PAGE_FIX)
@@ -1914,18 +2132,10 @@ class IssueDetailDialog(wx.Dialog):
         self.Layout()
         # Edge recreates child HWNDs asynchronously — keep host as the Tab gate.
         if is_webview:
-            wx.CallLater(
-                100,
-                lambda h=host, v=view: _refresh_ai_html_tab_stops(
-                    h, v, is_webview=True
-                ),
-            )
-            wx.CallLater(
-                300,
-                lambda h=host, v=view: _refresh_ai_html_tab_stops(
-                    h, v, is_webview=True
-                ),
-            )
+            wx.CallLater(100, self._refresh_host_tab_stops)
+            wx.CallLater(300, self._refresh_host_tab_stops)
+        else:
+            self._refresh_host_tab_stops()
 
         self.explain_btn.Enable(not self._busy)
         if self._show_fix:
@@ -1947,9 +2157,32 @@ class IssueDetailDialog(wx.Dialog):
 
     def _on_dialog_char_hook(self, event: wx.KeyEvent) -> None:
         if event.GetKeyCode() == wx.WXK_ESCAPE:
-            self._on_close_dialog(event)
+            wx.CallAfter(self._on_close_dialog)
             return
         event.Skip()
+
+    def _on_accel_prev_page(self, _event: wx.CommandEvent) -> None:
+        self._cycle_notebook_page(-1)
+
+    def _on_accel_next_page(self, _event: wx.CommandEvent) -> None:
+        self._cycle_notebook_page(1)
+
+    def _cycle_notebook_page(self, delta: int) -> None:
+        """Switch to previous/next details page (Ctrl+PgUp / Ctrl+PgDn)."""
+        if self._notebook is None or not delta:
+            return
+        count = self._notebook.GetPageCount()
+        if count <= 1:
+            return
+        sel = self._notebook.GetSelection()
+        if sel < 0:
+            return
+        new_sel = sel + int(delta)
+        if new_sel < 0 or new_sel >= count:
+            return
+        if new_sel == sel:
+            return
+        self._notebook.SetSelection(new_sel)
 
     def _on_open_kb_article(self, _event: wx.CommandEvent) -> None:
         if self._show_kb:
@@ -1983,6 +2216,12 @@ class IssueDetailDialog(wx.Dialog):
             event.Veto()
             wx.CallAfter(self._on_close_dialog)
             return
+        if action in ("page_prev", "page_next"):
+            event.Veto()
+            wx.CallAfter(
+                self._cycle_notebook_page, -1 if action == "page_prev" else 1
+            )
+            return
         if action in ("next", "prev"):
             event.Veto()
             wx.CallAfter(self._leave_details_webview, action == "next")
@@ -2015,10 +2254,12 @@ class IssueDetailDialog(wx.Dialog):
         _try_set_focus(close_btn)
 
     def _on_close_dialog(self, event: wx.Event | None = None) -> None:
-        # Guard against SetEscapeId + CHAR_HOOK both firing: a second pass would
-        # see IsModal() False and Destroy() while ShowModal is still unwinding,
-        # which leaves the main frame disabled/frozen.
+        # Guard against SetEscapeId + CHAR_HOOK + checkmate://close all firing.
+        # A second pass that Destroy()s while ShowModal is unwinding leaves the
+        # main frame disabled/frozen.
         if getattr(self, "_closing", False):
+            if isinstance(event, wx.CloseEvent):
+                event.Veto()
             return
         self._closing = True
         # Cancel deferred WebView focus/reveal/paint chains (follow-up SetPage
@@ -2034,19 +2275,38 @@ class IssueDetailDialog(wx.Dialog):
                 pass
         # Do not reclaim focus onto this dialog after teardown.
         self._close_ai_progress(reclaim_focus=False)
+        if isinstance(event, wx.CloseEvent):
+            # We EndModal ourselves on the next tick.
+            event.Veto()
+        # Never steal focus from Edge via WM_NEXTDLGCTL here — that deadlocks
+        # WebView2 when Escape arrives through checkmate://close. Finish close
+        # on the next idle so we are outside navigating/key handlers.
+        wx.CallAfter(self._finish_close_dialog)
+
+    def _finish_close_dialog(self) -> None:
+        """Complete modal teardown after Escape/close (safe for WebView2)."""
         try:
-            # Pull Win32 focus out of the WebView2 document before destroy.
-            close_btn = self.FindWindowById(wx.ID_CLOSE)
-            if close_btn is not None:
-                _try_set_focus(close_btn)
-            elif _try_set_focus(self):
+            if not self:
+                return
+        except RuntimeError:
+            return
+        # Soft blur: focus the dialog HWND only (no dialog-manager dance).
+        if sys.platform == "win32":
+            try:
+                import ctypes
+
+                hwnd = int(self.GetHandle() or 0)
+                if hwnd:
+                    ctypes.windll.user32.SetFocus(hwnd)
+            except Exception:
                 pass
+        try:
+            if self.IsModal():
+                self.EndModal(wx.ID_CLOSE)
+            else:
+                self.Destroy()
         except RuntimeError:
             pass
-        if self.IsModal():
-            self.EndModal(wx.ID_CLOSE)
-        else:
-            self.Destroy()
 
     def _ai_dialog_alive(self) -> bool:
         """False while closing or after the dialog window is gone."""
@@ -2146,6 +2406,12 @@ class IssueDetailDialog(wx.Dialog):
             event.Veto()
             wx.CallAfter(self._on_close_dialog)
             return
+        if action in ("page_prev", "page_next"):
+            event.Veto()
+            wx.CallAfter(
+                self._cycle_notebook_page, -1 if action == "page_prev" else 1
+            )
+            return
         if action in ("next", "prev"):
             event.Veto()
             wx.CallAfter(self._leave_ai_webview, action == "next")
@@ -2165,27 +2431,33 @@ class IssueDetailDialog(wx.Dialog):
     def _leave_ai_webview(self, forward: bool) -> None:
         """Move dialog focus out of the WebView after Tab-at-boundary / Ctrl+Tab."""
         if forward:
+            # Below the WebView: follow-up / apply controls.
             if self._active_page_key == self._PAGE_EXPLAIN:
-                if _try_set_focus(getattr(self, "explain_btn", None)):
-                    return
                 if _try_set_focus(getattr(self, "followup_ctrl", None)):
                     return
                 if _try_set_focus(getattr(self, "ask_btn", None)):
                     return
             elif self._active_page_key == self._PAGE_FIX:
-                if _try_set_focus(getattr(self, "fix_btn", None)):
+                if _try_set_focus(getattr(self, "apply_fix_btn", None)):
                     return
                 if _try_set_focus(getattr(self, "fix_followup_ctrl", None)):
                     return
                 if _try_set_focus(getattr(self, "fix_ask_btn", None)):
-                    return
-                if _try_set_focus(getattr(self, "apply_fix_btn", None)):
                     return
             if _try_set_focus(getattr(self, "view_browser_btn", None)):
                 return
             close_btn = self.FindWindowById(wx.ID_CLOSE)
             _try_set_focus(close_btn)
             return
+        # Above the WebView: primary Suggest / Explain actions, then notebook.
+        if self._active_page_key == self._PAGE_EXPLAIN:
+            if _try_set_focus(getattr(self, "explain_btn", None)):
+                return
+        elif self._active_page_key == self._PAGE_FIX:
+            if _try_set_focus(getattr(self, "fix_all_btn", None)):
+                return
+            if _try_set_focus(getattr(self, "fix_btn", None)):
+                return
         if self._notebook is not None and _try_set_focus(self._notebook):
             return
         if _try_set_focus(getattr(self, "ai_model_ctrl", None)):
@@ -2259,7 +2531,12 @@ class IssueDetailDialog(wx.Dialog):
         # often leaves focus limbo where Escape/Tab do nothing.
         if self._ai_output_is_webview:
             host = getattr(self, "_ai_output_host", None)
-            return _try_set_focus(host if host is not None else self.ai_output)
+            view = self.ai_output
+            if host is not None and view is not None:
+                _refresh_ai_html_tab_stops(host, view, is_webview=True)
+                if isinstance(host, _AiHtmlHostPanel):
+                    host._accept_kbd_focus = True
+            return _try_set_focus(host if host is not None else view)
         return _focus_ai_html_view(
             self.ai_output,
             is_webview=False,
@@ -2322,13 +2599,17 @@ class IssueDetailDialog(wx.Dialog):
         if self._ai_output_is_webview:
             # Prefer JS scroll only — MoveFocus/synthetic click into Edge after
             # follow-up has been linked to unclean app shutdown on Windows.
+            # Also avoid el.focus() in-page: that steals Win32 focus into Edge
+            # while we intentionally keep the host panel as the keyboard gate.
             try:
                 _webview_run_script(
-                    self.ai_output, _WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS
+                    self.ai_output, _WEBVIEW_SCROLL_LATEST_FOLLOWUP_JS
                 )
             except Exception:
                 return False
-            return True
+            # Land keyboard/SR on the WebView host (Enter still activates Edge).
+            host = getattr(self, "_ai_output_host", None)
+            return _try_set_focus(host if host is not None else self.ai_output)
         # TextCtrl fallback: jump near the latest "You asked" / question text.
         view = self.ai_output
         if hasattr(view, "SetInsertionPoint") and hasattr(view, "GetValue"):
@@ -2610,20 +2891,36 @@ class IssueDetailDialog(wx.Dialog):
             self.fix_btn.Enable(not busy)
             self.fix_all_btn.Enable((not busy) and self._matching_like_this > 1)
             self._set_apply_fix_enabled(not busy)
-            if hasattr(self, "fix_ask_btn"):
-                self.fix_ask_btn.Enable(
-                    not busy and self._fix_session is not None
-                )
-            if hasattr(self, "fix_followup_ctrl"):
-                self.fix_followup_ctrl.Enable(not busy)
-        self.ask_btn.Enable(not busy and self._explain_session is not None)
-        self.followup_ctrl.Enable(not busy)
+        self._sync_followup_enabled()
         self._refresh_export_enabled()
         if status:
             self.ai_status.SetLabel(status)
         elif not busy:
             self.ai_status.SetLabel("")
         self.Layout()
+
+    def _sync_followup_enabled(self) -> None:
+        """Enable Ask + edit only when there is AI content to follow up on."""
+        if not self._show_ai:
+            return
+        busy = self._busy
+        explain_ok = (
+            (not busy)
+            and self._explain_session is not None
+            and self._has_ai_content("explain")
+        )
+        self.ask_btn.Enable(explain_ok)
+        self.followup_ctrl.Enable(explain_ok)
+        if self._show_fix:
+            fix_ok = (
+                (not busy)
+                and self._fix_session is not None
+                and self._has_ai_content("fix")
+            )
+            if hasattr(self, "fix_ask_btn"):
+                self.fix_ask_btn.Enable(fix_ok)
+            if hasattr(self, "fix_followup_ctrl"):
+                self.fix_followup_ctrl.Enable(fix_ok)
 
     def _ai_status_callback(self, message: str) -> None:
         def update() -> None:
@@ -2755,7 +3052,7 @@ class IssueDetailDialog(wx.Dialog):
             return
         self._select_page(self._PAGE_EXPLAIN)
         cancel = self._open_ai_progress(
-            _("Explain with AI"), _("Loading AI libraries…")
+            _("Explain this issue"), _("Loading AI libraries…")
         )
         self._set_busy(True, _("Loading AI libraries…"))
         issue = self._issue
@@ -2996,11 +3293,10 @@ class IssueDetailDialog(wx.Dialog):
             self.ai_status.SetLabel(_("Could not explain this issue."))
             if result.session is not None:
                 self._explain_session = result.session
-                self.ask_btn.Enable(True)
+            self._sync_followup_enabled()
             return
 
         self._explain_session = result.session
-        self.ask_btn.Enable(True)
         if kind == "followup":
             question = getattr(event, "question", "") or ""
             md = append_followup_markdown(
@@ -3021,23 +3317,11 @@ class IssueDetailDialog(wx.Dialog):
                         return
                 except RuntimeError:
                     return
-                # Paint without diving Win32 focus into Edge (see close hang).
-                self._set_ai_content(md, focus=False, channel="explain")
+                # Paint, scroll to the new question, then focus the WebView host.
+                self._set_ai_content(md, focus=True, channel="explain")
                 self.followup_ctrl.SetValue("")
                 self.ai_status.SetLabel(_("Done"))
-                # Scroll in-document via page script / one JS pass only.
-                if self._ai_output_is_webview and _markdown_has_latest_followup(md):
-                    wx.CallLater(
-                        120,
-                        lambda: self._ai_dialog_alive()
-                        and _webview_run_script(
-                            self.ai_output, _WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS
-                        ),
-                    )
-                try:
-                    _try_set_focus(self.followup_ctrl)
-                except RuntimeError:
-                    pass
+                self._sync_followup_enabled()
 
             wx.CallAfter(_paint_followup)
             try:
@@ -3049,6 +3333,7 @@ class IssueDetailDialog(wx.Dialog):
             return
 
         self._set_ai_content(result.text or "", focus=True, channel="explain")
+        self._sync_followup_enabled()
         try:
             from .telemetry import log_ai_explain
 
@@ -3083,13 +3368,10 @@ class IssueDetailDialog(wx.Dialog):
             )
             if result.session is not None:
                 self._fix_session = result.session
-                if hasattr(self, "fix_ask_btn"):
-                    self.fix_ask_btn.Enable(True)
+            self._sync_followup_enabled()
             return
 
         self._fix_session = result.session
-        if hasattr(self, "fix_ask_btn"):
-            self.fix_ask_btn.Enable(True)
 
         if question:
             # Follow-up on the proposed fix (e.g. supply a real ISBN).
@@ -3114,7 +3396,7 @@ class IssueDetailDialog(wx.Dialog):
                         return
                 except RuntimeError:
                     return
-                self._set_ai_content(md, focus=False, channel="fix")
+                self._set_ai_content(md, focus=True, channel="fix")
                 if hasattr(self, "fix_followup_ctrl"):
                     self.fix_followup_ctrl.SetValue("")
                 if result.proposal is not None or result.batch is not None:
@@ -3124,18 +3406,7 @@ class IssueDetailDialog(wx.Dialog):
                     )
                 else:
                     self.ai_status.SetLabel(_("Done"))
-                if self._ai_output_is_webview and _markdown_has_latest_followup(md):
-                    wx.CallLater(
-                        120,
-                        lambda: self._ai_dialog_alive()
-                        and _webview_run_script(
-                            self.ai_output, _WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS
-                        ),
-                    )
-                try:
-                    _try_set_focus(getattr(self, "fix_followup_ctrl", None))
-                except RuntimeError:
-                    pass
+                self._sync_followup_enabled()
 
             wx.CallAfter(_paint_fix_followup)
             try:
@@ -3149,6 +3420,7 @@ class IssueDetailDialog(wx.Dialog):
         self._fix_proposal = result.proposal
         self._batch_proposal = result.batch
         self._set_ai_content(result.text or "", focus=True, channel="fix")
+        self._sync_followup_enabled()
         try:
             from .telemetry import log_ai_fix
 
@@ -3376,20 +3648,14 @@ class AiOverviewDialog(wx.Dialog):
         self.ai_output = self._ai_output_host
         root.Add(self._ai_output_host, 1, wx.EXPAND | wx.ALL, 12)
 
-        follow_row = wx.BoxSizer(wx.HORIZONTAL)
-        self.followup_ctrl = wx.TextCtrl(
+        follow_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.followup_ctrl, self.ask_btn = _add_followup_question_row(
             self,
-            value="",
-            style=wx.TE_PROCESS_ENTER,
-            name=_("Follow-up question"),
+            follow_sizer,
+            on_ask=self._on_ask_followup,
+            ask_enabled=self._session is not None,
         )
-        if hasattr(self.followup_ctrl, "SetHint"):
-            self.followup_ctrl.SetHint(_("Ask a follow-up question…"))
-        self.ask_btn = wx.Button(self, label=_("Ask"))
-        self.ask_btn.Enable(self._session is not None)
-        follow_row.Add(self.followup_ctrl, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
-        follow_row.Add(self.ask_btn, 0)
-        root.Add(follow_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        root.Add(follow_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
 
         actions = wx.BoxSizer(wx.HORIZONTAL)
         self.view_browser_btn = wx.Button(self, label=_("View in browser"))
@@ -3412,8 +3678,6 @@ class AiOverviewDialog(wx.Dialog):
         footer.Add(close_btn, 0)
         root.Add(footer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
 
-        self.ask_btn.Bind(wx.EVT_BUTTON, self._on_ask_followup)
-        self.followup_ctrl.Bind(wx.EVT_TEXT_ENTER, self._on_ask_followup)
         self.view_browser_btn.Bind(wx.EVT_BUTTON, self._on_view_browser)
         self.save_html_btn.Bind(wx.EVT_BUTTON, self._on_save_html)
         self.save_md_btn.Bind(wx.EVT_BUTTON, self._on_save_markdown)
@@ -3430,7 +3694,7 @@ class AiOverviewDialog(wx.Dialog):
 
     def _on_dialog_char_hook(self, event: wx.KeyEvent) -> None:
         if event.GetKeyCode() == wx.WXK_ESCAPE:
-            self._on_close_dialog(event)
+            wx.CallAfter(self._on_close_dialog)
             return
         event.Skip()
 
@@ -3486,6 +3750,10 @@ class AiOverviewDialog(wx.Dialog):
         if action == "close":
             event.Veto()
             wx.CallAfter(self._on_close_dialog)
+            return
+        if action in ("page_prev", "page_next"):
+            # Overview has no notebook pages; ignore (keys stay in Edge otherwise).
+            event.Veto()
             return
         if action in ("next", "prev"):
             event.Veto()
@@ -3586,11 +3854,12 @@ class AiOverviewDialog(wx.Dialog):
         if self._ai_output_is_webview:
             try:
                 _webview_run_script(
-                    self.ai_output, _WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS
+                    self.ai_output, _WEBVIEW_SCROLL_LATEST_FOLLOWUP_JS
                 )
             except Exception:
                 return False
-            return True
+            host = getattr(self, "_ai_output_host", None)
+            return _try_set_focus(host if host is not None else self.ai_output)
         view = self.ai_output
         if hasattr(view, "SetInsertionPoint") and hasattr(view, "GetValue"):
             try:
@@ -3658,8 +3927,11 @@ class AiOverviewDialog(wx.Dialog):
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
-        self.ask_btn.Enable(not busy and self._session is not None)
-        self.followup_ctrl.Enable(not busy)
+        can_ask = (not busy) and self._session is not None and bool(
+            (self._ai_markdown or "").strip()
+        )
+        self.ask_btn.Enable(can_ask)
+        self.followup_ctrl.Enable(can_ask)
         for btn in (
             self.view_browser_btn,
             self.save_html_btn,
@@ -3828,19 +4100,18 @@ class AiOverviewDialog(wx.Dialog):
 
         result = event.result
         self._close_ai_progress()
-        self._set_busy(False)
         if not result.ok:
             if result.error_key == "cancelled":
+                self._set_busy(False)
                 return
             msg = error_message_for_key(result.error_key, detail=result.text or "")
             wx.MessageBox(msg, _("AI overview"), wx.OK | wx.ICON_ERROR, self)
             if result.session is not None:
                 self._session = result.session
-                self.ask_btn.Enable(True)
+            self._set_busy(False)
             return
 
         self._session = result.session
-        self.ask_btn.Enable(True)
         question = getattr(event, "question", "") or ""
         self._ai_markdown = append_followup_markdown(
             self._ai_markdown,
@@ -3858,22 +4129,9 @@ class AiOverviewDialog(wx.Dialog):
                     return
             except RuntimeError:
                 return
-            self._paint_content(focus=False)
+            self._paint_content(focus=True)
             self.followup_ctrl.SetValue("")
-            if self._ai_output_is_webview and _markdown_has_latest_followup(
-                self._ai_markdown or ""
-            ):
-                wx.CallLater(
-                    120,
-                    lambda: self._ai_dialog_alive()
-                    and _webview_run_script(
-                        self.ai_output, _WEBVIEW_REVEAL_LATEST_FOLLOWUP_JS
-                    ),
-                )
-            try:
-                _try_set_focus(self.followup_ctrl)
-            except RuntimeError:
-                pass
+            self._set_busy(False)
 
         wx.CallAfter(_paint_followup)
         try:
@@ -3968,24 +4226,40 @@ class AiOverviewDialog(wx.Dialog):
 
     def _on_close_dialog(self, event: wx.Event | None = None) -> None:
         if getattr(self, "_closing", False):
+            if isinstance(event, wx.CloseEvent):
+                event.Veto()
             return
         self._closing = True
         self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
         if self._ai_cancel is not None:
             self._ai_cancel.set()
         self._close_ai_progress(reclaim_focus=False)
+        if isinstance(event, wx.CloseEvent):
+            event.Veto()
+        wx.CallAfter(self._finish_close_dialog)
+
+    def _finish_close_dialog(self) -> None:
         try:
-            close_btn = self.FindWindowById(wx.ID_CLOSE)
-            if close_btn is not None:
-                _try_set_focus(close_btn)
+            if not self:
+                return
+        except RuntimeError:
+            return
+        if sys.platform == "win32":
+            try:
+                import ctypes
+
+                hwnd = int(self.GetHandle() or 0)
+                if hwnd:
+                    ctypes.windll.user32.SetFocus(hwnd)
+            except Exception:
+                pass
+        try:
+            if self.IsModal():
+                self.EndModal(wx.ID_CLOSE)
             else:
-                _try_set_focus(self)
+                self.Destroy()
         except RuntimeError:
             pass
-        if self.IsModal():
-            self.EndModal(wx.ID_CLOSE)
-        else:
-            self.Destroy()
 
     def _ai_dialog_alive(self) -> bool:
         if getattr(self, "_closing", False):
@@ -6522,7 +6796,7 @@ class MainFrame(wx.Frame):
         menu.Bind(wx.EVT_MENU, self.on_clear_results, clear_item)
         menu.Bind(wx.EVT_MENU, self.on_view_full_log, log_item)
         menu.Bind(wx.EVT_MENU, self.on_view_changelog, changelog_item)
-        self.PopupMenu(menu)
+        _popup_menu_below(self, menu, self.report_btn)
         menu.Destroy()
 
     def _current_publication_path(self) -> Path | None:

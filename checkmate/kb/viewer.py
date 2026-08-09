@@ -24,6 +24,23 @@ from .update import update_knowledge_base
 # Session preference: show English when a non-English variant exists.
 _prefer_english_session = False
 
+# Forward Ctrl+PgUp/PgDn out of Edge when the panel is embedded in a notebook.
+_KB_PAGE_NAV_SCRIPT = """
+<script>
+(function () {
+  document.addEventListener('keydown', function (e) {
+    if (!e.ctrlKey || e.altKey || e.metaKey) return;
+    if (e.key !== 'PageUp' && e.key !== 'PageDown') return;
+    e.preventDefault();
+    e.stopPropagation();
+    window.location.href = e.key === 'PageUp'
+      ? 'checkmate://page-prev'
+      : 'checkmate://page-next';
+  }, true);
+})();
+</script>
+""".strip()
+
 
 def _create_webview(parent: wx.Window) -> tuple[wx.Window, bool]:
     try:
@@ -81,11 +98,13 @@ class KnowledgeBaseArticlePanel(wx.Panel):
         en_rel: str,
         ref: KbArticleRef | None = None,
         on_content_ready: Callable[[], None] | None = None,
+        on_page_nav: Callable[[int], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._en_rel = en_rel
         self._ref = ref
         self._on_content_ready = on_content_ready
+        self._on_page_nav = on_page_nav
         # English UI always shows English; otherwise honour session preference.
         self._showing_english = (
             _prefer_english_session if _ui_base_lang() != "en" else True
@@ -457,13 +476,21 @@ class KnowledgeBaseArticlePanel(wx.Panel):
 
     def _show_html(self, html: str, *, base_url: str = "") -> None:
         self._last_html = html or ""
+        display = html or ""
+        if self._on_page_nav is not None and self._is_webview and display:
+            lower = display.lower()
+            idx = lower.rfind("</body>")
+            if idx >= 0:
+                display = display[:idx] + _KB_PAGE_NAV_SCRIPT + display[idx:]
+            else:
+                display = display + _KB_PAGE_NAV_SCRIPT
         if self._is_webview:
             try:
                 # Empty base — document is self-contained (CSS inlined).
-                self.view.SetPage(html, base_url or "")
+                self.view.SetPage(display, base_url or "")
             except Exception:
                 try:
-                    self.view.SetPage(html, "")
+                    self.view.SetPage(display, "")
                 except Exception:
                     pass
         else:
@@ -574,6 +601,17 @@ class KnowledgeBaseArticlePanel(wx.Panel):
 
     def _on_navigating(self, event) -> None:
         url = (event.GetURL() or "").strip()
+        lower = url.lower()
+        if lower.startswith("checkmate://page-prev"):
+            event.Veto()
+            if self._on_page_nav is not None:
+                wx.CallAfter(self._on_page_nav, -1)
+            return
+        if lower.startswith("checkmate://page-next"):
+            event.Veto()
+            if self._on_page_nav is not None:
+                wx.CallAfter(self._on_page_nav, 1)
+            return
         if url.startswith(("http://", "https://")):
             event.Veto()
             from .store import is_kb_url

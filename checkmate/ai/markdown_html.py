@@ -758,6 +758,16 @@ _WEBVIEW_TAB_EXIT_SCRIPT = """
       closeDialog();
       return;
     }
+    // Ctrl+PgUp / Ctrl+PgDn also stay inside Edge unless we forward them.
+    if (e.ctrlKey && !e.altKey && !e.metaKey &&
+        (e.key === 'PageUp' || e.key === 'PageDown')) {
+      e.preventDefault();
+      e.stopPropagation();
+      window.location.href = e.key === 'PageUp'
+        ? 'checkmate://page-prev'
+        : 'checkmate://page-next';
+      return;
+    }
     if (e.key !== 'Tab') return;
     // Always-available escape hatch while inside the WebView document.
     if (e.ctrlKey) {

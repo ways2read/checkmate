@@ -510,7 +510,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Java not found": "Java introuvable",
         "Language changed to {language}.": "Langue changée : {language}.",
         "Explain with AI": "Expliquer avec l’IA",
+        "Explain this issue": "Expliquer ce problème",
+        "Fix with AI": "Corriger avec l’IA",
         "AI assistance": "Assistance IA",
+        "AI-generated responses will be shown here.": (
+            "Les réponses générées par l’IA s’afficheront ici."
+        ),
         "AI overview": "Aperçu IA",
         "Overall assessment": "Évaluation générale",
         "Main themes": "Thèmes principaux",
@@ -1414,7 +1419,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Java not found": "Java no encontrado",
         "Language changed to {language}.": "Idioma cambiado a {language}.",
         "Explain with AI": "Explicar con IA",
+        "Explain this issue": "Explicar este problema",
+        "Fix with AI": "Corregir con IA",
         "AI assistance": "Asistencia de IA",
+        "AI-generated responses will be shown here.": (
+            "Las respuestas generadas por IA se mostrarán aquí."
+        ),
         "AI overview": "Resumen de IA",
         "Overall assessment": "Evaluación general",
         "Main themes": "Temas principales",
@@ -2206,7 +2216,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Java not found": "Java nicht gefunden",
         "Language changed to {language}.": "Sprache geändert: {language}.",
         "Explain with AI": "Mit KI erklären",
+        "Explain this issue": "Dieses Problem erklären",
+        "Fix with AI": "Mit KI korrigieren",
         "AI assistance": "KI-Unterstützung",
+        "AI-generated responses will be shown here.": (
+            "KI-generierte Antworten werden hier angezeigt."
+        ),
         "AI overview": "KI-Überblick",
         "Overall assessment": "Gesamteinschätzung",
         "Main themes": "Hauptthemen",
@@ -3003,7 +3018,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Java not found": "Java não encontrado",
         "Language changed to {language}.": "Idioma alterado para {language}.",
         "Explain with AI": "Explicar com IA",
+        "Explain this issue": "Explicar este problema",
+        "Fix with AI": "Corrigir com IA",
         "AI assistance": "Assistência de IA",
+        "AI-generated responses will be shown here.": (
+            "As respostas geradas por IA serão mostradas aqui."
+        ),
         "AI overview": "Visão geral de IA",
         "Overall assessment": "Avaliação geral",
         "Main themes": "Temas principais",
