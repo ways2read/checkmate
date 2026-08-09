@@ -128,6 +128,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Issues list": "Liste des problèmes",
         "Severity": "Sévérité",
         "Impact": "Impact",
+        "Ruleset": "Jeu de règles",
         "Help": "Aide",
         "Occurrences": "Occurrences",
         "Code": "Code",
@@ -140,6 +141,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Fix": "Corriger",
         "Severity: {value}": "Sévérité : {value}",
         "Impact: {value}": "Impact : {value}",
+        "Ruleset: {value}": "Jeu de règles : {value}",
         "Code: {value}": "Code : {value}",
         "(none)": "(aucun)",
         "Press Enter or double-click an issue to read the full details.": (
@@ -526,7 +528,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Opening issue details…": "Ouverture des détails du problème…",
         "Loading AI view…": "Chargement de la vue IA…",
         "Suggest fix with AI": "Suggérer une correction avec l’IA",
-        "Suggest all like this…": "Tout suggérer comme ceci…",
+        "Suggest fix for many": "Suggérer une correction pour plusieurs",
         "Ask AI to suggest a minimal markup fix for this EPUB "
         "or eBraille issue (uses FIDO AI settings)": (
             "Demander à l’IA de suggérer une correction minimale du balisage "
@@ -686,6 +688,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Fix not confirmed": "Correction non confirmée",
         "Re-check failed": "Échec de la revérification",
+        "Revert": "Rétablir",
+        "Keep": "Conserver",
         "Reverted": "Rétabli",
         "The publication was reverted to the backup.": (
             "La publication a été rétablie à partir de la sauvegarde."
@@ -1029,20 +1033,13 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Profil de validation utilisé pour les fichiers PDF :"
         ),
         "PDF validation profile": "Profil de validation PDF",
-        "EPUB (EPUBCheck)": "EPUB (EPUBCheck)",
-        "Validation profile used when checking EPUB files:": (
-            "Profil de validation utilisé pour les fichiers EPUB :"
-        ),
-        "EPUB validation profile": "Profil de validation EPUB",
         "CheckMate translation of DAISY KB article {path}. "
         "Switch to Original English in the viewer for the authoritative text.": (
             "Traduction CheckMate de l’article DAISY BC {path}. "
             "Passez à l’anglais d’origine dans la visionneuse pour le texte de référence."
         ),
-        "General preferences and checker validation profiles "
-        "(PDF/UA, EPUBCheck)": (
-            "Préférences générales et profils de validation des vérificateurs "
-            "(PDF/UA, EPUBCheck)"
+        "General preferences and PDF validation profile (PDF/UA)": (
+            "Préférences générales et profil de validation PDF (PDF/UA)"
         ),
         "When checked, open the issues list automatically after a check "
         "that finds issues (instead of pressing Show issues)": (
@@ -1063,11 +1060,6 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "UA-2, CheckMate falls back to PDF/UA-1 automatically.": (
             "PDF/UA-2 est la valeur par défaut. Si veraPDF rencontre une erreur "
             "interne sur UA-2, CheckMate repasse automatiquement à PDF/UA-1."
-        ),
-        "EPUBCheck profile (default for standard EPUBs). "
-        "eBraille publications always use the ebraille profile.": (
-            "Profil EPUBCheck (par défaut pour les EPUB standards). "
-            "Les publications eBraille utilisent toujours le profil ebraille."
         ),
     },
     LANG_ES: {
@@ -1131,6 +1123,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Issues list": "Lista de problemas",
         "Severity": "Gravedad",
         "Impact": "Impacto",
+        "Ruleset": "Conjunto de reglas",
         "Help": "Ayuda",
         "Occurrences": "Ocurrencias",
         "Code": "Código",
@@ -1154,6 +1147,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Severity: {value}": "Gravedad: {value}",
         "Impact: {value}": "Impacto: {value}",
+        "Ruleset: {value}": "Conjunto de reglas: {value}",
         "Code: {value}": "Código: {value}",
         "(none)": "(ninguno)",
         "Press Enter or double-click an issue to read the full details.": (
@@ -1438,7 +1432,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Opening issue details…": "Abriendo detalles del problema…",
         "Loading AI view…": "Cargando la vista de IA…",
         "Suggest fix with AI": "Sugerir corrección con IA",
-        "Suggest all like this…": "Sugerir todos así…",
+        "Suggest fix for many": "Sugerir corrección para varias",
         "Ask AI to suggest a minimal markup fix for this EPUB "
         "or eBraille issue (uses FIDO AI settings)": (
             "Pedir a la IA una corrección mínima de marcado para este "
@@ -1597,6 +1591,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Fix not confirmed": "Corrección no confirmada",
         "Re-check failed": "Error al volver a comprobar",
+        "Revert": "Revertir",
+        "Keep": "Conservar",
         "Reverted": "Revertido",
         "The publication was reverted to the backup.": (
             "La publicación se revirtió a la copia de seguridad."
@@ -1922,6 +1918,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Issues list": "Problemliste",
         "Severity": "Schweregrad",
         "Impact": "Auswirkung",
+        "Ruleset": "Regelsatz",
         "Help": "Hilfe",
         "Occurrences": "Vorkommen",
         "Code": "Code",
@@ -1944,6 +1941,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Severity: {value}": "Schweregrad: {value}",
         "Impact: {value}": "Auswirkung: {value}",
+        "Ruleset: {value}": "Regelsatz: {value}",
         "Code: {value}": "Code: {value}",
         "(none)": "(keine)",
         "Press Enter or double-click an issue to read the full details.": (
@@ -2226,7 +2224,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Opening issue details…": "Problemdetails werden geöffnet…",
         "Loading AI view…": "KI-Ansicht wird geladen…",
         "Suggest fix with AI": "Korrektur mit KI vorschlagen",
-        "Suggest all like this…": "Alle so vorschlagen…",
+        "Suggest fix for many": "Korrektur für mehrere vorschlagen",
         "Ask AI to suggest a minimal markup fix for this EPUB "
         "or eBraille issue (uses FIDO AI settings)": (
             "KI um einen minimalen Markup-Fix für dieses EPUB- oder "
@@ -2386,6 +2384,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Fix not confirmed": "Korrektur nicht bestätigt",
         "Re-check failed": "Erneute Prüfung fehlgeschlagen",
+        "Revert": "Zurücksetzen",
+        "Keep": "Behalten",
         "Reverted": "Zurückgesetzt",
         "The publication was reverted to the backup.": (
             "Die Publikation wurde auf die Sicherung zurückgesetzt."
@@ -2712,6 +2712,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Issues list": "Lista de problemas",
         "Severity": "Gravidade",
         "Impact": "Impacto",
+        "Ruleset": "Conjunto de regras",
         "Help": "Ajuda",
         "Occurrences": "Ocorrências",
         "Code": "Código",
@@ -2735,6 +2736,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Severity: {value}": "Gravidade: {value}",
         "Impact: {value}": "Impacto: {value}",
+        "Ruleset: {value}": "Conjunto de regras: {value}",
         "Code: {value}": "Código: {value}",
         "(none)": "(nenhum)",
         "Press Enter or double-click an issue to read the full details.": (
@@ -3019,7 +3021,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Opening issue details…": "A abrir os detalhes do problema…",
         "Loading AI view…": "A carregar a vista de IA…",
         "Suggest fix with AI": "Sugerir correção com IA",
-        "Suggest all like this…": "Sugerir todos assim…",
+        "Suggest fix for many": "Sugerir correção para várias",
         "Ask AI to suggest a minimal markup fix for this EPUB "
         "or eBraille issue (uses FIDO AI settings)": (
             "Pedir à IA uma correção mínima de marcação para este "
@@ -3178,6 +3180,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "Fix not confirmed": "Correção não confirmada",
         "Re-check failed": "Falha na nova verificação",
+        "Revert": "Reverter",
+        "Keep": "Manter",
         "Reverted": "Revertido",
         "The publication was reverted to the backup.": (
             "A publicação foi revertida para a cópia de segurança."

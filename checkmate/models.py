@@ -80,6 +80,8 @@ class Issue:
     help_text: str = ""
     # Ace earl:impact (critical / serious / moderate / minor); empty for others.
     impact: str = ""
+    # Ace ruleset label(s) e.g. "WCAG 2.0 A", "EPUB"; empty when unknown.
+    ruleset: str = ""
 
     def summary_line(self) -> str:
         parts = [self.severity.label]

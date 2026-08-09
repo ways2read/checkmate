@@ -274,6 +274,60 @@ def _severity_from_impact(impact: str | None) -> Severity:
     return Severity.WARNING
 
 
+# Ace/axe rulesetTags → labels matching the Ace app Ruleset column.
+_RULESET_LABELS: dict[str, str] = {
+    "epub": "EPUB",
+    "wcag2a": "WCAG 2.0 A",
+    "wcag2aa": "WCAG 2.0 AA",
+    "wcag2aaa": "WCAG 2.0 AAA",
+    "wcag21a": "WCAG 2.1 A",
+    "wcag21aa": "WCAG 2.1 AA",
+    "wcag21aaa": "WCAG 2.1 AAA",
+    "wcag22a": "WCAG 2.2 A",
+    "wcag22aa": "WCAG 2.2 AA",
+    "wcag22aaa": "WCAG 2.2 AAA",
+    "best-practice": "Best Practice",
+    "bestpractice": "Best Practice",
+    "other": "Other",
+}
+
+
+def _ruleset_label_for_tag(tag: str) -> str | None:
+    """Map one Ace/axe tag to an Ace-app-style Ruleset label, or None to skip."""
+    raw = (tag or "").strip()
+    if not raw:
+        return None
+    key = raw.lower()
+    # Axe category / ACT / Section 508 tags are not Ace "Ruleset" values.
+    if key.startswith(("cat.", "section508", "act", "experimental")):
+        return None
+    known = _RULESET_LABELS.get(key)
+    if known:
+        return known
+    # Skip fine-grained WCAG success-criterion tags (wcag111, wcag143, …).
+    if key.startswith("wcag"):
+        return None
+    # Keep short unknown top-level tags that Ace may add later.
+    if " " not in raw and len(raw) <= 32:
+        return raw
+    return None
+
+
+def ruleset_label_from_tags(tags: object) -> str:
+    """Join Ace rulesetTags into a display string (comma-separated)."""
+    if not isinstance(tags, (list, tuple)):
+        return ""
+    labels: list[str] = []
+    seen: set[str] = set()
+    for item in tags:
+        label = _ruleset_label_for_tag(str(item))
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        labels.append(label)
+    return ", ".join(labels)
+
+
 def _counts_from_issues(issues: list[Issue]) -> dict[str, int]:
     counts = {
         "fatals": 0,
@@ -372,6 +426,7 @@ def _issues_from_ace_report(data: dict) -> list[Issue]:
             if not message:
                 message = str(test.get("dct:description") or code).strip()
             impact = str(test.get("earl:impact") or "").strip()
+            ruleset = ruleset_label_from_tags(test.get("rulesetTags"))
             issues.append(
                 Issue(
                     severity=_severity_from_impact(impact),
@@ -383,6 +438,7 @@ def _issues_from_ace_report(data: dict) -> list[Issue]:
                     help_title=help_title,
                     help_text=help_text,
                     impact=impact,
+                    ruleset=ruleset,
                 )
             )
     return issues

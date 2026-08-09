@@ -18,8 +18,6 @@ from .paths import (
 )
 from .publication import PublicationKind, classify_publication
 from .settings import (
-    DEFAULT_EPUBCHECK_PROFILE,
-    epubcheck_profile,
     verapdf_flavour,
     verapdf_flavour_label,
 )
@@ -101,7 +99,6 @@ def build_command(
     *,
     kind: PublicationKind,
     exploded: bool | None = None,
-    profile: str | None = None,
 ) -> list[str]:
     if exploded is None:
         exploded = is_exploded_path(target)
@@ -113,10 +110,6 @@ def build_command(
     ]
     if kind == PublicationKind.EBRAILLE:
         cmd.extend(["--profile", "ebraille"])
-    elif kind == PublicationKind.EPUB:
-        epub_profile = profile if profile is not None else epubcheck_profile()
-        if epub_profile and epub_profile != DEFAULT_EPUBCHECK_PROFILE:
-            cmd.extend(["--profile", epub_profile])
     if exploded:
         cmd.extend(["-mode", "exp"])
     cmd.extend(["--json", "-"])
@@ -1154,7 +1147,7 @@ def run_check(
     if kind == PublicationKind.EBRAILLE:
         validation_profile = "ebraille"
     else:
-        validation_profile = epubcheck_profile()
+        validation_profile = "default"
 
     with tempfile.TemporaryDirectory(prefix="ebraille-gui-") as tmp:
         json_path = Path(tmp) / "report.json"
@@ -1166,11 +1159,6 @@ def run_check(
         ]
         if kind == PublicationKind.EBRAILLE:
             cmd.extend(["--profile", "ebraille"])
-        elif (
-            kind == PublicationKind.EPUB
-            and validation_profile != DEFAULT_EPUBCHECK_PROFILE
-        ):
-            cmd.extend(["--profile", validation_profile])
         if exploded:
             cmd.extend(["-mode", "exp"])
         cmd.extend(["--json", str(json_path), str(target)])
@@ -1390,6 +1378,7 @@ def _merge_epubcheck_and_ace(
             help_title=issue.help_title,
             help_text=issue.help_text,
             impact=issue.impact,
+            ruleset=issue.ruleset,
         )
         for issue in epub_result.issues
     ]
@@ -1404,6 +1393,7 @@ def _merge_epubcheck_and_ace(
             help_title=issue.help_title,
             help_text=issue.help_text,
             impact=issue.impact,
+            ruleset=issue.ruleset,
         )
         for issue in ace_result.issues
     ]

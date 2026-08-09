@@ -16,16 +16,6 @@ VERAPDF_FLAVOUR_LABELS: dict[str, str] = {
 }
 DEFAULT_VERAPDF_FLAVOUR = "ua2"
 
-# EPUBCheck --profile values (omit flag when "default").
-EPUBCHECK_PROFILES: tuple[str, ...] = (
-    "default",
-    "dict",
-    "edupub",
-    "idx",
-    "preview",
-)
-DEFAULT_EPUBCHECK_PROFILE = "default"
-
 
 def settings_path() -> Path:
     return app_data_dir() / "settings.json"
@@ -48,6 +38,7 @@ def update_settings(**kwargs: Any) -> None:
     data.update(kwargs)
     # Drop obsolete keys from earlier builds.
     data.pop("select_result_on_focus", None)
+    data.pop("epubcheck_profile", None)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
@@ -104,11 +95,3 @@ def verapdf_flavour_label(flavour: str | None = None) -> str:
     """Human label for a veraPDF flavour (e.g. ``PDF/UA-2``)."""
     key = flavour if flavour is not None else verapdf_flavour()
     return VERAPDF_FLAVOUR_LABELS.get(key, key)
-
-
-def epubcheck_profile() -> str:
-    """Selected EPUBCheck ``--profile`` (default ``default``)."""
-    value = str(
-        read_settings().get("epubcheck_profile", DEFAULT_EPUBCHECK_PROFILE)
-    ).strip()
-    return value if value in EPUBCHECK_PROFILES else DEFAULT_EPUBCHECK_PROFILE

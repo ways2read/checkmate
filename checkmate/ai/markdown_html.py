@@ -952,6 +952,9 @@ def issue_details_markdown(issue: "Issue", *, count: int = 1) -> str:
     impact = (getattr(issue, "impact", "") or "").strip()
     if impact:
         parts.append(f"## {_('Impact')}\n\n{impact.title()}\n")
+    ruleset = (getattr(issue, "ruleset", "") or "").strip()
+    if ruleset:
+        parts.append(f"## {_('Ruleset')}\n\n{ruleset}\n")
     parts.append(f"## {_('Source')}\n\n{issue.source or '—'}\n")
     if count > 1:
         parts.append(f"## {_('Occurrences')}\n\n{count}\n")
@@ -1167,6 +1170,9 @@ def issue_details_page(
     impact = (getattr(issue, "impact", "") or "").strip()
     if impact:
         meta_items.append((_("Impact"), f"<p>{esc(impact.title())}</p>"))
+    ruleset = (getattr(issue, "ruleset", "") or "").strip()
+    if ruleset:
+        meta_items.append((_("Ruleset"), f"<p>{esc(ruleset)}</p>"))
     meta_items.append((_("Source"), f"<p>{esc(issue.source or '—')}</p>"))
     if count > 1:
         meta_items.append((_("Occurrences"), f"<p>{int(count)}</p>"))

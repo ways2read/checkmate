@@ -73,6 +73,22 @@ class IssueDetailsPageTests(unittest.TestCase):
         html = issue_details_page(self._issue(impact=""), count=1)
         self.assertNotIn(">Impact<", html)
 
+    def test_ruleset_shown_when_present(self) -> None:
+        html = issue_details_page(
+            self._issue(ruleset="WCAG 2.0 A", source="Ace"), count=1
+        )
+        self.assertIn("Ruleset", html)
+        self.assertIn("WCAG 2.0 A", html)
+        md = issue_details_markdown(
+            self._issue(ruleset="EPUB", source="Ace"), count=1
+        )
+        self.assertIn("## Ruleset", md)
+        self.assertIn("EPUB", md)
+
+    def test_ruleset_omitted_when_empty(self) -> None:
+        html = issue_details_page(self._issue(ruleset=""), count=1)
+        self.assertNotIn(">Ruleset<", html)
+
     def test_generic_document_title_not_code(self) -> None:
         html = issue_details_page(self._issue(code="aria-required-children"), count=1)
         self.assertIn("<title>", html)

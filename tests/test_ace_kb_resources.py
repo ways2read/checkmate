@@ -23,7 +23,50 @@ from checkmate.ai.resources import (
     resources_for_issue,
     resources_prompt_block,
 )
+from checkmate.ace_check import _issues_from_ace_report, ruleset_label_from_tags
 from checkmate.models import Issue, Severity
+
+
+class AceRulesetLabelTests(unittest.TestCase):
+    def test_maps_common_tags(self) -> None:
+        self.assertEqual(ruleset_label_from_tags(["wcag2a"]), "WCAG 2.0 A")
+        self.assertEqual(ruleset_label_from_tags(["wcag2aaa"]), "WCAG 2.0 AAA")
+        self.assertEqual(ruleset_label_from_tags(["EPUB"]), "EPUB")
+        self.assertEqual(
+            ruleset_label_from_tags(["best-practice"]), "Best Practice"
+        )
+
+    def test_skips_axe_category_noise(self) -> None:
+        self.assertEqual(
+            ruleset_label_from_tags(["wcag2aa", "cat.keyboard", "wcag144"]),
+            "WCAG 2.0 AA",
+        )
+
+    def test_parse_report_includes_ruleset(self) -> None:
+        data = {
+            "assertions": [
+                {
+                    "earl:testSubject": {"url": "EPUB/xhtml/ch1.xhtml"},
+                    "assertions": [
+                        {
+                            "earl:result": {
+                                "earl:outcome": "fail",
+                                "dct:description": "missing alt",
+                            },
+                            "earl:test": {
+                                "dct:title": "image-alt",
+                                "earl:impact": "critical",
+                                "rulesetTags": ["wcag2a", "cat.text-alternatives"],
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+        issues = _issues_from_ace_report(data)
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].ruleset, "WCAG 2.0 A")
+        self.assertEqual(issues[0].impact, "critical")
 
 
 class AceKbMapTests(unittest.TestCase):
@@ -267,6 +310,7 @@ class EpubAceMergeTests(unittest.TestCase):
                     help_title="Page List",
                     help_text="Page breaks need accessible names.",
                     impact="serious",
+                    ruleset="EPUB",
                 )
             ],
             tool_name="Ace",
@@ -278,6 +322,7 @@ class EpubAceMergeTests(unittest.TestCase):
         self.assertEqual(issue.help_title, "Page List")
         self.assertEqual(issue.help_text, "Page breaks need accessible names.")
         self.assertTrue(issue.help_url.endswith("pagelist.html"))
+        self.assertEqual(issue.ruleset, "EPUB")
 
 
 if __name__ == "__main__":

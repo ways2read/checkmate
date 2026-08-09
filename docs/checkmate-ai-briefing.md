@@ -57,7 +57,6 @@ Resolution (`resolve_litellm_model_and_key()`) splits `"Provider: model id"`, lo
 - `ai_send_kb_article_body` — Tools → Settings… (Include Knowledge Base article text in AI prompts; default off). See **Authoritative guidance** below: URL-only steering vs sending the article body (more tokens; often better answers because KB pages include current guidance and code samples).
 - `show_issues_always` — Tools → Settings… (Show issues always; default off; opens the issues list automatically after a check that finds issues)
 - `verapdf_flavour` — Tools → Settings… (`ua1` / `ua2`; default `ua2`)
-- `epubcheck_profile` — Tools → Settings… (EPUBCheck `--profile`; default `default`)
 
 AI features are offered when FIDO settings/keys are present (or unlock supplies credentials).
 
@@ -168,7 +167,7 @@ Available after a successful **overview** or **issue explain**. The dialog keeps
 
 ### Assets
 
-1. **Issue fields** — severity, source, code, location, message, tool, publication kind  
+1. **Issue fields** — severity, source, code, location, message, tool, publication kind; for Ace also impact and ruleset (WCAG / EPUB / Best Practice labels from `rulesetTags`)  
 2. **File excerpt** (if `ai_send_file_context` and EPUB/eBraille) — ~±20 lines around the hit, or OPF structural region / capped OPF; Ace locations resolved via CSS/HTML hints when needed  
 3. **KB article body** (if `ai_send_kb_article_body` and a primary DAISY KB URL is known) — offline plain-text article (capped); downloaded on demand if not cached  
 4. **Trusted resources** — curated URLs per checker (`ai/resources.py`):
@@ -238,11 +237,11 @@ Key rules: minimal edit; never empty `original` (insert-via-replace using a uniq
 
 The UI shows a preview (`format_fix_preview()`: Proposed fix / File / Before / After) before the user applies anything.
 
-### Suggest all like this (multi-patch)
+### Suggest fix for many (multi-patch)
 
 **Purpose:** Same safety model (unique replaces only), but suggest **N patches** for every issue sharing the seed’s **source + code** in the current report.
 
-**Entry:** Issue details → **Suggest all like this…** (enabled when matching count > 1) → `propose_batch_fix()`.
+**Entry:** Issue details → **Suggest fix for many** (enabled when matching count > 1) → `propose_batch_fix()`.
 
 1. `gather_batch_fix_context()` — instance list + per-member Exact file text (caps: ~40 issues, ~12 members, ≤20 patches)  
 2. Model returns `## Proposed fix` + JSON `{ "patches": [...], "skipped": [...] }`  
@@ -281,8 +280,8 @@ Single-issue **Suggest fix with AI** is unchanged.
 **UI outcomes:**
 
 - No concerns → “Fix confirmed” (logged as `confirmed`)  
-- Concerns (and backup exists) → offer revert (`restore_from_backup`, including extra member backups for exploded multi-file batches); keep or revert is logged  
-- Re-check itself ends in error verdict → offer revert (logged)  
+- Concerns (and backup exists) → **Revert** / **Keep** buttons (`restore_from_backup` on Revert, including extra member backups for exploded multi-file batches); choice is logged  
+- Re-check itself ends in error verdict → same **Revert** / **Keep** dialog (logged)  
 
 **Changelog location:**
 

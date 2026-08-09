@@ -38,6 +38,8 @@ support on Windows, macOS, and Linux.
 - Filter issues (all / errors / warnings / info); optional **Show one example
   of each issue** to collapse repeated codes with counts
 - Filter by source (**EPUBCheck + Ace**, or either tool alone) when both ran
+- Ace issue details show **Impact** (critical / serious / moderate / minor) and
+  **Ruleset** (e.g. WCAG 2.0 A, EPUB, Best Practice), matching the Ace app
 - Optional full checker log for advanced diagnosis
 - **Explain with AI** (when FIDO AI settings are present on this machine): open
   an issue’s details and ask for a structured plain-language briefing plus
@@ -54,13 +56,13 @@ support on Windows, macOS, and Linux.
   from the same issue details dialog, ask for a minimal suggested markup patch,
   preview before/after, then **Apply fix and validate** to the exploded folder or packaged
   `.epub`/`.ebrl` (creates a `.bak` backup).   When the report has more than one
-  issue with the same checker code, **Suggest all like this…** suggests up to 20
+  issue with the same checker code, **Suggest fix for many** suggests up to 20
   unique replacements across matching instances in one backup/rebuild cycle.
   The details dialog closes and the
   publication is re-checked automatically. CheckMate then reports whether the
   targeted issue is gone, whether overall error/warning counts decreased, and
   (for Ace fixes) whether any new EPUBCheck errors appeared; if anything looks
-  wrong, it offers to revert from the backup. Each applied fix also appends an
+  wrong, it offers to **Revert** or **Keep** the change. Each applied fix also appends an
   entry to a **edit changelog** beside the publication
   (`book.epub.checkmate-changelog.md`, or `checkmate-changelog.md` inside an
   exploded folder) naming the backup file, the issue fixed, and how to revert.
@@ -69,11 +71,11 @@ support on Windows, macOS, and Linux.
 - Copy summary; view or save text / HTML reports (**Report** menu) — HTML
   reports embed an EPUB/eBraille cover image when present, or the first page
   of a PDF; reports and the result pane name the validation profile / ruleset
-  that ran (PDF/UA, EPUBCheck profile, ebraille, Ace axe-core); **Clear results**
+  that ran (PDF/UA, ebraille, Ace axe-core); **Clear results**
   returns to the launch state
 - **Tools → Settings…**: general preferences (show issues always, completion
-  sounds, AI features) and checker profiles (veraPDF PDF/UA-1 or PDF/UA-2;
-  EPUBCheck profile). eBraille always uses the `ebraille` profile
+  sounds, AI features) and the veraPDF PDF/UA profile (UA-1 or UA-2).
+  eBraille always uses the `ebraille` EPUBCheck profile
 - Status bar shows installed checker versions, and Ace / Pipeline when detected
 - UI languages: English, Français, Español, Deutsch, Português, Dansk,
   Nederlands, Suomi, हिन्दी, Norsk, Русский, Svenska (remembered;
@@ -211,7 +213,7 @@ Under that folder:
 - `checker/` — downloaded or updated eBraille Checker releases
 - `epubcheck/` — downloaded or updated EPUBCheck releases
 - `verapdf/` — downloaded or updated veraPDF CLI installs
-- `settings.json` — remembered UI language and preferences (e.g. Show issues always, Play completion sounds, veraPDF / EPUBCheck profiles)
+- `settings.json` — remembered UI language and preferences (e.g. Show issues always, Play completion sounds, veraPDF profile)
 
 Packaged builds also include `checker/`, `epubcheck/`, and `verapdf/` beside the
 executable (or inside the `.app` bundle on macOS).
@@ -261,8 +263,7 @@ eBraille (exploded folder):
 java -Xss4m -jar path\to\ebraille-checker.jar -mode exp --profile ebraille path\to\folder
 ```
 
-EPUB (packaged; add `--profile …` when a non-default EPUBCheck profile is
-selected in Settings):
+EPUB (packaged):
 
 ```bash
 java -Xss4m -jar path\to\epubcheck.jar publication.epub

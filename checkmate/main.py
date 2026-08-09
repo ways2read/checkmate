@@ -1561,6 +1561,9 @@ class IssueDetailDialog(wx.Dialog):
         impact = (issue.impact or "").strip()
         if impact:
             lines.append(_("Impact: {value}", value=impact.title()))
+        ruleset = (issue.ruleset or "").strip()
+        if ruleset:
+            lines.append(_("Ruleset: {value}", value=ruleset))
         lines.append(_("Source: {value}", value=issue.source or "—"))
         if count > 1:
             lines.append(_("Occurrences: {n}", n=count))
@@ -1729,7 +1732,7 @@ class IssueDetailDialog(wx.Dialog):
         self.fix_btn.Bind(wx.EVT_BUTTON, self._on_fix)
         row.Add(self.fix_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
 
-        self.fix_all_btn = wx.Button(panel, label=_("Suggest all like this…"))
+        self.fix_all_btn = wx.Button(panel, label=_("Suggest fix for many"))
         self.fix_all_btn.SetToolTip(
             _(
                 "Ask AI to suggest unique fixes for every issue with the "
@@ -2843,7 +2846,7 @@ class IssueDetailDialog(wx.Dialog):
         self._batch_proposal = None
         self._set_apply_fix_enabled(False)
         cancel = self._open_ai_progress(
-            _("Suggest all like this…"), _("Loading AI libraries…")
+            _("Suggest fix for many"), _("Loading AI libraries…")
         )
         self._set_busy(True, _("Loading AI libraries…"))
         issue = self._issue
@@ -4847,8 +4850,7 @@ class MainFrame(wx.Frame):
         )
         self.menu_settings.SetHelp(
             _(
-                "General preferences and checker validation profiles "
-                "(PDF/UA, EPUBCheck)"
+                "General preferences and PDF validation profile (PDF/UA)"
             )
         )
         tools_menu.AppendSeparator()
@@ -6150,6 +6152,27 @@ class MainFrame(wx.Frame):
         if pending is not None:
             wx.CallAfter(self._verify_applied_fix, pending, event.result)
 
+    def _message_box_revert_or_keep(
+        self,
+        message: str,
+        caption: str,
+        *,
+        default_revert: bool,
+    ) -> bool:
+        """Ask Revert vs Keep; return True when the user chooses Revert."""
+        style = wx.YES_NO | wx.ICON_WARNING
+        style |= wx.YES_DEFAULT if default_revert else wx.NO_DEFAULT
+        dlg = wx.MessageDialog(self, message, caption, style)
+        try:
+            dlg.SetYesNoLabels(_("Revert"), _("Keep"))
+        except Exception:
+            # Older wx builds may lack SetYesNoLabels; fall back to Yes/No.
+            pass
+        try:
+            return dlg.ShowModal() == wx.ID_YES
+        finally:
+            dlg.Destroy()
+
     def _verify_applied_fix(self, pending, result: CheckResult) -> None:
         """After Apply fix + re-check: confirm outcome, report side effects, offer revert."""
         from .ai.fix import PendingFixVerify, evaluate_fix_outcome
@@ -6173,13 +6196,11 @@ class MainFrame(wx.Frame):
                 msg += "\n\n" + _(
                     "Do you want to revert to the backup created before the fix?"
                 )
-                answer = wx.MessageBox(
+                if self._message_box_revert_or_keep(
                     msg,
                     _("Re-check failed"),
-                    wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING,
-                    self,
-                )
-                if answer == wx.YES:
+                    default_revert=False,
+                ):
                     self._revert_applied_fix(pending)
                 else:
                     try:
@@ -6361,7 +6382,7 @@ class MainFrame(wx.Frame):
             )
             return
 
-        answer = wx.MessageBox(
+        if self._message_box_revert_or_keep(
             body
             + "\n\n"
             + _(
@@ -6369,10 +6390,8 @@ class MainFrame(wx.Frame):
                 "Backup:\n{backup}"
             ).format(backup=pending.backup_path),
             _("Fix not confirmed"),
-            wx.YES_NO | wx.YES_DEFAULT | wx.ICON_WARNING,
-            self,
-        )
-        if answer == wx.YES:
+            default_revert=True,
+        ):
             self._revert_applied_fix(pending)
         else:
             try:
