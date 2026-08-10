@@ -404,6 +404,12 @@ def build(
         "tiktoken_ext",
         "--hidden-import",
         "tiktoken_ext.openai_public",
+        "--collect-all",
+        "accessible_output2",
+        "--hidden-import",
+        "accessible_output2",
+        "--hidden-import",
+        "accessible_output2.outputs.auto",
         "--collect-submodules",
         "checkmate",
     ]

@@ -1,6 +1,6 @@
 [project]
 name = "checkmate"
-version = "0.7.23"
+version = "0.7.24"
 description = "CheckMate — accessible cross-platform GUI for the DAISY eBraille Checker, W3C EPUBCheck, and veraPDF"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,6 +14,7 @@ dependencies = [
     "pymupdf>=1.24.0",
     "litellm>=1.50.0",
     "markdown>=3.5",
+    "accessible-output2>=0.17",
 ]
 
 [project.optional-dependencies]

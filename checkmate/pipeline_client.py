@@ -12,7 +12,7 @@ from xml.etree import ElementTree as ET
 
 import requests
 
-from .subprocess_util import format_elapsed
+from .subprocess_util import elapsed_progress_message
 
 PIPELINE_NS = "http://www.daisy.org/ns/pipeline/data"
 _NS = {"d": PIPELINE_NS}
@@ -291,11 +291,12 @@ def wait_for_job(
             return st, last_xml
         now = time.monotonic()
         if progress and (now - last_beat) >= 1.0:
-            msg = f"{progress_label} ({format_elapsed(now - start)})"
-            try:
-                progress(msg, announce=False)
-            except TypeError:
-                progress(msg)
+            msg = elapsed_progress_message(progress_label, now - start)
+            if msg is not None:
+                try:
+                    progress(msg, announce=False)
+                except TypeError:
+                    progress(msg)
             last_beat = now
         time.sleep(POLL_INTERVAL)
     raise TimeoutError(f"Pipeline job timed out after {int(timeout)}s")

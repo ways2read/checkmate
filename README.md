@@ -224,12 +224,16 @@ executable (or inside the `.app` bundle on macOS).
 - Logical focus order; the **Result** pane is a large, bold, focusable
   read-only multi-line field so screen readers can tab in and re-read with the
   caret (Up/Down by line, Left/Right by character)
+- **Spoken status** (Windows, NVDA/JAWS via `accessible-output2`): first-use
+  prep, Ready, check start, each checker start, living progress after 5s
+  elapsed, and “Check finished…” when results arrive. Updates interrupt so
+  stale phrases do not queue. AI/overview progress dialogs speak phase changes
+  the same way (animation-only pulses stay silent).
 - When a check finishes, the main window is raised and focus stays in Result
-  so screen readers announce the verdict (no text selection — selecting then
-  clearing caused NVDA to speak each message twice). Mid-check milestones
-  quietly focus Result. Living timer lines update Result without stealing
-  focus. Set `_ANNOUNCE_MODE = "selection"` in `main.py` for the older
-  leave-text-selected behaviour.
+  so the verdict is also reachable by keyboard. Mid-check milestones quietly
+  focus Result; living timer lines update Result without stealing focus. Set
+  `_ANNOUNCE_MODE = "selection"` in `main.py` for the older leave-text-selected
+  behaviour.
 - **Explain with AI** prefers an Edge/WebKit `WebView` so the reply is real HTML
   (headings, lists, links) for screen readers; falls back to a Markdown text
   field if no webview backend is available (`HtmlWindow` is not used). The
@@ -238,7 +242,8 @@ executable (or inside the `.app` bundle on macOS).
   foreground focus so the explanation is reachable without Alt+Tab. Inside the
   explanation, Tab starts at the top then moves between links (keyboard focus
   is armed without a mouse click); Tab after the last link (or **Ctrl+Tab**)
-  leaves the WebView for the next dialog control.
+  leaves the WebView for the next dialog control. **Escape** closes the dialog
+  from the WebView host or from inside the page (`checkmate://close`).
 - Accessible name includes the verdict text; the window title also appends it
 - **Language** menu: English, Français, Español, Deutsch, Português, Dansk,
   Nederlands, Suomi, हिन्दी, Norsk, Русский, Svenska
@@ -350,6 +355,7 @@ again. Each release build from `scripts/build_macos.sh` increments
 checkmate/
   checkmate/
     main.py            # wxPython UI
+    accessibility.py   # Screen-reader speak helpers (accessible-output2)
     checker.py         # Run jar, parse JSON results
     cover_image.py     # EPUB cover / PDF first-page for HTML reports
     publication.py     # Classify .ebrl / .epub / .pdf / exploded folders

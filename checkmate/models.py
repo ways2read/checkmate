@@ -172,11 +172,6 @@ class CheckResult:
             else:
                 lines.append(f"{source}: " + _("no errors or warnings"))
 
-        # Surface a short profile line in the result pane when present.
-        for meta_label, meta_value in self.extra_meta:
-            if meta_label == "Validation profile" and meta_value:
-                lines.append(meta_value)
-                break
         return lines
 
     def report_meta_lines(self) -> list[str]:

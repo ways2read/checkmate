@@ -27,6 +27,17 @@ def format_elapsed(seconds: float) -> str:
     return f"{s // 60}m {s % 60:02d}s"
 
 
+# Don't show ``(Ns)`` until the check has been running this long.
+ELAPSED_DISPLAY_AFTER_S = 5.0
+
+
+def elapsed_progress_message(label: str, elapsed: float) -> str | None:
+    """Label with timer suffix, or ``None`` if elapsed is still under the threshold."""
+    if elapsed < ELAPSED_DISPLAY_AFTER_S:
+        return None
+    return f"{label} ({format_elapsed(elapsed)})"
+
+
 def run_capturing(
     cmd: Sequence[str],
     *,

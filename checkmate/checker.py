@@ -21,7 +21,7 @@ from .settings import (
     verapdf_flavour,
     verapdf_flavour_label,
 )
-from .subprocess_util import format_elapsed, run_capturing
+from .subprocess_util import elapsed_progress_message, run_capturing
 from .updater import (
     EBRAILLE_TOOL,
     EPUBCHECK_TOOL,
@@ -948,7 +948,9 @@ def _run_verapdf_once(
     label = progress_label or "Checking with veraPDF…"
 
     def heartbeat(elapsed: float) -> None:
-        _emit_progress(progress, f"{label} ({format_elapsed(elapsed)})", announce=False)
+        msg = elapsed_progress_message(label, elapsed)
+        if msg is not None:
+            _emit_progress(progress, msg, announce=False)
 
     proc = run_capturing(
         cmd,
@@ -1164,11 +1166,9 @@ def run_check(
         cmd.extend(["--json", str(json_path), str(target)])
 
         def heartbeat(elapsed: float) -> None:
-            _emit_progress(
-                progress,
-                f"{label} ({format_elapsed(elapsed)})",
-                announce=False,
-            )
+            msg = elapsed_progress_message(label, elapsed)
+            if msg is not None:
+                _emit_progress(progress, msg, announce=False)
 
         try:
             proc = run_capturing(

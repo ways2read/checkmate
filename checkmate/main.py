@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import webbrowser
 from pathlib import Path
 
@@ -335,7 +336,8 @@ def _webview_host_action(url: str) -> str | None:
         return "page_prev"
     if u.startswith("checkmate://page-next"):
         return "page_next"
-    if u.startswith("checkmate://close"):
+    # Edge may report checkmate://close, checkmate://close/, or odd path forms.
+    if u.startswith("checkmate:") and "close" in u.split("?", 1)[0]:
         return "close"
     return None
 
@@ -420,6 +422,92 @@ def _try_set_focus(window: wx.Window | None) -> bool:
         return False
 
 
+# Last announced progress text per dialog (id(dlg) -> (message, monotonic time)).
+_progress_announce_state: dict[int, tuple[str, float]] = {}
+_PROGRESS_ANNOUNCE_THROTTLE_S = 0.5
+
+
+def _clear_progress_announce(dlg: wx.Window | None) -> None:
+    if dlg is None:
+        return
+    _progress_announce_state.pop(id(dlg), None)
+
+
+def _seed_progress_announce(dlg: wx.Window | None, message: str) -> None:
+    """Remember the opening message without firing a NAMECHANGE (focus already speaks)."""
+    if dlg is None:
+        return
+    msg = (message or "").strip()
+    if not msg:
+        return
+    _progress_announce_state[id(dlg)] = (msg, time.monotonic())
+
+
+def _announce_progress_status(dlg: wx.Window | None, message: str) -> None:
+    """
+    Speak a progress status change without moving focus.
+
+    ``Pulse(message)`` only updates a static label, which Windows screen
+    readers do not announce. Speak via accessible_output2 (same approach as
+    FIDO) with interrupt so phase changes replace stale speech. Animation-only
+    empty ``Pulse()`` calls must not go through here.
+    """
+    if dlg is None:
+        return
+    msg = (message or "").strip()
+    if not msg:
+        return
+    try:
+        if not dlg:
+            return
+    except RuntimeError:
+        return
+
+    now = time.monotonic()
+    key = id(dlg)
+    prev = _progress_announce_state.get(key)
+    if prev is not None:
+        prev_msg, prev_t = prev
+        if prev_msg == msg and (now - prev_t) < _PROGRESS_ANNOUNCE_THROTTLE_S:
+            return
+        if prev_msg == msg:
+            return
+    _progress_announce_state[key] = (msg, now)
+
+    try:
+        from .accessibility import speak
+
+        speak(msg, interrupt=True)
+    except Exception:
+        pass
+
+
+def _pulse_progress(
+    dlg: wx.ProgressDialog | None,
+    message: str | None = None,
+    *,
+    announce: bool = True,
+) -> bool:
+    """
+    Pulse a ProgressDialog.
+
+    Pass ``message`` when the status string changes so screen readers can hear
+    it. Leave ``message`` as ``None`` for animation-only timer ticks (silent).
+    """
+    if dlg is None:
+        return True
+    try:
+        if message is None:
+            cont, _skip = dlg.Pulse()
+        else:
+            cont, _skip = dlg.Pulse(message)
+            if announce:
+                _announce_progress_status(dlg, message)
+        return bool(cont)
+    except RuntimeError:
+        return False
+
+
 def _pulse_ui_translate(
     dlg: wx.ProgressDialog,
     msg: str,
@@ -427,7 +515,7 @@ def _pulse_ui_translate(
     cancel_event: threading.Event,
 ) -> None:
     try:
-        cont, _skip = dlg.Pulse(msg)
+        cont = _pulse_progress(dlg, msg)
         if not cont:
             result["abort"] = True
             cancel_event.set()
@@ -442,6 +530,8 @@ def _present_progress_dialog(dlg: wx.Window, message: str) -> None:
             dlg.Pulse(message)  # type: ignore[attr-defined]
     except Exception:
         pass
+    # Seed without NAMECHANGE — focus below already announces the dialog once.
+    _seed_progress_announce(dlg, message)
     try:
         dlg.Raise()
         dlg.Show(True)
@@ -2925,12 +3015,9 @@ class IssueDetailDialog(wx.Dialog):
     def _ai_status_callback(self, message: str) -> None:
         def update() -> None:
             if self._ai_progress is not None:
-                try:
-                    cont, _skip = self._ai_progress.Pulse(message)
-                    if not cont and self._ai_cancel is not None:
-                        self._ai_cancel.set()
-                except RuntimeError:
-                    pass
+                cont = _pulse_progress(self._ai_progress, message)
+                if not cont and self._ai_cancel is not None:
+                    self._ai_cancel.set()
             if self._show_ai:
                 self.ai_status.SetLabel(message)
 
@@ -2967,16 +3054,10 @@ class IssueDetailDialog(wx.Dialog):
         cancel = self._ai_cancel
         if dlg is None or cancel is None:
             return
-        try:
-            cont, _skip = dlg.Pulse()
-        except RuntimeError:
-            return
+        cont = _pulse_progress(dlg)  # animation only — do not announce
         if not cont:
             cancel.set()
-            try:
-                dlg.Pulse(_("Cancelling…"))
-            except RuntimeError:
-                pass
+            _pulse_progress(dlg, _("Cancelling…"))
             self._close_ai_progress(reclaim_focus=True)
             self._set_busy(False)
             if self._show_ai:
@@ -2999,6 +3080,7 @@ class IssueDetailDialog(wx.Dialog):
             self._ai_progress_timer = None
         dlg = self._ai_progress
         self._ai_progress = None
+        _clear_progress_announce(dlg)
         if dlg is not None:
             try:
                 dlg.Destroy()
@@ -3214,10 +3296,7 @@ class IssueDetailDialog(wx.Dialog):
 
             def _thinking() -> None:
                 if self._ai_progress is not None:
-                    try:
-                        self._ai_progress.Pulse(_("Thinking…"))
-                    except RuntimeError:
-                        pass
+                    _pulse_progress(self._ai_progress, _("Thinking…"))
                 self._set_busy(True, _("Thinking…"))
 
             wx.CallAfter(_thinking)
@@ -3619,6 +3698,8 @@ class AiOverviewDialog(wx.Dialog):
         self._ai_output_is_webview = False
         self._ai_focus_after_load = False
         self._ai_view_realized = False
+        self._ai_focus_gen = 0
+        self._closing = False
         from .ai.markdown_html import with_ai_disclaimer
 
         self._ai_markdown = with_ai_disclaimer(markdown_text or "")
@@ -3630,11 +3711,6 @@ class AiOverviewDialog(wx.Dialog):
             heading_font.SetWeight(wx.FONTWEIGHT_BOLD)
             heading.SetFont(heading_font)
         root.Add(heading, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
-
-        if result.headline:
-            summary = wx.StaticText(self, label=result.headline)
-            summary.Wrap(680)
-            root.Add(summary, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
 
         self._ai_output_host = _AiHtmlHostPanel(self, name=_("AI overview"))
         self._ai_output_host.SetMinSize((-1, 360))
@@ -3859,7 +3935,12 @@ class AiOverviewDialog(wx.Dialog):
             except Exception:
                 return False
             host = getattr(self, "_ai_output_host", None)
-            return _try_set_focus(host if host is not None else self.ai_output)
+            view = self.ai_output
+            if host is not None and view is not None:
+                _refresh_ai_html_tab_stops(host, view, is_webview=True)
+                if isinstance(host, _AiHtmlHostPanel):
+                    host._accept_kbd_focus = True
+            return _try_set_focus(host if host is not None else view)
         view = self.ai_output
         if hasattr(view, "SetInsertionPoint") and hasattr(view, "GetValue"):
             try:
@@ -3885,9 +3966,16 @@ class AiOverviewDialog(wx.Dialog):
         except RuntimeError:
             return False
         _win_force_foreground(self)
+        # Keep keyboard in wx on the host gate — diving into Edge leaves a
+        # limbo where Escape/Tab do nothing (same fix as IssueDetailDialog).
         if self._ai_output_is_webview:
             host = getattr(self, "_ai_output_host", None)
-            return _try_set_focus(host if host is not None else self.ai_output)
+            view = self.ai_output
+            if host is not None and view is not None:
+                _refresh_ai_html_tab_stops(host, view, is_webview=True)
+                if isinstance(host, _AiHtmlHostPanel):
+                    host._accept_kbd_focus = True
+            return _try_set_focus(host if host is not None else view)
         return _focus_ai_html_view(
             self.ai_output,
             is_webview=False,
@@ -3943,12 +4031,9 @@ class AiOverviewDialog(wx.Dialog):
     def _ai_status_callback(self, message: str) -> None:
         def update() -> None:
             if self._ai_progress is not None:
-                try:
-                    cont, _skip = self._ai_progress.Pulse(message)
-                    if not cont and self._ai_cancel is not None:
-                        self._ai_cancel.set()
-                except RuntimeError:
-                    pass
+                cont = _pulse_progress(self._ai_progress, message)
+                if not cont and self._ai_cancel is not None:
+                    self._ai_cancel.set()
 
         wx.CallAfter(update)
 
@@ -3980,16 +4065,10 @@ class AiOverviewDialog(wx.Dialog):
         cancel = self._ai_cancel
         if dlg is None or cancel is None:
             return
-        try:
-            cont, _skip = dlg.Pulse()
-        except RuntimeError:
-            return
+        cont = _pulse_progress(dlg)  # animation only — do not announce
         if not cont:
             cancel.set()
-            try:
-                dlg.Pulse(_("Cancelling…"))
-            except RuntimeError:
-                pass
+            _pulse_progress(dlg, _("Cancelling…"))
             self._close_ai_progress(reclaim_focus=True)
             self._set_busy(False)
 
@@ -4008,6 +4087,7 @@ class AiOverviewDialog(wx.Dialog):
             self._ai_progress_timer = None
         dlg = self._ai_progress
         self._ai_progress = None
+        _clear_progress_announce(dlg)
         if dlg is not None:
             try:
                 dlg.Destroy()
@@ -4062,10 +4142,7 @@ class AiOverviewDialog(wx.Dialog):
 
             def _thinking() -> None:
                 if self._ai_progress is not None:
-                    try:
-                        self._ai_progress.Pulse(_("Thinking…"))
-                    except RuntimeError:
-                        pass
+                    _pulse_progress(self._ai_progress, _("Thinking…"))
 
             wx.CallAfter(_thinking)
             try:
@@ -4225,25 +4302,34 @@ class AiOverviewDialog(wx.Dialog):
                 wx.TheClipboard.Close()
 
     def _on_close_dialog(self, event: wx.Event | None = None) -> None:
+        # Guard against SetEscapeId + CHAR_HOOK + checkmate://close all firing.
+        # A second pass that Destroy()s while ShowModal is unwinding leaves the
+        # main frame disabled/frozen.
         if getattr(self, "_closing", False):
             if isinstance(event, wx.CloseEvent):
                 event.Veto()
             return
         self._closing = True
+        # Cancel deferred WebView focus/reveal/paint chains.
         self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
         if self._ai_cancel is not None:
             self._ai_cancel.set()
         self._close_ai_progress(reclaim_focus=False)
         if isinstance(event, wx.CloseEvent):
             event.Veto()
+        # Never steal focus from Edge via WM_NEXTDLGCTL here — that deadlocks
+        # WebView2 when Escape arrives through checkmate://close. Finish close
+        # on the next idle so we are outside navigating/key handlers.
         wx.CallAfter(self._finish_close_dialog)
 
     def _finish_close_dialog(self) -> None:
+        """Complete modal teardown after Escape/close (safe for WebView2)."""
         try:
             if not self:
                 return
         except RuntimeError:
             return
+        # Soft blur: focus the dialog HWND only (no dialog-manager dance).
         if sys.platform == "win32":
             try:
                 import ctypes
@@ -4639,6 +4725,25 @@ class MainFrame(wx.Frame):
 
         wx.CallAfter(lambda: _attempt(0))
 
+    def _speak_status(self, text: str, *, progress: bool = False) -> None:
+        """Speak a status line through NVDA/JAWS (interruptible; no-op if unavailable).
+
+        ``progress=True`` uses a shorter throttle so living check updates are
+        spoken without queuing a backlog of timer ticks.
+        """
+        msg = (text or "").strip()
+        if not msg:
+            return
+        try:
+            from .accessibility import announce, speak
+
+            if progress:
+                announce(msg, progress=True)
+            else:
+                speak(msg, interrupt=True)
+        except Exception:
+            pass
+
     def _show_result_text(
         self,
         display: str,
@@ -4656,6 +4761,10 @@ class MainFrame(wx.Frame):
         self._set_result_accessible_name(display)
         self._set_result_colors(verdict)
         spoken = title if title is not None else display
+
+        if focus:
+            # Direct speech so milestones are heard even when focus alone is quiet.
+            self._speak_status(spoken)
 
         if _ANNOUNCE_MODE == "focus":
             if update_title or focus:
@@ -5441,6 +5550,7 @@ class MainFrame(wx.Frame):
                 result["abort"] = True
                 cancel_event.set()
         try:
+            _clear_progress_announce(dlg)
             dlg.Destroy()
         except Exception:
             pass
@@ -6173,7 +6283,7 @@ class MainFrame(wx.Frame):
             style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE,
         )
         try:
-            progress.Pulse(_("Opening issue details…"))
+            _pulse_progress(progress, _("Opening issue details…"))
             wx.SafeYield(self, True)
             dlg = IssueDetailDialog(
                 self,
@@ -6183,10 +6293,11 @@ class MainFrame(wx.Frame):
             )
             # Edge/WebKit WebView creation is the slow part — keep progress up.
             if getattr(dlg, "_show_ai", False):
-                progress.Pulse(_("Loading AI view…"))
+                _pulse_progress(progress, _("Loading AI view…"))
                 wx.SafeYield(self, True)
                 dlg._realize_ai_html_view()
         finally:
+            _clear_progress_announce(progress)
             try:
                 progress.Destroy()
             except RuntimeError:
@@ -6290,6 +6401,7 @@ class MainFrame(wx.Frame):
         self._update_report_actions_enabled()
         self._update_result_status_icon()
         self._update_status_bar()
+        self._speak_status(result.announcement())
         self._announce_result_pane()
         try:
             from .sounds import play_completion_sound
@@ -6395,9 +6507,14 @@ class MainFrame(wx.Frame):
             self._update_status_bar()
             # Prefer starting a shell-opened publication over resetting to idle.
             if self._pending_open_paths:
+                self._speak_status(_("Ready"))
                 self._flush_pending_open_paths()
             elif not self._busy:
                 self._restore_result_display()
+                ready_text = self.result_label.GetValue().strip() or _("Ready")
+                self._speak_status(ready_text)
+            else:
+                self._speak_status(_("Ready"))
             return
         announce = bool(getattr(event, "announce", True))
         if announce:
@@ -6406,11 +6523,11 @@ class MainFrame(wx.Frame):
                 event.message, update_title=False, focus=True
             )
             return
-        # Living updates (Ace stream / elapsed timer): refresh Result text only.
-        # Do not touch the title or flash-announce — that is what made
-        # "Checking with EPUBCheck (0s)" feel clunky.
+        # Living updates (Ace stream / elapsed timer): refresh Result text and
+        # speak with progress throttle — do not steal focus every tick.
         self.result_label.ChangeValue(event.message)
         self._set_result_accessible_name(event.message)
+        self._speak_status(event.message, progress=True)
 
     def on_result_event(self, event: ResultEvent) -> None:
         # Defer icon refresh until _apply_result so we don't flash the previous
@@ -6926,6 +7043,7 @@ class MainFrame(wx.Frame):
             self._overview_progress_timer = None
         dlg = self._overview_progress
         self._overview_progress = None
+        _clear_progress_announce(dlg)
         if dlg is not None:
             try:
                 dlg.Destroy()
@@ -6935,12 +7053,9 @@ class MainFrame(wx.Frame):
     def _overview_status_callback(self, message: str) -> None:
         def update() -> None:
             if self._overview_progress is not None:
-                try:
-                    cont, _skip = self._overview_progress.Pulse(message)
-                    if not cont and self._overview_cancel is not None:
-                        self._overview_cancel.set()
-                except RuntimeError:
-                    pass
+                cont = _pulse_progress(self._overview_progress, message)
+                if not cont and self._overview_cancel is not None:
+                    self._overview_cancel.set()
 
         wx.CallAfter(update)
 
@@ -6949,16 +7064,10 @@ class MainFrame(wx.Frame):
         cancel = self._overview_cancel
         if dlg is None or cancel is None:
             return
-        try:
-            cont, _skip = dlg.Pulse()
-        except RuntimeError:
-            return
+        cont = _pulse_progress(dlg)  # animation only — do not announce
         if not cont:
             cancel.set()
-            try:
-                dlg.Pulse(_("Cancelling…"))
-            except RuntimeError:
-                pass
+            _pulse_progress(dlg, _("Cancelling…"))
             self._close_overview_progress()
 
     def on_ai_overview(self, _event: wx.CommandEvent) -> None:
@@ -7020,10 +7129,9 @@ class MainFrame(wx.Frame):
 
             def _checking() -> None:
                 if self._overview_progress is not None:
-                    try:
-                        self._overview_progress.Pulse(_("Checking AI connection…"))
-                    except RuntimeError:
-                        pass
+                    _pulse_progress(
+                        self._overview_progress, _("Checking AI connection…")
+                    )
 
             wx.CallAfter(_checking)
             try:
@@ -7077,7 +7185,7 @@ class MainFrame(wx.Frame):
         )
         dlg = None
         try:
-            progress.Pulse(_("Loading AI view…"))
+            _pulse_progress(progress, _("Loading AI view…"))
             wx.SafeYield(self, True)
             dlg = AiOverviewDialog(
                 self,
@@ -7087,6 +7195,7 @@ class MainFrame(wx.Frame):
             )
             dlg._realize_ai_html_view()
         finally:
+            _clear_progress_announce(progress)
             try:
                 progress.Destroy()
             except RuntimeError:
