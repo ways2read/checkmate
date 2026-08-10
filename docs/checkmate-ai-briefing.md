@@ -56,6 +56,7 @@ Resolution (`resolve_litellm_model_and_key()`) splits `"Provider: model id"`, lo
 - `ai_send_file_context` — whether file excerpts are included in explain/fix prompts (default on)
 - `ai_send_kb_article_body` — Tools → Settings… (Include Knowledge Base article text in AI prompts; default off). See **Authoritative guidance** below: URL-only steering vs sending the article body (more tokens; often better answers because KB pages include current guidance and code samples).
 - `show_issues_always` — Tools → Settings… (Show issues always; default off; opens the issues list automatically after a check that finds issues)
+- `single_instance` — Tools → Settings… (Allow only one window; default on; a second launch focuses the existing window)
 - `verapdf_flavour` — Tools → Settings… (`ua1` / `ua2`; default `ua2`)
 
 AI features are offered when FIDO settings/keys are present (or unlock supplies credentials).

@@ -4565,16 +4565,64 @@ class EBrailleApp(wx.App):
     def __init__(self, initial_paths: list[str] | None = None) -> None:
         self._pending_paths = list(initial_paths or [])
         self.frame: MainFrame | None = None
+        self._instance_checker: wx.SingleInstanceChecker | None = None
+        self._open_watcher = None
         super().__init__(False)
 
     def OnInit(self) -> bool:  # noqa: N802 — wx API
+        from .settings import single_instance_enabled
+        from .single_instance import (
+            OpenRequestWatcher,
+            bring_checkmate_window_to_front,
+            send_open_paths,
+        )
         from .telemetry import init_app_telemetry
+
+        # Keep a reference so the lock is held for the life of this process.
+        self._instance_checker = wx.SingleInstanceChecker("CheckMate-single-instance")
+        if single_instance_enabled() and self._instance_checker.IsAnotherRunning():
+            if self._pending_paths:
+                send_open_paths(self._pending_paths)
+            bring_checkmate_window_to_front()
+            return False
 
         init_app_telemetry(self)
         self.frame = MainFrame(initial_paths=self._pending_paths)
         self._pending_paths.clear()
         self.frame.Show()
+        self._open_watcher = OpenRequestWatcher(
+            self,
+            self._on_external_open_paths,
+        )
         return True
+
+    def _on_external_open_paths(self, paths: list[str]) -> None:
+        """Handle publication paths forwarded from a second CheckMate launch."""
+        if self.frame is None or not paths:
+            return
+        bring = True
+        try:
+            from .single_instance import bring_checkmate_window_to_front
+
+            bring_checkmate_window_to_front()
+        except Exception:
+            bring = False
+        if not bring and self.frame is not None:
+            try:
+                self.frame.Raise()
+            except Exception:
+                pass
+        wx.CallAfter(self.frame.open_publication_paths, list(paths))
+
+    def OnExit(self) -> int:  # noqa: N802 — wx API
+        watcher = getattr(self, "_open_watcher", None)
+        if watcher is not None:
+            try:
+                watcher.stop()
+            except Exception:
+                pass
+            self._open_watcher = None
+        return super().OnExit()
 
     def MacOpenFiles(self, fileNames: list[str]) -> None:  # noqa: N802 — wx API
         """Finder 'Open With' / double-click while the app is running or launching."""
@@ -5233,7 +5281,7 @@ class MainFrame(wx.Frame):
         )
         self.menu_settings.SetHelp(
             _(
-                "General preferences and PDF validation profile (PDF/UA)"
+                "General preferences, EPUB checkers, and PDF validation profile"
             )
         )
         tools_menu.AppendSeparator()

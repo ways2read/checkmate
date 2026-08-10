@@ -16,6 +16,15 @@ VERAPDF_FLAVOUR_LABELS: dict[str, str] = {
 }
 DEFAULT_VERAPDF_FLAVOUR = "ua2"
 
+# Which checkers run for packaged/exploded EPUB (not eBraille).
+EPUB_CHECKERS: tuple[str, ...] = ("both", "epubcheck", "ace")
+EPUB_CHECKERS_LABELS: dict[str, str] = {
+    "both": "EPUBCheck + Ace",
+    "epubcheck": "EPUBCheck only",
+    "ace": "Ace only",
+}
+DEFAULT_EPUB_CHECKERS = "both"
+
 
 def settings_path() -> Path:
     return app_data_dir() / "settings.json"
@@ -85,6 +94,15 @@ def sounds_enabled() -> bool:
     return bool(read_settings().get("sounds_enabled", True))
 
 
+def single_instance_enabled() -> bool:
+    """True when a second CheckMate launch should focus the existing window.
+
+    Default on: avoids conflicting Fix/apply edits and settings races when
+    two copies would otherwise run at once.
+    """
+    return bool(read_settings().get("single_instance", True))
+
+
 def verapdf_flavour() -> str:
     """Selected veraPDF validation flavour (``ua1`` or ``ua2``; default UA-2)."""
     value = str(read_settings().get("verapdf_flavour", DEFAULT_VERAPDF_FLAVOUR)).strip()
@@ -95,3 +113,15 @@ def verapdf_flavour_label(flavour: str | None = None) -> str:
     """Human label for a veraPDF flavour (e.g. ``PDF/UA-2``)."""
     key = flavour if flavour is not None else verapdf_flavour()
     return VERAPDF_FLAVOUR_LABELS.get(key, key)
+
+
+def epub_checkers() -> str:
+    """Selected EPUB checker mode (``both``, ``epubcheck``, or ``ace``)."""
+    value = str(read_settings().get("epub_checkers", DEFAULT_EPUB_CHECKERS)).strip()
+    return value if value in EPUB_CHECKERS else DEFAULT_EPUB_CHECKERS
+
+
+def epub_checkers_label(mode: str | None = None) -> str:
+    """Human label for an EPUB checker mode (e.g. ``EPUBCheck + Ace``)."""
+    key = mode if mode is not None else epub_checkers()
+    return EPUB_CHECKERS_LABELS.get(key, key)

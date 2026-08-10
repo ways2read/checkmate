@@ -196,6 +196,16 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Joue un son court à la fin d’une vérification "
             "(tons différents pour réussite et échec)"
         ),
+        "Allow only one window": "N’autoriser qu’une seule fenêtre",
+        "When opening CheckMate again, focus the existing window "
+        "instead of starting another. Files passed to the second "
+        "launch open in that window. Helps avoid conflicting edits "
+        "on the same publication.": (
+            "En rouvrant CheckMate, active la fenêtre existante au lieu "
+            "d’en démarrer une autre. Les fichiers passés au second "
+            "lancement s’ouvrent dans cette fenêtre. Évite les modifications "
+            "conflictuelles sur la même publication."
+        ),
         "View full &log\tCtrl+L": "Afficher le journal &complet\tCtrl+L",
         "Check for &updates…": "Rechercher des &mises à jour…",
         "&Download / reinstall checkers…": "&Télécharger / réinstaller les vérificateurs…",
@@ -1032,8 +1042,23 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "General": "Général",
         "Show issues always": "Toujours afficher les problèmes",
         "Play completion sounds": "Jouer les sons de fin",
+        "Allow only one window": "N’autoriser qu’une seule fenêtre",
         "Enable AI features": "Activer les fonctions IA",
         "PDF (veraPDF)": "PDF (veraPDF)",
+        "EPUB": "EPUB",
+        "Checkers used when checking EPUB files:": (
+            "Vérificateurs utilisés pour les fichiers EPUB :"
+        ),
+        "EPUB checkers": "Vérificateurs EPUB",
+        "EPUBCheck only": "EPUBCheck uniquement",
+        "Ace only": "Ace uniquement",
+        "EPUBCheck + Ace is the default. Choose EPUBCheck only or Ace "
+        "only when you want a single tool. eBraille always uses the "
+        "eBraille Checker.": (
+            "EPUBCheck + Ace est la valeur par défaut. Choisissez EPUBCheck "
+            "uniquement ou Ace uniquement pour un seul outil. eBraille utilise "
+            "toujours le eBraille Checker."
+        ),
         "Validation profile used when checking PDF files:": (
             "Profil de validation utilisé pour les fichiers PDF :"
         ),
@@ -1042,6 +1067,9 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "Switch to Original English in the viewer for the authoritative text.": (
             "Traduction CheckMate de l’article DAISY BC {path}. "
             "Passez à l’anglais d’origine dans la visionneuse pour le texte de référence."
+        ),
+        "General preferences, EPUB checkers, and PDF validation profile": (
+            "Préférences générales, vérificateurs EPUB et profil de validation PDF"
         ),
         "General preferences and PDF validation profile (PDF/UA)": (
             "Préférences générales et profil de validation PDF (PDF/UA)"
@@ -1055,6 +1083,15 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "(different tones for passed and failed)": (
             "Joue un court son à la fin d’une vérification "
             "(tons différents pour réussi et échoué)"
+        ),
+        "When opening CheckMate again, focus the existing window "
+        "instead of starting another. Files passed to the second "
+        "launch open in that window. Helps avoid conflicting edits "
+        "on the same publication.": (
+            "En rouvrant CheckMate, active la fenêtre existante au lieu "
+            "d’en démarrer une autre. Les fichiers passés au second "
+            "lancement s’ouvrent dans cette fenêtre. Évite les modifications "
+            "conflictuelles sur la même publication."
         ),
         "Show or hide AI features when FIDO AI is available "
         "(useful for training)": (
@@ -1205,6 +1242,16 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "(different tones for passed and failed)": (
             "Reproduce un sonido breve al terminar una comprobación "
             "(tonos distintos para aprobado y fallido)"
+        ),
+        "Allow only one window": "Permitir solo una ventana",
+        "When opening CheckMate again, focus the existing window "
+        "instead of starting another. Files passed to the second "
+        "launch open in that window. Helps avoid conflicting edits "
+        "on the same publication.": (
+            "Al abrir CheckMate de nuevo, enfoca la ventana existente en "
+            "lugar de iniciar otra. Los archivos pasados al segundo "
+            "inicio se abren en esa ventana. Ayuda a evitar ediciones "
+            "conflictivas en la misma publicación."
         ),
         "View full &log\tCtrl+L": "Ver registro &completo\tCtrl+L",
         "Check for &updates…": "Buscar &actualizaciones…",
@@ -2006,6 +2053,16 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
             "Spielt einen kurzen Ton ab, wenn eine Prüfung endet "
             "(unterschiedliche Töne für bestanden und fehlgeschlagen)"
         ),
+        "Allow only one window": "Nur ein Fenster zulassen",
+        "When opening CheckMate again, focus the existing window "
+        "instead of starting another. Files passed to the second "
+        "launch open in that window. Helps avoid conflicting edits "
+        "on the same publication.": (
+            "Beim erneuten Öffnen von CheckMate wird das vorhandene Fenster "
+            "fokussiert statt ein weiteres zu starten. Dateien der zweiten "
+            "Startaktion öffnen sich in diesem Fenster. Vermeidet "
+            "widersprüchliche Bearbeitungen derselben Publikation."
+        ),
         "View full &log\tCtrl+L": "Vollständiges &Protokoll anzeigen\tCtrl+L",
         "Check for &updates…": "Nach &Updates suchen…",
         "&Download / reinstall checkers…": "Prüfer &herunterladen / neu installieren…",
@@ -2804,6 +2861,16 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "(different tones for passed and failed)": (
             "Reproduz um som curto quando uma verificação termina "
             "(tons diferentes para aprovado e reprovado)"
+        ),
+        "Allow only one window": "Permitir apenas uma janela",
+        "When opening CheckMate again, focus the existing window "
+        "instead of starting another. Files passed to the second "
+        "launch open in that window. Helps avoid conflicting edits "
+        "on the same publication.": (
+            "Ao abrir o CheckMate novamente, foca a janela existente em "
+            "vez de iniciar outra. Os ficheiros passados ao segundo "
+            "arranque abrem nessa janela. Ajuda a evitar edições "
+            "conflituosas na mesma publicação."
         ),
         "View full &log\tCtrl+L": "Ver registo &completo\tCtrl+L",
         "Check for &updates…": "Procurar &atualizações…",

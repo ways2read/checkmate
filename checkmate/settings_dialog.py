@@ -7,12 +7,17 @@ import wx
 from .fido_settings import fido_settings_present
 from .i18n import _
 from .settings import (
+    DEFAULT_EPUB_CHECKERS,
     DEFAULT_VERAPDF_FLAVOUR,
+    EPUB_CHECKERS,
+    EPUB_CHECKERS_LABELS,
     VERAPDF_FLAVOUR_LABELS,
     VERAPDF_FLAVOURS,
     ai_features_enabled,
     ai_send_kb_article_body,
+    epub_checkers,
     show_issues_always,
+    single_instance_enabled,
     sounds_enabled,
     update_settings,
     verapdf_flavour,
@@ -20,7 +25,7 @@ from .settings import (
 
 
 class SettingsDialog(wx.Dialog):
-    """Edit general prefs and PDF validation profile; save on OK."""
+    """Edit general prefs and checker profiles; save on OK."""
 
     def __init__(self, parent: wx.Window) -> None:
         super().__init__(
@@ -51,6 +56,20 @@ class SettingsDialog(wx.Dialog):
         )
         general.Add(self.sounds_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
 
+        self.single_instance_cb = wx.CheckBox(
+            self, label=_("Allow only one window")
+        )
+        self.single_instance_cb.SetValue(single_instance_enabled())
+        self.single_instance_cb.SetToolTip(
+            _(
+                "When opening CheckMate again, focus the existing window "
+                "instead of starting another. Files passed to the second "
+                "launch open in that window. Helps avoid conflicting edits "
+                "on the same publication."
+            )
+        )
+        general.Add(self.single_instance_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
         self.ai_cb = wx.CheckBox(self, label=_("Enable AI features"))
         ai_available = fido_settings_present()
         self.ai_cb.Enable(ai_available)
@@ -78,6 +97,34 @@ class SettingsDialog(wx.Dialog):
         self.ai_cb.Bind(wx.EVT_CHECKBOX, self._on_ai_toggle)
         self._sync_kb_body_enabled()
         root.Add(general, 0, wx.EXPAND | wx.ALL, 12)
+
+        epub_box = wx.StaticBoxSizer(wx.VERTICAL, self, _("EPUB"))
+        epub_hint = wx.StaticText(
+            self,
+            label=_("Checkers used when checking EPUB files:"),
+        )
+        epub_box.Add(epub_hint, 0, wx.LEFT | wx.RIGHT | wx.TOP, 6)
+        self.epub_choice = wx.Choice(self)
+        self._epub_values: list[str] = []
+        current_epub = epub_checkers()
+        select_epub = 0
+        for i, code in enumerate(EPUB_CHECKERS):
+            label = _(EPUB_CHECKERS_LABELS.get(code, code))
+            self.epub_choice.Append(label)
+            self._epub_values.append(code)
+            if code == current_epub:
+                select_epub = i
+        self.epub_choice.SetSelection(select_epub)
+        self.epub_choice.SetName(_("EPUB checkers"))
+        self.epub_choice.SetToolTip(
+            _(
+                "EPUBCheck + Ace is the default. Choose EPUBCheck only or Ace "
+                "only when you want a single tool. eBraille always uses the "
+                "eBraille Checker."
+            )
+        )
+        epub_box.Add(self.epub_choice, 0, wx.EXPAND | wx.ALL, 6)
+        root.Add(epub_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
 
         pdf_box = wx.StaticBoxSizer(wx.VERTICAL, self, _("PDF (veraPDF)"))
         pdf_hint = wx.StaticText(
@@ -121,6 +168,12 @@ class SettingsDialog(wx.Dialog):
         ai_on = bool(self.ai_cb.IsEnabled() and self.ai_cb.GetValue())
         self.kb_body_cb.Enable(ai_on)
 
+    def selected_epub_checkers(self) -> str:
+        idx = self.epub_choice.GetSelection()
+        if 0 <= idx < len(self._epub_values):
+            return self._epub_values[idx]
+        return DEFAULT_EPUB_CHECKERS
+
     def selected_verapdf_flavour(self) -> str:
         idx = self.verapdf_choice.GetSelection()
         if 0 <= idx < len(self._verapdf_values):
@@ -132,6 +185,8 @@ class SettingsDialog(wx.Dialog):
         kwargs: dict = {
             "show_issues_always": bool(self.show_issues_cb.GetValue()),
             "sounds_enabled": bool(self.sounds_cb.GetValue()),
+            "single_instance": bool(self.single_instance_cb.GetValue()),
+            "epub_checkers": self.selected_epub_checkers(),
             "verapdf_flavour": self.selected_verapdf_flavour(),
         }
         if fido_settings_present():

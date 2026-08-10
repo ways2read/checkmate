@@ -18,6 +18,7 @@ from .paths import (
 )
 from .publication import PublicationKind, classify_publication
 from .settings import (
+    epub_checkers,
     verapdf_flavour,
     verapdf_flavour_label,
 )
@@ -1003,6 +1004,12 @@ def run_check(
             checked_at=checked_at,
         )
 
+    # EPUB Ace-only: skip EPUBCheck/Java entirely (Settings → EPUB checkers).
+    if kind == PublicationKind.EPUB and epub_checkers() == "ace":
+        return _run_ace_only_check(
+            target, progress=progress, checked_at=checked_at
+        )
+
     tool = tool_for_kind(kind)
     if tool is None:
         return _stamp_result(
@@ -1485,6 +1492,37 @@ def _merge_epubcheck_and_ace(
     )
 
 
+def _run_ace_only_check(
+    target: Path,
+    *,
+    progress=None,
+    checked_at: datetime | None = None,
+) -> CheckResult:
+    """Run Ace alone when Settings → EPUB checkers is Ace only."""
+    from .ace_check import ACE_DISPLAY_NAME, run_ace_check
+
+    when = checked_at or datetime.now().astimezone()
+    ace_result = run_ace_check(target, progress=progress)
+    if ace_result is None:
+        return _stamp_result(
+            CheckResult(
+                verdict=Verdict.ERROR,
+                error_message=(
+                    "Ace was not found. Install Ace, or choose EPUBCheck "
+                    "(or EPUBCheck + Ace) in Tools → Settings…"
+                ),
+                tool_name=ACE_DISPLAY_NAME,
+            ),
+            target=target,
+            checked_at=when,
+        )
+    if ace_result.checked_at is None:
+        ace_result.checked_at = when
+    if not ace_result.target_path:
+        ace_result.target_path = str(target)
+    return ace_result
+
+
 def _with_optional_ace(
     epub_result: CheckResult,
     *,
@@ -1494,6 +1532,9 @@ def _with_optional_ace(
 ) -> CheckResult:
     """After EPUBCheck, optionally run Ace and merge (EPUB only)."""
     if kind != PublicationKind.EPUB:
+        return epub_result
+    # Settings → EPUB checkers: EPUBCheck only skips Ace.
+    if epub_checkers() == "epubcheck":
         return epub_result
     # Skip Ace when EPUBCheck never really started (infra already surfaced).
     if (

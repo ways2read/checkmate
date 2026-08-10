@@ -38,6 +38,7 @@ support on Windows, macOS, and Linux.
 - Filter issues (all / errors / warnings / info); optional **Show one example
   of each issue** to collapse repeated codes with counts
 - Filter by source (**EPUBCheck + Ace**, or either tool alone) when both ran
+  (Tools → Settings… chooses EPUBCheck + Ace by default, or either tool alone)
 - Ace issue details show **Impact** (critical / serious / moderate / minor) and
   **Ruleset** (e.g. WCAG 2.0 A, EPUB, Best Practice), matching the Ace app
 - Optional full checker log for advanced diagnosis
