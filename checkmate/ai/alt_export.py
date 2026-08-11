@@ -20,6 +20,7 @@ _FILE_KEYS = ("Filename", "filename", "File", "file")
 _INDEX_KEYS = ("Index", "index")
 _DIM_KEYS = ("Dimensions", "dimensions")
 _SIZE_KEYS = ("File Size", "FileSize", "file_size")
+_CONTEXT_KEYS = ("Context", "context", "Surrounding Text", "surrounding_text")
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class AltExportImage:
     status: str
     dimensions: str = ""
     file_size: str = ""
+    context: str = ""
     image_path: Path | None = None
 
     @property
@@ -49,6 +51,10 @@ class AltExportImage:
     @property
     def alt_stripped(self) -> str:
         return (self.alt_text or "").strip()
+
+    @property
+    def context_stripped(self) -> str:
+        return (self.context or "").strip()
 
 
 @dataclass
@@ -117,6 +123,21 @@ def find_export_csv(folder: Path) -> Path | None:
     return None
 
 
+def export_csv_has_context(folder: Path | str) -> bool:
+    """True when the export CSV includes a Context column."""
+    csv_path = find_export_csv(Path(folder))
+    if csv_path is None:
+        return False
+    try:
+        with csv_path.open(encoding="utf-8-sig", newline="") as fh:
+            reader = csv.DictReader(fh)
+            names = reader.fieldnames or []
+    except OSError:
+        return False
+    lower = {str(n).strip().lower() for n in names}
+    return bool(lower & {k.lower() for k in _CONTEXT_KEYS})
+
+
 def resolve_image_path(folder: Path, filename: str) -> Path | None:
     name = (filename or "").strip()
     if not name:
@@ -182,6 +203,7 @@ def load_alt_export(folder: Path | str) -> AltExport:
                 status=_pick(row, _STATUS_KEYS).strip(),
                 dimensions=_pick(row, _DIM_KEYS).strip(),
                 file_size=_pick(row, _SIZE_KEYS).strip(),
+                context=_pick(row, _CONTEXT_KEYS),
                 image_path=path,
             )
         )
@@ -222,16 +244,31 @@ def load_alt_export(folder: Path | str) -> AltExport:
     )
 
 
-def ensure_alt_report_html(folder: Path | str) -> Path:
-    """Return path to ``alt_text_report.html``, regenerating from CSV if needed."""
+def ensure_alt_report_html(
+    folder: Path | str,
+    *,
+    exported_by: str = "CheckMate",
+) -> Path:
+    """Return path to ``alt_text_report.html``, regenerating from CSV when needed.
+
+    Regenerates when the file is missing or still branded as another product
+    (e.g. a cached Fido-labelled report opened in CheckMate).
+    """
     from datetime import datetime
 
     from checkmate.doc_images.export import write_alt_text_html_report
 
     root = Path(folder).expanduser().resolve()
     html_path = root / "alt_text_report.html"
+    exporter = (exported_by or "CheckMate").strip() or "CheckMate"
     if html_path.is_file():
-        return html_path
+        try:
+            existing = html_path.read_text(encoding="utf-8", errors="replace")
+            marker = f"Exported by:</strong> {exporter}"
+            if marker in existing:
+                return html_path
+        except OSError:
+            pass
 
     export = load_alt_export(root)
     counts = export.counts()
@@ -245,6 +282,7 @@ def ensure_alt_report_html(folder: Path | str) -> Path:
             "dimensions": im.dimensions,
             "file_size": im.file_size,
             "image_classification": im.classification or "Unclassified",
+            "context": im.context or "",
         }
         for im in export.images
     ]
@@ -261,5 +299,6 @@ def ensure_alt_report_html(folder: Path | str) -> Path:
         export_data=export_data,
         stats=stats,
         timestamp=timestamp,
+        exported_by=exporter,
     )
     return html_path

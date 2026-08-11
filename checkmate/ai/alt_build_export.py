@@ -49,17 +49,22 @@ def _fingerprint(path: Path) -> _PubFingerprint:
     )
 
 
-def _export_folder_usable(folder: Path) -> bool:
+def _export_folder_usable(folder: Path, *, require_context: bool = True) -> bool:
     """True when *folder* still looks like a complete alt-text export."""
     if not folder.is_dir():
         return False
-    from checkmate.ai.alt_export import find_export_csv
+    from checkmate.ai.alt_export import export_csv_has_context, find_export_csv
 
     if find_export_csv(folder) is None:
         return False
     images = folder / "images"
     # Normal exports always create images/; require it so we don't reuse junk.
-    return images.is_dir()
+    if not images.is_dir():
+        return False
+    # Prefer exports that include surrounding text (invalidate older caches).
+    if require_context and not export_csv_has_context(folder):
+        return False
+    return True
 
 
 def get_cached_alt_export(path: Path | str) -> Path | None:
@@ -180,6 +185,7 @@ def build_alt_export_from_document(
         temp_dir=td,
         write_html=write_html,
         include_classification=True,
+        include_context=True,
         progress_callback=progress_callback,
     )
     if not result.cancelled:

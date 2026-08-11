@@ -311,9 +311,11 @@ Confirm / revert dialogs show the changelog path when present. Open the log anyt
 2. **Pass A** — local heuristics (no AI): missing/placeholder/filename alt, empty “Has Alt Text”, decorative+content-like classification mismatch, duplicates, very short alt
 3. User chooses coverage: **all** when ≤20 images; otherwise **10% / 25% / 50% / all** (samples are stratified through the publication by index). From the assessment report, **Assess more…** can raise coverage without redoing prior images.
 4. Connection check; reject clearly non-vision models (`no_vision`)
-5. **Pass B** — one vision call per sampled image (resized to FIDO `image_resize_pixels`, JPEG-compressed under FIDO `image_compression_mb`; LiteLLM multimodal `image_url` data URI, `detail: low` when supported)
+5. **Pass B** — one vision call per sampled image (resized to FIDO `image_resize_pixels`, JPEG-compressed under FIDO `image_compression_mb`; LiteLLM multimodal `image_url` data URI, `detail: low` when supported). The prompt includes author alt/status, classification, Pass A flags, and **surrounding page text** from the export `Context` column when present — so quality is judged for document fit, not a generic caption style.
 6. Text-only **document synthesis** (fixed H2s) + write `alt_text_assessment.json` beside the export
 7. HTML **Alt text health check** dialog (stats, synthesis, priority cards with thumbnails/filters) + follow-up chat + Assess more
+
+Export CSV columns: `Index`, `Filename`, `Classification`, `Alt Text`, `Status`, `Dimensions`, `File Size`, `Context` (optional surrounding text from `backend.get_context`). Older exports without `Context` still load; CheckMate’s export cache prefers folders that include the column so reopen after upgrade re-extracts once.
 
 ### Per-image JSON (vision)
 

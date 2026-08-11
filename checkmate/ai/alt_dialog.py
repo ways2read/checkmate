@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import tempfile
 import threading
 import webbrowser
@@ -122,7 +123,7 @@ class AltAssessDialog(wx.Dialog):
         footer = wx.BoxSizer(wx.HORIZONTAL)
         footer.AddStretchSpacer(1)
         close_btn = wx.Button(self, id=wx.ID_CLOSE, label=_("Close"))
-        close_btn.Bind(wx.EVT_BUTTON, self._on_close)
+        close_btn.Bind(wx.EVT_BUTTON, self._on_close_dialog)
         footer.Add(close_btn, 0)
         root.Add(footer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
 
@@ -134,7 +135,7 @@ class AltAssessDialog(wx.Dialog):
         self.save_md_btn.Bind(wx.EVT_BUTTON, self._on_save_md)
         self.copy_btn.Bind(wx.EVT_BUTTON, self._on_copy)
         self.Bind(EVT_ALT_FOLLOWUP, self._on_followup_event)
-        self.Bind(wx.EVT_CLOSE, self._on_close)
+        self.Bind(wx.EVT_CLOSE, self._on_close_dialog)
         self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
 
         self.SetSizer(root)
@@ -167,7 +168,7 @@ class AltAssessDialog(wx.Dialog):
 
     def _on_char_hook(self, event: wx.KeyEvent) -> None:
         if event.GetKeyCode() == wx.WXK_ESCAPE:
-            wx.CallAfter(self._on_close)
+            wx.CallAfter(self._on_close_dialog, None)
             return
         event.Skip()
 
@@ -214,7 +215,7 @@ class AltAssessDialog(wx.Dialog):
         if url.startswith("checkmate://"):
             event.Veto()
             if "close" in url:
-                wx.CallAfter(self._on_close)
+                wx.CallAfter(self._on_close_dialog, None)
             return
         if url.startswith(("http://", "https://", "mailto:")):
             event.Veto()
@@ -550,10 +551,41 @@ class AltAssessDialog(wx.Dialog):
             finally:
                 wx.TheClipboard.Close()
 
-    def _on_close(self, _event: wx.Event | None = None) -> None:
+    def _on_close_dialog(self, event: wx.Event | None = None) -> None:
+        # Same pattern as IssueDetailDialog / AltTextReportDialog: do not tear
+        # down WebView2 inside navigating/key handlers.
+        if self._closing:
+            if isinstance(event, wx.CloseEvent):
+                event.Veto()
+            return
         self._closing = True
         self._close_progress()
-        if self.IsModal():
-            self.EndModal(wx.ID_CLOSE)
-        else:
-            self.Destroy()
+        if isinstance(event, wx.CloseEvent):
+            event.Veto()
+        wx.CallAfter(self._finish_close_dialog)
+
+    def _on_close(self, event: wx.Event | None = None) -> None:
+        self._on_close_dialog(event)
+
+    def _finish_close_dialog(self) -> None:
+        try:
+            if not self:
+                return
+        except RuntimeError:
+            return
+        if sys.platform == "win32":
+            try:
+                import ctypes
+
+                hwnd = int(self.GetHandle() or 0)
+                if hwnd:
+                    ctypes.windll.user32.SetFocus(hwnd)
+            except Exception:
+                pass
+        try:
+            if self.IsModal():
+                self.EndModal(wx.ID_CLOSE)
+            else:
+                self.Destroy()
+        except RuntimeError:
+            pass

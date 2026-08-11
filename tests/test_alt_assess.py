@@ -40,6 +40,7 @@ def _write_export(tmp: Path, rows: list[dict[str, str]], *, with_files: bool = T
         "Status",
         "Dimensions",
         "File Size",
+        "Context",
     ]
     with csv_path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
@@ -74,6 +75,7 @@ def _rows(n: int, *, bad_first: bool = False) -> list[dict[str, str]]:
                 "Status": status,
                 "Dimensions": "10x10",
                 "File Size": "1 KB",
+                "Context": f"Nearby paragraph mentioning image {i}.",
             }
         )
     return rows
@@ -91,6 +93,7 @@ def test_load_alt_export_reads_alt_text_column(tmp_path: Path) -> None:
                 "Status": "Has Alt Text",
                 "Dimensions": "100x100",
                 "File Size": "1 KB",
+                "Context": "Chapter about Korean fried chicken recipes.",
             },
             {
                 "Index": "2",
@@ -100,6 +103,7 @@ def test_load_alt_export_reads_alt_text_column(tmp_path: Path) -> None:
                 "Status": "Decorative",
                 "Dimensions": "50x50",
                 "File Size": "1 KB",
+                "Context": "",
             },
         ],
     )
@@ -107,13 +111,32 @@ def test_load_alt_export_reads_alt_text_column(tmp_path: Path) -> None:
     assert export.total == 2
     assert export.images[0].alt_stripped.startswith("A smiling woman")
     assert "Hello" in export.images[0].alt_text
+    assert "fried chicken" in export.images[0].context_stripped
     assert export.images[0].has_alt_status
     assert export.images[1].is_decorative
+    assert export.images[1].context_stripped == ""
     assert export.images[0].image_path is not None
     counts = export.counts()
     assert counts["with_alt"] == 1
     assert counts["decorative"] == 1
     assert counts["missing"] == 0
+
+
+def test_vision_user_text_includes_context() -> None:
+    from checkmate.ai.alt_assess import build_vision_user_text
+
+    image = AltExportImage(
+        index=3,
+        filename="image_0003.jpg",
+        classification="Photograph",
+        alt_text="A wok on a stove.",
+        status="Has Alt Text",
+        context="Next steps: heat oil and add garlic.",
+    )
+    text = build_vision_user_text(image, heuristic_flags=[])
+    assert "Surrounding text:" in text
+    assert "heat oil and add garlic" in text
+    assert "A wok on a stove." in text
 
 
 def test_heuristics_placeholder_and_mismatch() -> None:

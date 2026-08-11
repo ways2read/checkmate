@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import webbrowser
 from pathlib import Path
 
@@ -32,6 +33,7 @@ class AltTextReportDialog(wx.Dialog):
         self._view_realized = False
         self._output_is_webview = False
         self._closing = False
+        self._output: wx.Window | None = None
 
         from .. import main as main_mod
 
@@ -90,8 +92,8 @@ class AltTextReportDialog(wx.Dialog):
         self.ai_health_btn.Bind(wx.EVT_BUTTON, self._on_ai_health)
         self.open_browser_btn.Bind(wx.EVT_BUTTON, self._on_open_browser)
         self.open_folder_btn.Bind(wx.EVT_BUTTON, self._on_open_folder)
-        close_btn.Bind(wx.EVT_BUTTON, self._on_close)
-        self.Bind(wx.EVT_CLOSE, self._on_close)
+        close_btn.Bind(wx.EVT_BUTTON, self._on_close_dialog)
+        self.Bind(wx.EVT_CLOSE, self._on_close_dialog)
         self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
 
         self.SetSizer(root)
@@ -104,9 +106,17 @@ class AltTextReportDialog(wx.Dialog):
 
     def _on_char_hook(self, event: wx.KeyEvent) -> None:
         if event.GetKeyCode() == wx.WXK_ESCAPE:
-            self._on_close(event)
+            wx.CallAfter(self._on_close_dialog, None)
             return
         event.Skip()
+
+    def _inject_webview_key_handlers(self) -> None:
+        """Escape/Tab-exit JS — Edge never delivers Escape to wx CHAR_HOOK."""
+        if not self._output_is_webview or self._output is None or self._closing:
+            return
+        from .markdown_html import _WEBVIEW_TAB_EXIT_JS
+
+        self._main._webview_run_script(self._output, _WEBVIEW_TAB_EXIT_JS)
 
     def _realize_view(self) -> None:
         if self._view_realized or self._closing:
@@ -124,6 +134,7 @@ class AltTextReportDialog(wx.Dialog):
             import wx.html2 as html2
 
             view.Bind(html2.EVT_WEBVIEW_NAVIGATING, self._on_navigating)
+            view.Bind(html2.EVT_WEBVIEW_LOADED, self._on_webview_loaded)
             try:
                 view.LoadURL(self._html_path.resolve().as_uri())
             except Exception:
@@ -172,13 +183,19 @@ class AltTextReportDialog(wx.Dialog):
                     host, view, is_webview=True
                 ),
             )
+            # Backup inject in case LOADED already fired before we bound it.
+            wx.CallLater(250, self._inject_webview_key_handlers)
+
+    def _on_webview_loaded(self, event) -> None:
+        event.Skip()
+        self._inject_webview_key_handlers()
 
     def _on_navigating(self, event) -> None:
         url = (event.GetURL() or "").strip()
         action = self._main._webview_host_action(url)
         if action == "close":
             event.Veto()
-            wx.CallAfter(self._on_close, None)
+            wx.CallAfter(self._on_close_dialog, None)
             return
         if action in ("page_prev", "page_next"):
             event.Veto()
@@ -252,9 +269,41 @@ class AltTextReportDialog(wx.Dialog):
                     self,
                 )
 
-    def _on_close(self, _event) -> None:
+    def _on_close_dialog(self, event: wx.Event | None = None) -> None:
+        # Same pattern as IssueDetailDialog: avoid tearing down WebView2 inside
+        # navigating/key handlers (SetEscapeId + CHAR_HOOK + checkmate://close).
+        if self._closing:
+            if isinstance(event, wx.CloseEvent):
+                event.Veto()
+            return
         self._closing = True
-        if self.IsModal():
-            self.EndModal(wx.ID_CLOSE)
-        else:
-            self.Destroy()
+        if isinstance(event, wx.CloseEvent):
+            event.Veto()
+        wx.CallAfter(self._finish_close_dialog)
+
+    # Compatibility for callers / host Escape wiring.
+    def _on_close(self, event: wx.Event | None = None) -> None:
+        self._on_close_dialog(event)
+
+    def _finish_close_dialog(self) -> None:
+        try:
+            if not self:
+                return
+        except RuntimeError:
+            return
+        if sys.platform == "win32":
+            try:
+                import ctypes
+
+                hwnd = int(self.GetHandle() or 0)
+                if hwnd:
+                    ctypes.windll.user32.SetFocus(hwnd)
+            except Exception:
+                pass
+        try:
+            if self.IsModal():
+                self.EndModal(wx.ID_CLOSE)
+            else:
+                self.Destroy()
+        except RuntimeError:
+            pass

@@ -10,10 +10,15 @@ from ..i18n import _, get_language, get_text_direction
 from .alt_assess import AltAssessResult, AltImageAssessment
 from .alt_export import AltExport, AltExportImage
 from .alt_heuristics import HeuristicReport
-from .markdown_html import markdown_to_body_html, with_ai_disclaimer
+from .markdown_html import (
+    _WEBVIEW_TAB_EXIT_SCRIPT,
+    markdown_to_body_html,
+    with_ai_disclaimer,
+)
 
 
 def _thumb_data_uri(path: Path | None, *, max_edge: int = 160) -> str:
+    """Encode a small JPEG data-URI (used when a file:// URL is not suitable)."""
     if path is None or not path.is_file():
         return ""
     try:
@@ -38,6 +43,30 @@ def _thumb_data_uri(path: Path | None, *, max_edge: int = 160) -> str:
             return f"data:{mime};base64,{b64}"
         except OSError:
             return ""
+
+
+def _thumb_src(
+    path: Path | None,
+    *,
+    export_folder: Path | None = None,
+    for_dialog: bool = True,
+) -> str:
+    """Prefer cheap file/relative URLs over re-encoding every thumbnail."""
+    if path is None or not path.is_file():
+        return ""
+    if for_dialog:
+        try:
+            return path.resolve().as_uri()
+        except OSError:
+            return ""
+    if export_folder is not None:
+        try:
+            images_root = (export_folder / "images").resolve()
+            rel = path.resolve().relative_to(images_root).as_posix()
+            return f"images/{rel}"
+        except (OSError, ValueError):
+            pass
+    return _thumb_data_uri(path)
 
 
 def _verdict_label(verdict: str) -> str:
@@ -105,6 +134,8 @@ def _priority_cards_html(
     export: AltExport,
     assessments: list[AltImageAssessment],
     heuristics: HeuristicReport | None,
+    *,
+    for_dialog: bool = True,
 ) -> str:
     by_index = {im.index: im for im in export.images}
     # Worst first
@@ -132,13 +163,18 @@ def _priority_cards_html(
 
     for a in sorted_a:
         im = by_index.get(a.index)
-        thumb = _thumb_data_uri(im.image_path if im else None)
+        thumb = _thumb_src(
+            im.image_path if im else None,
+            export_folder=export.folder,
+            for_dialog=for_dialog,
+        )
         bucket = _filter_bucket(a)
         heur_flags = ""
         if a.index in heur_by:
             heur_flags = ", ".join(heur_by[a.index].flags)
         img_html = (
-            f'<img src="{thumb}" alt="" width="120" height="90" loading="lazy">'
+            f'<img src="{html.escape(thumb, quote=True)}" alt="" width="120" '
+            f'height="90" loading="lazy">'
             if thumb
             else '<div class="no-thumb"></div>'
         )
@@ -210,10 +246,22 @@ def _priority_cards_html(
 def _status_line(im: AltExportImage | None) -> str:
     if im is None:
         return ""
-    return (
-        f'<p class="alt muted">{html.escape(im.status or "")} — '
-        f"{html.escape(im.classification or '')}</p>"
-    )
+    status = (im.status or "").strip()
+    classification = (im.classification or "").strip()
+    unclassified = _("Unclassified")
+    if (
+        not classification
+        or classification.lower() == "unclassified"
+        or classification == unclassified
+    ):
+        classification = ""
+    if status and classification:
+        text = f"{status} — {classification}"
+    else:
+        text = status or classification
+    if not text:
+        return ""
+    return f'<p class="alt muted">{html.escape(text)}</p>'
 
 
 def _filter_checkbox(key: str, label: str, *, checked: bool) -> str:
@@ -394,8 +442,11 @@ def build_assessment_html(result: AltAssessResult, *, for_dialog: bool = True) -
         f'<section class="synthesis" aria-label="{html.escape(_("Assessment summary"))}">',
         synth_body,
         "</section>",
-        _priority_cards_html(export, result.assessments, result.heuristics),
+        _priority_cards_html(
+            export, result.assessments, result.heuristics, for_dialog=for_dialog
+        ),
         _FILTER_JS,
+        _WEBVIEW_TAB_EXIT_SCRIPT if for_dialog else "",
         "</body></html>",
     ]
     return "\n".join(parts)

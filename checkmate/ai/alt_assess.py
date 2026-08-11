@@ -40,6 +40,36 @@ _VISION_MAX_TOKENS = 2048
 _SYNTH_MAX_TOKENS = DEFAULT_EXPLAIN_MAX_TOKENS
 
 
+def _vision_image_url_part(data_uri: str, model: str | None) -> dict[str, Any]:
+    """Build an OpenAI-style image part; omit ``detail`` for Gemini.
+
+    LiteLLM maps ``detail`` to Gemini ``mediaResolution`` nested inside
+    ``inline_data`` in some versions, which the Gemini API rejects (400).
+    """
+    image_url: dict[str, Any] = {"url": data_uri}
+    m = (model or "").lower()
+    if "gemini" not in m:
+        image_url["detail"] = "low"
+    return {"type": "image_url", "image_url": image_url}
+
+
+def _fatal_vision_provider_error(error_key: str | None, detail: str | None) -> bool:
+    """True when further per-image vision calls are unlikely to succeed."""
+    if (error_key or "") != "provider_error":
+        return False
+    d = (detail or "").lower()
+    return any(
+        marker in d
+        for marker in (
+            "mediaresolution",
+            "invalid_argument",
+            "badrequesterror",
+            "unknown name",
+            "invalid json payload",
+        )
+    )
+
+
 def vision_image_limits() -> tuple[int, int, int]:
     """Return ``(max_edge, max_bytes, jpeg_quality)`` from FIDO when available.
 
@@ -282,7 +312,8 @@ def build_vision_system_prompt() -> str:
     lang_code = get_language()
     return f"""You are an accessibility publishing assistant inside CheckMate.
 You review one image from an EPUB/PDF/eBraille publication together with its
-declared alt text status and any existing alt text.
+declared alt text status, any existing alt text, and optional surrounding page
+text from the publication.
 
 LANGUAGE (mandatory):
 - The CheckMate UI language is {lang} (code: {lang_code}).
@@ -309,7 +340,12 @@ these keys:
 
 Rules:
 - Prefer under-flagging on borderline decorative vs content decisions.
-- Do not invent book/chapter context beyond what is visible in the image.
+- When surrounding page text is provided, judge whether the alt fits THIS
+  document: what readers already get from nearby prose, what the image adds,
+  and whether decorative status is plausible in context. Prefer document fit
+  over a generic full caption; shorter can be better.
+- Do not invent book/chapter context beyond the image and any surrounding text
+  supplied in the user message.
 - Filename-like or generic alts ("image", "photo 1", "file001.jpg") are bad.
 - Content photographs, step composites, and labeled product packaging usually
   need descriptive alt, not decorative.
@@ -321,8 +357,10 @@ Rules:
 def build_vision_user_text(image: AltExportImage, *, heuristic_flags: list[str]) -> str:
     alt = image.alt_stripped or "(none)"
     flags = ", ".join(heuristic_flags) if heuristic_flags else "(none)"
+    ctx = image.context_stripped
+    ctx_block = ctx if ctx else "(none provided)"
     return (
-        "Assess this image's alt text / decorative status.\n"
+        "Assess this image's alt text / decorative status for document fit.\n"
         f"- Index: {image.index}\n"
         f"- Filename: {image.filename}\n"
         f"- Status: {image.status or '(unknown)'}\n"
@@ -330,6 +368,7 @@ def build_vision_user_text(image: AltExportImage, *, heuristic_flags: list[str])
         f"- Dimensions: {image.dimensions or '(unknown)'}\n"
         f"- Pass A heuristic flags: {flags}\n"
         f"- Alt text: {alt}\n"
+        f"- Surrounding text:\n{ctx_block}\n"
     )
 
 
@@ -578,11 +617,17 @@ def assess_alt_export(
     cancel_event: threading.Event | None = None,
     status_callback: StatusCallback | None = None,
     write_json: bool = True,
+    export: AltExport | None = None,
+    skip_credentials_check: bool = False,
 ) -> AltAssessResult:
     """Run Pass A + vision sample/all + document synthesis on an export folder.
 
     When *prior* is provided, already-assessed indices are skipped and new
     findings are merged before re-synthesis (assess more).
+
+    *export* may be a pre-loaded ``AltExport`` (avoids reading the folder twice).
+    *skip_credentials_check* is for hosts that already resolved a working model
+    (e.g. Fido's bridged session).
     """
     if _cancelled(cancel_event):
         return AltAssessResult(ok=False, error_key="cancelled")
@@ -590,17 +635,36 @@ def assess_alt_export(
     if not litellm_available():
         return AltAssessResult(ok=False, error_key="no_litellm")
 
+    # Credentials first so the UI can update before export I/O / heuristics.
+    if not skip_credentials_check:
+        _status(status_callback, _("Checking AI credentials…"))
+        ok, err = ensure_credentials_ready()
+        if not ok:
+            return AltAssessResult(ok=False, error_key=err or "no_key")
+    if _cancelled(cancel_event):
+        return AltAssessResult(ok=False, error_key="cancelled")
+
     prior_assessments = list(prior.assessments) if prior is not None else []
     prior_by_index = {a.index: a for a in prior_assessments}
     exclude = set(prior_by_index)
 
+    _status(status_callback, _("Loading export…"))
     try:
-        export = load_alt_export(folder)
+        if export is None:
+            export = load_alt_export(folder)
     except FileNotFoundError as e:
         return AltAssessResult(ok=False, error_key="bad_export", detail=str(e))
     except ValueError as e:
         return AltAssessResult(ok=False, error_key="bad_export", detail=str(e))
 
+    if _cancelled(cancel_event):
+        return AltAssessResult(
+            ok=False,
+            error_key="cancelled",
+            export=export,
+        )
+
+    _status(status_callback, _("Analyzing alt text…"))
     heuristics = run_heuristics(export)
     batch = build_sample_plan(
         export,
@@ -612,17 +676,6 @@ def assess_alt_export(
     )
     sample = merge_sample_plans(prior.sample if prior else None, batch)
 
-    _status(status_callback, _("Checking AI credentials…"))
-    ok, err = ensure_credentials_ready()
-    if not ok:
-        return AltAssessResult(
-            ok=False,
-            error_key=err or "no_key",
-            export=export,
-            heuristics=heuristics,
-            sample=sample,
-            assessments=prior_assessments,
-        )
     if _cancelled(cancel_event):
         return AltAssessResult(
             ok=False,
@@ -727,7 +780,7 @@ def assess_alt_export(
                     issues=["missing_alt"],
                     reason=_("Image file was missing from the export folder."),
                     teaching_note=_(
-                        "Re-export from Fido so every CSV row has an image file."
+                        "Re-export the publication so every CSV row has an image file."
                     ),
                     pass_name="error",
                     error="missing_file",
@@ -760,10 +813,7 @@ def assess_alt_export(
                 "type": "text",
                 "text": build_vision_user_text(image, heuristic_flags=flags),
             },
-            {
-                "type": "image_url",
-                "image_url": {"url": data_uri, "detail": "low"},
-            },
+            _vision_image_url_part(data_uri, session.model),
         ]
         try:
             vision_session = ExplainSession(
@@ -819,7 +869,9 @@ def assess_alt_export(
                     error=e.error_key,
                 )
             )
-            if e.error_key in {"no_key", "no_model", "network", "timeout"}:
+            if e.error_key in {"no_key", "no_model", "network", "timeout"} or _fatal_vision_provider_error(
+                e.error_key, e.detail
+            ):
                 merged = _merge_assessments(prior_assessments, new_assessments)
                 return AltAssessResult(
                     ok=False,

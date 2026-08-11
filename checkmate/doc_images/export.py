@@ -36,6 +36,31 @@ _DEFAULT_STATUS = {
     "unclassified": "Unclassified",
 }
 
+# Cap surrounding text written to CSV / HTML (backends may already truncate).
+_DEFAULT_CONTEXT_MAX_CHARS = 2500
+
+
+def _context_char_cap() -> int:
+    try:
+        from checkmate.doc_images.api import _context_params
+
+        return max(500, int(_context_params()[2]))
+    except Exception:
+        return _DEFAULT_CONTEXT_MAX_CHARS
+
+
+def _backend_context(backend: Any, index: int, *, max_chars: int) -> str:
+    """Best-effort surrounding text from the document backend."""
+    try:
+        raw = backend.get_context(index)
+    except Exception as e:
+        logger.debug("get_context(%s) failed: %s", index, e)
+        return ""
+    text = (raw or "").strip() if isinstance(raw, str) else str(raw or "").strip()
+    if max_chars > 0 and len(text) > max_chars:
+        return text[: max_chars - 1].rstrip() + "…"
+    return text
+
 
 def _format_size(file_size: int) -> str:
     if file_size >= 1024 * 1024:
@@ -71,13 +96,20 @@ def export_alt_text_report(
     document_name: str = "",
     write_html: bool = True,
     include_classification: bool = True,
+    include_context: bool = True,
     progress_callback: ProgressCallback | None = None,
     status_labels: dict[str, str] | None = None,
+    exported_by: str = "CheckMate",
 ) -> AltTextExportResult:
     """Export all images from *backend* to an AltText_Export_* folder.
 
     Writes ``alt_text_export.csv``, ``images/``, and optionally
     ``alt_text_report.html``. Does not require wx.
+
+    When *include_context* is True, each row gets a ``Context`` column from
+    ``backend.get_context(index)`` (empty when unsupported).
+
+    *exported_by* is shown in the HTML header (CheckMate vs Fido).
     """
     labels = dict(_DEFAULT_STATUS)
     if status_labels:
@@ -104,9 +136,11 @@ def export_alt_text_report(
         "decorative": 0,
         "no_alt_text": 0,
         "errors": 0,
+        "with_context": 0,
         "cancelled": False,
     }
     export_data: list[dict[str, Any]] = []
+    context_cap = _context_char_cap() if include_context else 0
 
     for i in range(total):
         if progress_callback is not None:
@@ -115,6 +149,13 @@ def export_alt_text_report(
                 stats["cancelled"] = True
                 break
         result = backend.load_image(i)
+        context = (
+            _backend_context(backend, i, max_chars=context_cap)
+            if include_context
+            else ""
+        )
+        if context:
+            stats["with_context"] += 1
         if not result:
             stats["errors"] += 1
             export_data.append(
@@ -127,6 +168,7 @@ def export_alt_text_report(
                     "dimensions": "Unknown",
                     "file_size": "0 bytes",
                     "image_classification": labels["unclassified"],
+                    "context": context,
                 }
             )
             continue
@@ -178,6 +220,7 @@ def export_alt_text_report(
                 "dimensions": dimensions,
                 "file_size": file_size_str,
                 "image_classification": image_classification,
+                "context": context,
             }
         )
 
@@ -191,6 +234,7 @@ def export_alt_text_report(
             "Status",
             "Dimensions",
             "File Size",
+            "Context",
         ]
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
@@ -204,6 +248,7 @@ def export_alt_text_report(
                     "Status": item["status"],
                     "Dimensions": item["dimensions"],
                     "File Size": item["file_size"],
+                    "Context": item.get("context", ""),
                 }
             )
 
@@ -216,6 +261,7 @@ def export_alt_text_report(
             export_data=export_data,
             stats=stats,
             timestamp=timestamp,
+            exported_by=exported_by,
         )
 
     return AltTextExportResult(
@@ -259,8 +305,10 @@ def export_document_alt_text(
     temp_dir: str | Path | None = None,
     write_html: bool = True,
     include_classification: bool = True,
+    include_context: bool = True,
     progress_callback: ProgressCallback | None = None,
     status_labels: dict[str, str] | None = None,
+    exported_by: str = "CheckMate",
 ) -> AltTextExportResult:
     """Open *path* (EPUB/PDF), export alt-text report, close backend."""
     backend = open_document_backend(path, temp_dir=temp_dir)
@@ -271,8 +319,10 @@ def export_document_alt_text(
             document_name=Path(path).name,
             write_html=write_html,
             include_classification=include_classification,
+            include_context=include_context,
             progress_callback=progress_callback,
             status_labels=status_labels,
+            exported_by=exported_by,
         )
     finally:
         try:
@@ -289,8 +339,9 @@ def write_alt_text_html_report(
     stats: dict[str, Any],
     timestamp: str,
     images_rel_dir: str = "images/",
+    exported_by: str = "CheckMate",
 ) -> None:
-    """Write the Fido-style interactive HTML alt-text report."""
+    """Write the interactive HTML alt-text inventory report."""
     import html as html_module
 
     try:
@@ -298,6 +349,7 @@ def write_alt_text_html_report(
         formatted_date = dt.strftime("%B %d, %Y at %H:%M:%S")
     except Exception:
         formatted_date = timestamp
+    exporter = (exported_by or "CheckMate").strip() or "CheckMate"
 
     cards: list[str] = []
     for item in export_data:
@@ -331,6 +383,31 @@ def write_alt_text_html_report(
             else ("<em>Decorative image</em>" if is_dec else "<em>No alt text</em>")
         )
         alt_class = "" if alt else "empty"
+        ctx = (item.get("context") or "").strip()
+        ctx_block = ""
+        if ctx:
+            ctx_block = (
+                "<h3>Surrounding text:</h3>"
+                f'<div class="context">{html_module.escape(ctx)}</div>'
+            )
+        classification = str(item.get("image_classification") or "").strip()
+        try:
+            from checkmate.i18n import _
+
+            unclassified_label = _("Unclassified")
+        except Exception:
+            unclassified_label = "Unclassified"
+        if (
+            not classification
+            or classification.lower() == "unclassified"
+            or classification == unclassified_label
+        ):
+            classification_html = ""
+        else:
+            classification_html = (
+                '<p class="classification"><strong>Classification:</strong> '
+                f"{html_module.escape(classification)}</p>"
+            )
         cards.append(
             f"""
         <div class="image-card {card_class}" data-status="{status_key}" data-alt="{html_module.escape(alt.lower())}">
@@ -340,9 +417,10 @@ def write_alt_text_html_report(
                 {img_tag}
             </div>
             <div class="card-content">
-                <p class="classification"><strong>Classification:</strong> {html_module.escape(str(item.get("image_classification", "Unclassified")))}</p>
+                {classification_html}
                 <h3>Alt Text:</h3>
                 <div class="alt-text {alt_class}">{alt_display}</div>
+                {ctx_block}
                 <div class="meta-info">
                     <span class="filename-display">{html_module.escape(fname)}</span>
                     <span>{html_module.escape(str(item.get("dimensions", "")))}</span>
@@ -384,6 +462,7 @@ def write_alt_text_html_report(
         .card-content {{ padding: 12px; }}
         .alt-text {{ background: #f8f9fa; padding: 10px; border-radius: 6px; min-height: 48px; white-space: pre-wrap; }}
         .alt-text.empty {{ color: #e74c3c; }}
+        .context {{ background: #f0f4f8; padding: 10px; border-radius: 6px; margin-top: 8px; max-height: 140px; overflow: auto; white-space: pre-wrap; font-size: .9em; color: #444; }}
         .meta-info {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; color: #666; font-size: .85em; }}
         .modal {{ display: none; position: fixed; z-index: 99; inset: 0; background: rgba(0,0,0,.85); }}
         .modal-content {{ max-width: 90%; max-height: 90%; margin: 5vh auto; display: block; }}
@@ -395,7 +474,7 @@ def write_alt_text_html_report(
         <h1>Alt Text Report</h1>
         <p><strong>Document:</strong> {html_module.escape(doc_name)}</p>
         <p><strong>Generated:</strong> {html_module.escape(formatted_date)}</p>
-        <p><strong>Exported by:</strong> Fido AI Image Utility</p>
+        <p><strong>Exported by:</strong> {html_module.escape(exporter)}</p>
     </div>
     <div class="stats-container">
         <div class="stat-box"><div class="number">{stats.get("total", 0)}</div><div class="label">Total Images</div></div>

@@ -731,9 +731,11 @@ def markdown_to_browser_page(
 
 
 # Custom scheme handled by the dialog WebView NAVIGATING handler (vetoed).
-_WEBVIEW_TAB_EXIT_SCRIPT = """
-<script>
+# Raw JS for WebView.RunScript (no <script> wrapper).
+_WEBVIEW_TAB_EXIT_JS = """
 (function () {
+  if (window.__cmTabExitWired) return;
+  window.__cmTabExitWired = true;
   function focusables() {
     return Array.prototype.slice.call(document.querySelectorAll(
       'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
@@ -799,8 +801,9 @@ _WEBVIEW_TAB_EXIT_SCRIPT = """
     }
   }, true);
 })();
-</script>
 """.strip()
+
+_WEBVIEW_TAB_EXIT_SCRIPT = f"<script>\n{_WEBVIEW_TAB_EXIT_JS}\n</script>"
 
 
 # After SetPage, put the newest follow-up question at the top of the viewport
