@@ -295,9 +295,9 @@ Confirm / revert dialogs show the changelog path when present. Open the log anyt
 
 ## 6. Alt-text inventory report + AI health check
 
-**Purpose:** After a check, browse all images and alt text for the publication (Fido-style inventory), then optionally run an AI health check on decorative/content status and alt quality.
+**Purpose:** After a check, browse all images and alt text for the publication, then optionally run an AI health check on decorative/content status and alt quality.
 
-**Entry:** Result-row **Alt text** button (after **AI overview**), enabled when the checked path is a packaged `.epub` / `.ebrl` / `.pdf`. Click exports images via `checkmate.doc_images` and opens an in-app inventory WebView (`alt_text_report.html`). The export is **cached** for that publication (path + mtime + size) so reopening Alt text does not re-extract until the file changes. From that dialog, **Run AI health check…** (when AI features are on) starts the vision sample flow. Progress dialogs use the title **Alt text health check**, are cancellable (`PD_CAN_ABORT`), and status changes are spoken to screen readers.
+**Entry:** Result-row **Alt text** button (after **AI overview**), enabled when the checked path is a packaged `.epub` / `.ebrl` / `.pdf`. Click exports images via `checkmate.doc_images` and opens an in-app inventory WebView (`alt_text_report.html`). The HTML header shows **Exported by: CheckMate** (Fido exports use their own label; opening a cached Fido-branded report in CheckMate regenerates the HTML). The export is **cached** for that publication (path + mtime + size) so reopening Alt text does not re-extract until the file changes. From that dialog, **Run AI health check…** (when AI features are on) starts the vision sample flow after the inventory WebView has closed (deferred so Edge teardown does not freeze the next modal). Progress dialogs use the title **Alt text health check**, are cancellable (`PD_CAN_ABORT`), and status changes are spoken to screen readers.
 
 ### Inventory flow
 
@@ -311,9 +311,9 @@ Confirm / revert dialogs show the changelog path when present. Open the log anyt
 2. **Pass A** — local heuristics (no AI): missing/placeholder/filename alt, empty “Has Alt Text”, decorative+content-like classification mismatch, duplicates, very short alt
 3. User chooses coverage: **all** when ≤20 images; otherwise **10% / 25% / 50% / all** (samples are stratified through the publication by index). From the assessment report, **Assess more…** can raise coverage without redoing prior images.
 4. Connection check; reject clearly non-vision models (`no_vision`)
-5. **Pass B** — one vision call per sampled image (resized to FIDO `image_resize_pixels`, JPEG-compressed under FIDO `image_compression_mb`; LiteLLM multimodal `image_url` data URI, `detail: low` when supported). The prompt includes author alt/status, classification, Pass A flags, and **surrounding page text** from the export `Context` column when present — so quality is judged for document fit, not a generic caption style.
+5. **Pass B** — one vision call per sampled image (resized to FIDO `image_resize_pixels`, JPEG-compressed under FIDO `image_compression_mb`; LiteLLM multimodal `image_url` data URI). Omit OpenAI `detail` for Gemini models (LiteLLM would map it to a rejected `mediaResolution`). The prompt includes author alt/status, classification, Pass A flags, and **surrounding page text** from the export `Context` column when present — so quality is judged for document fit, not a generic caption style. Fatal BadRequest-style provider errors abort the sample early instead of failing every image.
 6. Text-only **document synthesis** (fixed H2s) + write `alt_text_assessment.json` beside the export
-7. HTML **Alt text health check** dialog (stats, synthesis, priority cards with thumbnails/filters) + follow-up chat + Assess more
+7. HTML **Alt text health check** dialog (stats, synthesis, priority cards with **embedded data-URI thumbnails**/filters — Edge WebView `SetPage` blocks `file://` images) + follow-up chat + Assess more
 
 Export CSV columns: `Index`, `Filename`, `Classification`, `Alt Text`, `Status`, `Dimensions`, `File Size`, `Context` (optional surrounding text from `backend.get_context`). Older exports without `Context` still load; CheckMate’s export cache prefers folders that include the column so reopen after upgrade re-extracts once.
 

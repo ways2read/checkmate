@@ -662,7 +662,7 @@ class KnowledgeBaseViewerDialog(wx.Dialog):
         root.Add(self.article, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
 
         btn_row = wx.StdDialogButtonSizer()
-        close_btn = wx.Button(self, wx.ID_CLOSE)
+        close_btn = wx.Button(self, wx.ID_CLOSE, label=_("Close"))
         close_btn.Bind(wx.EVT_BUTTON, self._on_close)
         btn_row.AddButton(close_btn)
         btn_row.Realize()

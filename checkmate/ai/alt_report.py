@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import html
+import logging
 from pathlib import Path
 
 from ..i18n import _, get_language, get_text_direction
@@ -16,57 +17,79 @@ from .markdown_html import (
     with_ai_disclaimer,
 )
 
+logger = logging.getLogger(__name__)
 
-def _thumb_data_uri(path: Path | None, *, max_edge: int = 160) -> str:
-    """Encode a small JPEG data-URI (used when a file:// URL is not suitable)."""
+# WebView2 SetPage blocks file:// image loads; embed data URIs instead.
+# Cache avoids re-encoding on follow-up repaints of the same report.
+_THUMB_CACHE: dict[tuple[str, int, int], str] = {}
+_THUMB_MAX_EDGE = 160
+_THUMB_JPEG_QUALITY = 55
+
+
+def _thumb_data_uri(path: Path | None, *, max_edge: int = _THUMB_MAX_EDGE) -> str:
+    """Small JPEG data-URI suitable for WebView ``SetPage`` (not file://)."""
     if path is None or not path.is_file():
         return ""
     try:
-        from .alt_assess import encode_image_for_vision
-
-        uri, _ = encode_image_for_vision(path, max_edge=max_edge)
-        return uri
-    except Exception:
-        try:
-            raw = path.read_bytes()
-            if len(raw) > 250_000:
-                return ""
-            suffix = path.suffix.lower()
-            mime = {
-                ".jpg": "image/jpeg",
-                ".jpeg": "image/jpeg",
-                ".png": "image/png",
-                ".gif": "image/gif",
-                ".webp": "image/webp",
-            }.get(suffix, "image/jpeg")
-            b64 = base64.standard_b64encode(raw).decode("ascii")
-            return f"data:{mime};base64,{b64}"
-        except OSError:
-            return ""
-
-
-def _thumb_src(
-    path: Path | None,
-    *,
-    export_folder: Path | None = None,
-    for_dialog: bool = True,
-) -> str:
-    """Prefer cheap file/relative URLs over re-encoding every thumbnail."""
-    if path is None or not path.is_file():
+        resolved = path.resolve()
+        mtime_ns = resolved.stat().st_mtime_ns
+    except OSError:
         return ""
-    if for_dialog:
+    cache_key = (str(resolved), max_edge, mtime_ns)
+    cached = _THUMB_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    uri = ""
+    try:
+        import fitz  # type: ignore
+
+        pix = fitz.Pixmap(str(resolved))
+        if pix.n - pix.alpha >= 4:
+            pix = fitz.Pixmap(fitz.csRGB, pix)
+        if pix.alpha:
+            pix = fitz.Pixmap(pix, 0)
+        longest = max(pix.width, pix.height) or 1
+        if longest > max_edge:
+            scale = max_edge / float(longest)
+            pix = fitz.Pixmap(
+                pix,
+                max(1, int(round(pix.width * scale))),
+                max(1, int(round(pix.height * scale))),
+            )
+        data = pix.tobytes("jpeg", jpg_quality=_THUMB_JPEG_QUALITY)
+        b64 = base64.standard_b64encode(data).decode("ascii")
+        uri = f"data:image/jpeg;base64,{b64}"
+    except Exception:
+        logger.debug("Fast thumb encode failed for %s", resolved, exc_info=True)
         try:
-            return path.resolve().as_uri()
+            raw = resolved.read_bytes()
+            if len(raw) <= 200_000:
+                suffix = resolved.suffix.lower()
+                mime = {
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".png": "image/png",
+                    ".gif": "image/gif",
+                    ".webp": "image/webp",
+                }.get(suffix, "image/jpeg")
+                b64 = base64.standard_b64encode(raw).decode("ascii")
+                uri = f"data:{mime};base64,{b64}"
         except OSError:
-            return ""
-    if export_folder is not None:
-        try:
-            images_root = (export_folder / "images").resolve()
-            rel = path.resolve().relative_to(images_root).as_posix()
-            return f"images/{rel}"
-        except (OSError, ValueError):
-            pass
+            uri = ""
+
+    if uri:
+        # Bound memory if many reports are opened in one session.
+        if len(_THUMB_CACHE) > 400:
+            _THUMB_CACHE.clear()
+        _THUMB_CACHE[cache_key] = uri
+    return uri
+
+
+def _thumb_src(path: Path | None, **_unused: object) -> str:
+    """Always return an embedded data-URI (Edge WebView blocks file:// from SetPage)."""
     return _thumb_data_uri(path)
+
 
 
 def _verdict_label(verdict: str) -> str:
@@ -134,8 +157,6 @@ def _priority_cards_html(
     export: AltExport,
     assessments: list[AltImageAssessment],
     heuristics: HeuristicReport | None,
-    *,
-    for_dialog: bool = True,
 ) -> str:
     by_index = {im.index: im for im in export.images}
     # Worst first
@@ -163,11 +184,7 @@ def _priority_cards_html(
 
     for a in sorted_a:
         im = by_index.get(a.index)
-        thumb = _thumb_src(
-            im.image_path if im else None,
-            export_folder=export.folder,
-            for_dialog=for_dialog,
-        )
+        thumb = _thumb_src(im.image_path if im else None)
         bucket = _filter_bucket(a)
         heur_flags = ""
         if a.index in heur_by:
@@ -442,9 +459,7 @@ def build_assessment_html(result: AltAssessResult, *, for_dialog: bool = True) -
         f'<section class="synthesis" aria-label="{html.escape(_("Assessment summary"))}">',
         synth_body,
         "</section>",
-        _priority_cards_html(
-            export, result.assessments, result.heuristics, for_dialog=for_dialog
-        ),
+        _priority_cards_html(export, result.assessments, result.heuristics),
         _FILTER_JS,
         _WEBVIEW_TAB_EXIT_SCRIPT if for_dialog else "",
         "</body></html>",

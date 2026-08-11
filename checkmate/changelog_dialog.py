@@ -27,6 +27,7 @@ class ChangelogDialog(wx.Dialog):
         self._markdown = markdown_text or ""
         self._view_realized = False
         self._output_is_webview = False
+        self._closing = False
 
         # Import helpers that live with the AI HTML viewer in main.
         from . import main as main_mod
@@ -70,8 +71,8 @@ class ChangelogDialog(wx.Dialog):
 
         self.open_browser_btn.Bind(wx.EVT_BUTTON, self._on_open_browser)
         self.open_folder_btn.Bind(wx.EVT_BUTTON, self._on_open_folder)
-        close_btn.Bind(wx.EVT_BUTTON, self._on_close)
-        self.Bind(wx.EVT_CLOSE, self._on_close)
+        close_btn.Bind(wx.EVT_BUTTON, self._on_close_dialog)
+        self.Bind(wx.EVT_CLOSE, self._on_close_dialog)
         self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
 
         self.SetSizer(root)
@@ -84,7 +85,7 @@ class ChangelogDialog(wx.Dialog):
 
     def _on_char_hook(self, event: wx.KeyEvent) -> None:
         if event.GetKeyCode() == wx.WXK_ESCAPE:
-            self._on_close(event)
+            wx.CallAfter(self._on_close_dialog, None)
             return
         event.Skip()
 
@@ -146,7 +147,7 @@ class ChangelogDialog(wx.Dialog):
         action = self._main._webview_host_action(url)
         if action == "close":
             event.Veto()
-            wx.CallAfter(self._on_close, None)
+            wx.CallAfter(self._on_close_dialog, None)
             return
         if action in ("page_prev", "page_next"):
             event.Veto()
@@ -216,8 +217,29 @@ class ChangelogDialog(wx.Dialog):
                     self,
                 )
 
-    def _on_close(self, _event) -> None:
-        if self.IsModal():
-            self.EndModal(wx.ID_CLOSE)
-        else:
-            self.Destroy()
+    def _on_close_dialog(self, event: wx.Event | None = None) -> None:
+        if getattr(self, "_closing", False):
+            if isinstance(event, wx.CloseEvent):
+                event.Veto()
+            return
+        self._closing = True
+        if isinstance(event, wx.CloseEvent):
+            event.Veto()
+        wx.CallAfter(self._finish_close_dialog)
+
+    def _on_close(self, event: wx.Event | None = None) -> None:
+        self._on_close_dialog(event)
+
+    def _finish_close_dialog(self) -> None:
+        try:
+            if not self:
+                return
+        except RuntimeError:
+            return
+        try:
+            if self.IsModal():
+                self.EndModal(wx.ID_CLOSE)
+            else:
+                self.Destroy()
+        except RuntimeError:
+            pass

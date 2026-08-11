@@ -56,7 +56,7 @@ support on Windows, macOS, and Linux.
   **Tools → Settings…** (hidden when FIDO AI is unavailable).
 - **Alt text** (packaged EPUB / eBraille / PDF after a check): **Alt text**
   button after AI overview opens an in-app inventory of images and alt text
-  (Fido-style export, cached per publication). From that report, optional
+  (CheckMate-branded export, cached per publication). From that report, optional
   **Run AI health check…** samples images with vision and synthesizes findings
   (same FIDO AI credentials). Progress is cancellable and spoken to screen
   readers.

@@ -4398,7 +4398,7 @@ class AddLanguageDialog(wx.Dialog):
         labels = [
             f"{native} ({display})" for _c, native, display, _d in self._presets
         ]
-        labels.append(_("Custom…"))
+        labels.append(_("Other language"))
         self._custom_index = len(labels) - 1
         self.lang_choice = wx.Choice(self, choices=labels)
         self.lang_choice.SetSelection(0)
@@ -4408,7 +4408,7 @@ class AddLanguageDialog(wx.Dialog):
         root.Add(choice_row, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, 12)
 
         self.custom_panel = wx.Panel(self)
-        custom_sizer = wx.FlexGridSizer(4, 2, 8, 8)
+        custom_sizer = wx.FlexGridSizer(3, 2, 8, 8)
         custom_sizer.AddGrowableCol(1, 1)
         custom_sizer.Add(
             wx.StaticText(self.custom_panel, label=_("Code:")),
@@ -4437,22 +4437,9 @@ class AddLanguageDialog(wx.Dialog):
         self.display_ctrl.SetHint(_("English name for AI prompts"))
         self.display_ctrl.SetName(_("English name"))
         custom_sizer.Add(self.display_ctrl, 1, wx.EXPAND)
-        custom_sizer.Add(
-            wx.StaticText(self.custom_panel, label=_("Text direction:")),
-            0,
-            wx.ALIGN_CENTER_VERTICAL,
-        )
-        self.direction_choice = wx.Choice(
-            self.custom_panel,
-            choices=[_("Left to right (LTR)"), _("Right to left (RTL)")],
-        )
-        self.direction_choice.SetSelection(0)
-        self.direction_choice.SetName(_("Text direction"))
-        custom_sizer.Add(self.direction_choice, 1, wx.EXPAND)
         self.custom_panel.SetSizer(custom_sizer)
         root.Add(self.custom_panel, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, 12)
 
-        # Direction for presets (shown always so RTL presets are clear).
         dir_row = wx.BoxSizer(wx.HORIZONTAL)
         dir_row.Add(
             wx.StaticText(self, label=_("Text direction:")),
@@ -4460,14 +4447,13 @@ class AddLanguageDialog(wx.Dialog):
             wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
             8,
         )
-        self.preset_direction = wx.Choice(
+        self.direction_choice = wx.Choice(
             self, choices=[_("Left to right (LTR)"), _("Right to left (RTL)")]
         )
-        self.preset_direction.SetSelection(0)
-        self.preset_direction.SetName(_("Text direction"))
-        dir_row.Add(self.preset_direction, 1, wx.EXPAND)
+        self.direction_choice.SetSelection(0)
+        self.direction_choice.SetName(_("Text direction"))
+        dir_row.Add(self.direction_choice, 1, wx.EXPAND)
         root.Add(dir_row, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, 12)
-        self._dir_row = dir_row
 
         btns = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
         if btns:
@@ -4481,13 +4467,11 @@ class AddLanguageDialog(wx.Dialog):
         custom = self.lang_choice.GetSelection() == self._custom_index
         self.custom_panel.Enable(custom)
         self.custom_panel.Show(custom)
-        self.preset_direction.Enable(not custom)
-        self.preset_direction.Show(not custom)
         if not custom:
             sel = self.lang_choice.GetSelection()
             if 0 <= sel < len(self._presets):
                 _c, _n, _d, direction = self._presets[sel]
-                self.preset_direction.SetSelection(
+                self.direction_choice.SetSelection(
                     1 if direction == TEXT_DIRECTION_RTL else 0
                 )
         self.Layout()
@@ -4498,24 +4482,19 @@ class AddLanguageDialog(wx.Dialog):
         sel = self.lang_choice.GetSelection()
         if sel < 0:
             return None
+        direction = (
+            TEXT_DIRECTION_RTL
+            if self.direction_choice.GetSelection() == 1
+            else TEXT_DIRECTION_LTR
+        )
         if sel == self._custom_index:
             code = _normalize_lang_code(self.code_ctrl.GetValue())
             native = self.native_ctrl.GetValue().strip()
             display = self.display_ctrl.GetValue().strip()
-            direction = (
-                TEXT_DIRECTION_RTL
-                if self.direction_choice.GetSelection() == 1
-                else TEXT_DIRECTION_LTR
-            )
             if not code or not native or not display:
                 return None
             return code, native, display, direction
         code, native, display, _preset_dir = self._presets[sel]
-        direction = (
-            TEXT_DIRECTION_RTL
-            if self.preset_direction.GetSelection() == 1
-            else TEXT_DIRECTION_LTR
-        )
         return code, native, display, direction
 
 
@@ -4988,6 +4967,7 @@ class MainFrame(wx.Frame):
         ``focus=True`` requests a screen-reader announcement.
         """
         self.result_label.ChangeValue(display)
+        self._apply_result_text_direction()
         self._set_result_accessible_name(display)
         self._set_result_colors(verdict)
         spoken = title if title is not None else display
@@ -6236,6 +6216,20 @@ class MainFrame(wx.Frame):
         """Apply LTR/RTL layout from the active language catalog."""
         rtl = get_text_direction() == TEXT_DIRECTION_RTL
         direction = wx.Layout_RightToLeft if rtl else wx.Layout_LeftToRight
+
+        def _set_dir(widget: wx.Window | None) -> None:
+            if widget is None:
+                return
+            try:
+                widget.SetLayoutDirection(direction)
+            except Exception:
+                pass
+            try:
+                for child in widget.GetChildren():
+                    _set_dir(child)
+            except Exception:
+                pass
+
         try:
             self.SetLayoutDirection(direction)
         except Exception:
@@ -6246,9 +6240,40 @@ class MainFrame(wx.Frame):
                 app.SetLayoutDirection(direction)
         except Exception:
             pass
+        # wx.TextCtrl on Windows often ignores inherited direction — set
+        # explicitly on the panel tree, especially the result field.
+        if hasattr(self, "panel"):
+            _set_dir(self.panel)
+        for name in (
+            "result_label",
+            "path_ctrl",
+            "issues_list",
+            "filter_choice",
+            "source_choice",
+        ):
+            _set_dir(getattr(self, name, None))
+        # Prefer right alignment for the result pane in RTL so wrapped lines
+        # read naturally; restore default left alignment for LTR.
+        self._apply_result_text_direction()
+
+    def _apply_result_text_direction(self) -> None:
+        """Keep the result multiline control aligned with the UI direction."""
+        if not hasattr(self, "result_label") or self.result_label is None:
+            return
+        rtl = get_text_direction() == TEXT_DIRECTION_RTL
+        direction = wx.Layout_RightToLeft if rtl else wx.Layout_LeftToRight
         try:
-            if hasattr(self, "panel") and self.panel is not None:
-                self.panel.SetLayoutDirection(direction)
+            self.result_label.SetLayoutDirection(direction)
+        except Exception:
+            pass
+        try:
+            align = wx.TEXT_ALIGNMENT_RIGHT if rtl else wx.TEXT_ALIGNMENT_LEFT
+            attr = wx.TextAttr()
+            attr.SetAlignment(align)
+            end = self.result_label.GetLastPosition()
+            if end > 0:
+                self.result_label.SetStyle(0, end, attr)
+            self.result_label.SetDefaultStyle(attr)
         except Exception:
             pass
 
@@ -6963,6 +6988,7 @@ class MainFrame(wx.Frame):
         # Living updates (Ace stream / elapsed timer): refresh Result text and
         # speak with progress throttle — do not steal focus every tick.
         self.result_label.ChangeValue(event.message)
+        self._apply_result_text_direction()
         self._set_result_accessible_name(event.message)
         self._speak_status(event.message, progress=True)
 
@@ -7750,7 +7776,9 @@ class MainFrame(wx.Frame):
         if result == int(ID_RUN_AI_HEALTH):
             if not ai_features_enabled():
                 return
-            self._prompt_alt_assess_sample(folder)
+            # Defer so Edge WebView teardown finishes before the next modal
+            # (otherwise Windows can appear to hang after "Run AI health check").
+            wx.CallAfter(self._prompt_alt_assess_sample, folder)
 
     def _export_alt_for_assess(self, doc_path: Path) -> Path | None:
         """Build a Fido-style export folder from *doc_path*; return it or None.
