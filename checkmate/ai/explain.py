@@ -347,8 +347,24 @@ def error_message_for_key(key: str | None, detail: str = "") -> str:
         "provider_error": _("The AI provider returned an error."),
         "no_session": _("Explain the issue first, then ask a follow-up."),
         "no_source": _("Could not read the local article."),
+        "bad_export": _(
+            "Could not open that folder as a Fido alt-text export. "
+            "Choose a folder that contains alt_text_export.csv and an images folder."
+        ),
+        "no_vision": _(
+            "The selected AI model does not appear to support image input. "
+            "Choose a vision-capable model in FIDO, then try again."
+        ),
     }
     base = mapping.get(key or "", _("Could not explain this issue."))
-    if detail and key in {"provider_error", "timeout", "network", "no_key", "no_model"}:
+    if detail and key in {
+        "provider_error",
+        "timeout",
+        "network",
+        "no_key",
+        "no_model",
+        "bad_export",
+        "no_vision",
+    }:
         return f"{base}\n\n{detail}"
     return base

@@ -78,6 +78,26 @@ class ExplainSession:
         self.last_finish_reason = None
         return self._complete(max_tokens=max_tokens, operation="ask")
 
+    def ask_multimodal(
+        self,
+        *,
+        system: str,
+        user_content: list[dict[str, Any]] | str,
+        max_tokens: int = DEFAULT_EXPLAIN_MAX_TOKENS,
+        operation: str = "ask_multimodal",
+    ) -> str:
+        """Start a new session turn with multimodal user content (text + images).
+
+        *user_content* is either a plain string or an OpenAI-style content part
+        list (``text`` / ``image_url`` blocks) for vision models via LiteLLM.
+        """
+        self.messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_content},
+        ]
+        self.last_finish_reason = None
+        return self._complete(max_tokens=max_tokens, operation=operation)
+
     def followup(self, user: str, max_tokens: int = DEFAULT_FOLLOWUP_MAX_TOKENS) -> str:
         if not self.messages:
             raise RuntimeError("no_session")

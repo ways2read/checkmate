@@ -4832,7 +4832,6 @@ class MainFrame(wx.Frame):
         self._alt_assess_progress: wx.ProgressDialog | None = None
         self._alt_assess_progress_timer: wx.Timer | None = None
         self.menu_ai_overview: wx.MenuItem | None = None
-        self.menu_alt_assess: wx.MenuItem | None = None
         self.menu_settings: wx.MenuItem | None = None
         self._lang_menu_items: dict[str, wx.MenuItem] = {}
         self._issues_visible = True
@@ -5281,6 +5280,13 @@ class MainFrame(wx.Frame):
             self.ai_overview_btn.SetToolTip(
                 _("Generate an AI overview of this report (Ctrl+Shift+A)")
             )
+        self.alt_text_btn = wx.Button(panel, label=_("&Alt text"))
+        self.alt_text_btn.SetToolTip(
+            _(
+                "View images and alt text for this publication "
+                "(packaged EPUB, eBraille, or PDF)"
+            )
+        )
         self.show_issues_btn = wx.Button(panel, label=_("Show &issues"))
         self.show_issues_btn.SetToolTip(_("Show the issues list"))
         result_action_btns = self._result_action_buttons()
@@ -5290,6 +5296,7 @@ class MainFrame(wx.Frame):
         self.result_btns = result_btns
         self._size_result_action_buttons()
         self._set_ai_overview_btn_visible(ai_features_enabled())
+        self.alt_text_btn.Enable(False)
         self.result_row = result_row
         result_row.Add(
             self.result_icon_sizer, 0, wx.EXPAND | wx.RIGHT, 10
@@ -5458,17 +5465,6 @@ class MainFrame(wx.Frame):
         self.menu_check = tools_menu.Append(
             wx.ID_ANY, _("&Re-check publication\tF5")
         )
-        self.menu_alt_assess = None
-        if ai_features_enabled():
-            tools_menu.AppendSeparator()
-            self.menu_alt_assess = tools_menu.Append(
-                wx.ID_ANY, _("Assess &alt text export…")
-            )
-            self.menu_alt_assess.SetHelp(
-                _(
-                    "Open a Fido alt-text export folder and assess alt quality with AI"
-                )
-            )
         tools_menu.AppendSeparator()
         self.menu_settings = tools_menu.Append(
             wx.ID_PREFERENCES, _("&Settings…")
@@ -5577,6 +5573,7 @@ class MainFrame(wx.Frame):
         buttons = [self.copy_btn, self.report_btn]
         if self.ai_overview_btn is not None:
             buttons.append(self.ai_overview_btn)
+        buttons.append(self.alt_text_btn)
         buttons.append(self.show_issues_btn)
         return buttons
 
@@ -5636,12 +5633,11 @@ class MainFrame(wx.Frame):
             item.Enable(enabled)
         if self.menu_ai_overview is not None:
             self.menu_ai_overview.Enable(enabled)
-        if self.menu_alt_assess is not None:
-            self.menu_alt_assess.Enable(ai_features_enabled() and not self._busy)
         self.menu_view_changelog.Enable(changelog_ok)
         # AI overview is hidden when features are off; only enable when shown.
         if self.ai_overview_btn is not None and ai_features_enabled():
             self.ai_overview_btn.Enable(enabled)
+        self._update_alt_text_btn_enabled()
         self.copy_btn.Enable(enabled)
         self.report_btn.Enable(enabled or changelog_ok)
         self._update_show_issues_button()
@@ -5652,12 +5648,45 @@ class MainFrame(wx.Frame):
         if 0 <= idx < menubar.GetMenuCount():
             menubar.EnableTop(idx, enabled or changelog_ok)
 
+    def _alt_text_path_ok(self) -> bool:
+        from .ai.alt_build_export import supports_alt_export_path
+
+        path = self._current_path()
+        return bool(path) and supports_alt_export_path(path)
+
+    def _update_alt_text_btn_enabled(self) -> None:
+        ok = (
+            self._last_result is not None
+            and (not self._busy)
+            and self._alt_text_path_ok()
+        )
+        self.alt_text_btn.Enable(ok)
+        if ok:
+            self.alt_text_btn.SetToolTip(
+                _("View images and alt text for this publication")
+            )
+        elif self._last_result is not None and not self._alt_text_path_ok():
+            self.alt_text_btn.SetToolTip(
+                _(
+                    "Alt text report needs a packaged .epub, .ebrl, or .pdf file "
+                    "(not an exploded folder)."
+                )
+            )
+        else:
+            self.alt_text_btn.SetToolTip(
+                _(
+                    "View images and alt text for this publication "
+                    "(packaged EPUB, eBraille, or PDF)"
+                )
+            )
+
     def _bind(self) -> None:
         self.select_file_btn.Bind(wx.EVT_BUTTON, self.on_browse_file)
         self.select_folder_btn.Bind(wx.EVT_BUTTON, self.on_browse_folder)
         self.result_icon.Bind(wx.EVT_LEFT_UP, self.on_result_icon_click)
         if self.ai_overview_btn is not None:
             self.ai_overview_btn.Bind(wx.EVT_BUTTON, self.on_ai_overview)
+        self.alt_text_btn.Bind(wx.EVT_BUTTON, self.on_alt_text_report)
         self.show_issues_btn.Bind(wx.EVT_BUTTON, self.on_show_issues)
         self.copy_btn.Bind(wx.EVT_BUTTON, self.on_copy_summary)
         self.report_btn.Bind(wx.EVT_BUTTON, self.on_report_button)
@@ -5684,8 +5713,6 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_save_html_report, self.menu_save_html)
         if self.menu_ai_overview is not None:
             self.Bind(wx.EVT_MENU, self.on_ai_overview, self.menu_ai_overview)
-        if self.menu_alt_assess is not None:
-            self.Bind(wx.EVT_MENU, self.on_alt_assess_export, self.menu_alt_assess)
         self.Bind(wx.EVT_MENU, self.on_copy_summary, self.menu_copy)
         self.Bind(wx.EVT_MENU, self.on_clear_results, self.menu_clear)
         self.Bind(wx.EVT_MENU, self.on_check, self.menu_check)
@@ -6281,6 +6308,8 @@ class MainFrame(wx.Frame):
             self.ai_overview_btn.SetToolTip(
                 _("Generate an AI overview of this report (Ctrl+Shift+A)")
             )
+        self.alt_text_btn.SetLabel(_("&Alt text"))
+        self._update_alt_text_btn_enabled()
         self._update_show_issues_button()
         self.copy_btn.SetLabel(_("&Copy summary"))
         self.copy_btn.SetToolTip(_("Copy the result summary (Ctrl+Shift+C)"))
@@ -6529,6 +6558,7 @@ class MainFrame(wx.Frame):
         self.select_file_btn.Enable(not busy)
         self.select_folder_btn.Enable(not busy)
         self.path_ctrl.Enable(not busy)
+        self._update_alt_text_btn_enabled()
         if update_icon:
             self._update_result_status_icon()
 
@@ -7628,8 +7658,10 @@ class MainFrame(wx.Frame):
                 pass
             self._alt_assess_progress_timer = None
         if self._alt_assess_progress is not None:
+            dlg = self._alt_assess_progress
+            _clear_progress_announce(dlg)
             try:
-                self._alt_assess_progress.Destroy()
+                dlg.Destroy()
             except RuntimeError:
                 pass
             self._alt_assess_progress = None
@@ -7655,9 +7687,8 @@ class MainFrame(wx.Frame):
             _pulse_progress(dlg, _("Cancelling…"))
             self._close_alt_assess_progress()
 
-    def on_alt_assess_export(self, _event: wx.CommandEvent) -> None:
-        if not ai_features_enabled():
-            return
+    def on_alt_text_report(self, _event: wx.CommandEvent) -> None:
+        """Export current publication and show the in-app alt-text inventory report."""
         if self._busy:
             wx.MessageBox(
                 _("A check is already running. Wait for it to finish, then try again."),
@@ -7668,16 +7699,139 @@ class MainFrame(wx.Frame):
             return
         if self._alt_assess_progress is not None:
             return
+        if self._last_result is None:
+            return
 
-        with wx.DirDialog(
-            self,
-            _("Select a Fido alt-text export folder"),
-            style=wx.DD_DIR_MUST_EXIST,
-        ) as dlg:
-            if dlg.ShowModal() != wx.ID_OK:
+        from .ai.alt_build_export import supports_alt_export_path
+
+        current = self._current_path()
+        if current is None or not supports_alt_export_path(current):
+            wx.MessageBox(
+                _(
+                    "Alt text report needs a packaged .epub, .ebrl, or .pdf file "
+                    "(not an exploded folder)."
+                ),
+                _("Alt text report"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+
+        folder = self._export_alt_for_assess(current)
+        if folder is None:
+            return
+        self._show_alt_inventory_report(folder)
+
+    def _show_alt_inventory_report(self, folder: Path) -> None:
+        """Open the inventory HTML dialog; optionally continue to AI health check."""
+        try:
+            from .ai.alt_export import ensure_alt_report_html
+            from .ai.alt_inventory_dialog import (
+                ID_RUN_AI_HEALTH,
+                AltTextReportDialog,
+            )
+
+            html_path = ensure_alt_report_html(folder)
+        except Exception as exc:
+            wx.MessageBox(
+                _("Could not open the alt text report:\n{error}").format(error=exc),
+                _("Alt text report"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+
+        dlg = AltTextReportDialog(self, folder=folder, html_path=html_path)
+        try:
+            result = dlg.ShowModal()
+        finally:
+            dlg.Destroy()
+
+        if result == int(ID_RUN_AI_HEALTH):
+            if not ai_features_enabled():
                 return
-            folder = Path(dlg.GetPath())
+            self._prompt_alt_assess_sample(folder)
 
+    def _export_alt_for_assess(self, doc_path: Path) -> Path | None:
+        """Build a Fido-style export folder from *doc_path*; return it or None.
+
+        Reuses a prior export for the same unchanged publication file.
+        """
+        from .ai.alt_build_export import (
+            build_alt_export_from_document,
+            get_cached_alt_export,
+        )
+
+        cached = get_cached_alt_export(doc_path)
+        if cached is not None:
+            return cached
+
+        cancel = threading.Event()
+        progress = wx.ProgressDialog(
+            _("Alt text report"),
+            _("Extracting images from publication…"),
+            maximum=100,
+            parent=self,
+            style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
+        )
+        _present_progress_dialog(
+            progress, _("Extracting images from publication…")
+        )
+        try:
+
+            def _cb(current: int, total: int, message: str) -> bool:
+                if cancel.is_set():
+                    return False
+                try:
+                    if progress.WasCancelled():
+                        cancel.set()
+                        return False
+                except RuntimeError:
+                    cancel.set()
+                    return False
+                pct = int((current / total) * 100) if total else 0
+                try:
+                    cont, _skip = progress.Update(min(99, max(1, pct)), message)
+                except RuntimeError:
+                    cancel.set()
+                    return False
+                _announce_progress_status(progress, message)
+                if not cont:
+                    cancel.set()
+                    return False
+                return True
+
+            result = build_alt_export_from_document(
+                doc_path, progress_callback=_cb, use_cache=False
+            )
+            if result.cancelled or cancel.is_set():
+                return None
+            if result.stats.get("total", 0) == 0:
+                wx.MessageBox(
+                    _("No images found in the publication."),
+                    _("Alt text report"),
+                    wx.OK | wx.ICON_INFORMATION,
+                    self,
+                )
+                return None
+            return Path(result.export_path)
+        except Exception as exc:
+            wx.MessageBox(
+                _("Could not extract images from the publication:\n{error}").format(
+                    error=exc
+                ),
+                _("Alt text report"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return None
+        finally:
+            try:
+                progress.Destroy()
+            except Exception:
+                pass
+
+    def _prompt_alt_assess_sample(self, folder: Path) -> None:
         # Preflight: load CSV + confirm sample size
         try:
             from .ai.alt_export import load_alt_export
@@ -7689,7 +7843,7 @@ class MainFrame(wx.Frame):
 
             wx.MessageBox(
                 error_message_for_key("bad_export", detail=str(exc)),
-                _("Alt text assessment"),
+                _("Alt text health check"),
                 wx.OK | wx.ICON_ERROR,
                 self,
             )
@@ -7699,7 +7853,7 @@ class MainFrame(wx.Frame):
 
             wx.MessageBox(
                 error_message_for_key("bad_export", detail=str(exc)),
-                _("Alt text assessment"),
+                _("Alt text health check"),
                 wx.OK | wx.ICON_ERROR,
                 self,
             )
@@ -7707,7 +7861,7 @@ class MainFrame(wx.Frame):
         except Exception as exc:
             wx.MessageBox(
                 _("Could not read the export folder:\n{error}").format(error=exc),
-                _("Alt text assessment"),
+                _("Alt text health check"),
                 wx.OK | wx.ICON_ERROR,
                 self,
             )
@@ -7737,7 +7891,7 @@ class MainFrame(wx.Frame):
                 decorative=counts["decorative"],
                 missing=counts["missing"],
             ),
-            _("Alt text assessment"),
+            _("Alt text health check"),
             choices,
         )
         try:
@@ -7767,7 +7921,7 @@ class MainFrame(wx.Frame):
         cancel = threading.Event()
         self._alt_assess_cancel = cancel
         self._alt_assess_progress = wx.ProgressDialog(
-            _("Alt text assessment"),
+            _("Alt text health check"),
             _("Loading AI libraries…"),
             maximum=100,
             parent=parent or self,
@@ -7796,7 +7950,7 @@ class MainFrame(wx.Frame):
                     self._close_alt_assess_progress()
                     wx.MessageBox(
                         error_message_for_key("no_litellm", detail=detail),
-                        _("Alt text assessment"),
+                        _("Alt text health check"),
                         wx.OK | wx.ICON_ERROR,
                         parent or self,
                     )
@@ -7847,7 +8001,7 @@ class MainFrame(wx.Frame):
             msg = error_message_for_key(
                 out.error_key, detail=out.detail or out.text or ""
             )
-            wx.MessageBox(msg, _("Alt text assessment"), wx.OK | wx.ICON_ERROR, self)
+            wx.MessageBox(msg, _("Alt text health check"), wx.OK | wx.ICON_ERROR, self)
             return
 
         try:

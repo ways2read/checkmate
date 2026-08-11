@@ -33,8 +33,9 @@ support on Windows, macOS, and Linux.
   (does not take over double-click by default)
 - Result-first UI: multi-line verdict with counts; colour cues (green / orange /
   red) reinforce the text; a status icon beside the result (click to select a
-  file); action column for **Copy summary**, **Report…**, **AI overview**, and
-  **Show/Hide issues**; issues listed by severity (panel starts collapsed)
+  file); action column for **Copy summary**, **Report…**, **AI overview**,
+  **Alt text**, and **Show/Hide issues**; issues listed by severity (panel
+  starts collapsed)
 - Filter issues (all / errors / warnings / info); optional **Show one example
   of each issue** to collapse repeated codes with counts
 - Filter by source (**EPUBCheck + Ace**, or either tool alone) when both ran
@@ -53,6 +54,12 @@ support on Windows, macOS, and Linux.
   priorities, and next steps based on the unique issue codes (not a full file
   dump). View, save, or copy the result like other AI replies. Toggle under
   **Tools → Settings…** (hidden when FIDO AI is unavailable).
+- **Alt text** (packaged EPUB / eBraille / PDF after a check): **Alt text**
+  button after AI overview opens an in-app inventory of images and alt text
+  (Fido-style export, cached per publication). From that report, optional
+  **Run AI health check…** samples images with vision and synthesizes findings
+  (same FIDO AI credentials). Progress is cancellable and spoken to screen
+  readers.
 - **Suggest fix with AI** (EPUB and eBraille only, when FIDO AI settings are present):
   from the same issue details dialog, ask for a minimal suggested markup patch,
   preview before/after, then **Apply fix and validate** to the exploded folder or packaged

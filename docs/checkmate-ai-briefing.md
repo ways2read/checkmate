@@ -1,8 +1,8 @@
 # CheckMate AI features — briefing
 
-This note explains how CheckMate’s AI features work: credentials and model selection from FIDO, the connection check, then the five main flows (overview, follow-up, explain, propose fix, apply and validate).
+This note explains how CheckMate’s AI features work: credentials and model selection from FIDO, the connection check, then the main flows (overview, follow-up, explain, propose fix, apply and validate, alt-text inventory + health check).
 
-Implementation lives under `checkmate/ai/` (LiteLLM client, session, overview, explain, fix, context, resources). CheckMate does **not** import the FIDO package; it reads FIDO’s on-disk app-data files.
+Implementation lives under `checkmate/ai/` (LiteLLM client, session, overview, explain, fix, context, resources, alt_*) plus `checkmate/doc_images/` for EPUB/PDF image export. CheckMate does **not** import the FIDO package; it reads FIDO’s on-disk app-data files and vendors a slim document-image export stack.
 
 ---
 
@@ -65,7 +65,7 @@ AI features are offered when FIDO settings/keys are present (or unlock supplies 
 
 ## Connection check
 
-Before overview, explain, or fix (not before follow-ups on an existing session):
+Before overview, explain, fix, or alt-text health check (not before follow-ups on an existing session):
 
 1. Preload LiteLLM on a worker thread
 2. Resolve model + API key (`ensure_credentials_ready()`); refresh unlock if needed
@@ -293,6 +293,53 @@ Confirm / revert dialogs show the changelog path when present. Open the log anyt
 
 ---
 
+## 6. Alt-text inventory report + AI health check
+
+**Purpose:** After a check, browse all images and alt text for the publication (Fido-style inventory), then optionally run an AI health check on decorative/content status and alt quality.
+
+**Entry:** Result-row **Alt text** button (after **AI overview**), enabled when the checked path is a packaged `.epub` / `.ebrl` / `.pdf`. Click exports images via `checkmate.doc_images` and opens an in-app inventory WebView (`alt_text_report.html`). The export is **cached** for that publication (path + mtime + size) so reopening Alt text does not re-extract until the file changes. From that dialog, **Run AI health check…** (when AI features are on) starts the vision sample flow. Progress dialogs use the title **Alt text health check**, are cancellable (`PD_CAN_ABORT`), and status changes are spoken to screen readers.
+
+### Inventory flow
+
+1. Extract images + CSV (+ HTML) for the current publication  
+2. Show interactive filter/search report in CheckMate (`AltTextReportDialog`, `LoadURL` so `images/` resolve)  
+3. Optional: open in browser / open export folder  
+
+### AI health-check flow (from inventory)
+
+1. Load/validate the export (CSV column `Alt Text` with a space)
+2. **Pass A** — local heuristics (no AI): missing/placeholder/filename alt, empty “Has Alt Text”, decorative+content-like classification mismatch, duplicates, very short alt
+3. User chooses coverage: **all** when ≤20 images; otherwise **10% / 25% / 50% / all** (samples are stratified through the publication by index). From the assessment report, **Assess more…** can raise coverage without redoing prior images.
+4. Connection check; reject clearly non-vision models (`no_vision`)
+5. **Pass B** — one vision call per sampled image (resized to FIDO `image_resize_pixels`, JPEG-compressed under FIDO `image_compression_mb`; LiteLLM multimodal `image_url` data URI, `detail: low` when supported)
+6. Text-only **document synthesis** (fixed H2s) + write `alt_text_assessment.json` beside the export
+7. HTML **Alt text health check** dialog (stats, synthesis, priority cards with thumbnails/filters) + follow-up chat + Assess more
+
+### Per-image JSON (vision)
+
+Enums include `verdict`, `confidence`, `recommended_status`, quality axes, closed `issues` vocabulary. `suggested_alt` is always `null` in v1 (reserved for a later suggest/apply phase).
+
+### Synthesis headings
+
+1. Overall assessment  
+2. Main themes  
+3. Priority queue  
+4. What good alt text means here  
+5. Caveats  
+
+### Params
+
+- Vision `max_tokens`: 2048 (+ one JSON repair follow-up)  
+- Synthesis `max_tokens`: 8192 (+ continuation if truncated)  
+- Session: `ExplainSession.ask_multimodal()` for vision; synthesis/follow-up reuse text session  
+
+### Phased later (not in v1)
+
+- **v2 Suggest** — fill `suggested_alt` when confidence warrants  
+- **v3 Apply** — write alts back into the publication with backup/changelog  
+
+---
+
 ## Feature cheat sheet
 
 | Feature | Connection check | `max_tokens` | Main assets |
@@ -302,6 +349,8 @@ Confirm / revert dialogs show the changelog path when present. Open the log anyt
 | Follow-up | No (reuse session) | 4096 | Full chat history |
 | Fix propose | Yes | 8192 (+ 1 repair) | Issue + raw excerpt + related OPF; optional Ace/EPUBCheck primary URL (approach only) |
 | Fix apply / validate | N/A (local) | — | Unique string replace → re-check → confirm or revert |
+| Alt-text inventory | N/A | — | Post-check **Alt text** button; `doc_images` export + in-app HTML |
+| Alt-text AI health check | Yes | 2048/image + 8192 synth | From inventory dialog; Pass A heuristics; vision sample/all |
 
 ---
 
@@ -310,10 +359,18 @@ Confirm / revert dialogs show the changelog path when present. Open the log anyt
 | Area | Path |
 |------|------|
 | LiteLLM + connection check | `checkmate/ai/litellm_client.py` |
-| Chat session (incl. cost logging) | `checkmate/ai/session.py` |
+| Chat session (incl. cost logging + multimodal ask) | `checkmate/ai/session.py` |
 | Overview + overview follow-up | `checkmate/ai/overview.py` |
 | Explain + explain follow-up | `checkmate/ai/explain.py` |
 | Propose / apply / verify fix | `checkmate/ai/fix.py` |
+| Alt-text export ingest + HTML ensure | `checkmate/ai/alt_export.py` |
+| Alt-text doc export (EPUB/PDF) | `checkmate/ai/alt_build_export.py`, `checkmate/doc_images/` |
+| Alt-text Pass A heuristics | `checkmate/ai/alt_heuristics.py` |
+| Alt-text sampling | `checkmate/ai/alt_sample.py` |
+| Alt-text vision assess + synthesis | `checkmate/ai/alt_assess.py` |
+| Alt-text AI HTML report | `checkmate/ai/alt_report.py` |
+| Alt-text inventory dialog | `checkmate/ai/alt_inventory_dialog.py` |
+| Alt-text AI result dialog | `checkmate/ai/alt_dialog.py` |
 | Issue + file context | `checkmate/ai/context.py` |
 | Trusted “Learn more” links | `checkmate/ai/resources.py` |
 | Ace rule → KB article map | `checkmate/ai/ace_kb_map.py` |

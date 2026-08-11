@@ -353,7 +353,7 @@ wheels = [
 
 [[package]]
 name = "checkmate"
-version = "0.7.24"
+version = "0.7.26"
 source = { editable = "." }
 dependencies = [
     { name = "accessible-output2" },

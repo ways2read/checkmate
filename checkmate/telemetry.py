@@ -603,3 +603,21 @@ def log_ai_overview(*, followup: bool = False) -> None:
         _ai_model(),
         last_run_deltas={delta_key: 1},
     )
+
+
+def log_ai_alt_assess(*, followup: bool = False) -> None:
+    event = (
+        "checkmate_ai_alt_assess_followup"
+        if followup
+        else "checkmate_ai_alt_assess"
+    )
+    delta_key = (
+        "checkmate_ai_alt_assess_followup_total"
+        if followup
+        else "checkmate_ai_alt_assess_total"
+    )
+    log_activity(
+        event,
+        _ai_model(),
+        last_run_deltas={delta_key: 1},
+    )
