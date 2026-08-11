@@ -8,7 +8,7 @@ from pathlib import Path
 
 from . import __version__
 from .cover_image import CoverImage, extract_cover_image
-from .i18n import _, get_language, ngettext
+from .i18n import _, get_language, get_text_direction, ngettext
 from .models import CheckResult, Issue, Severity, Verdict
 from .updater import EBRAILLE_TOOL, EPUBCHECK_TOOL, VERAPDF_TOOL
 
@@ -1028,7 +1028,7 @@ def format_html_report(
     skip = esc(_("Skip to issues"))
 
     return f"""<!DOCTYPE html>
-<html lang="{esc(get_language())}">
+<html lang="{esc(get_language())}" dir="{esc(get_text_direction())}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">

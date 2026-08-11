@@ -14,25 +14,28 @@ from .ai.session import ExplainSession, ProviderError
 from .i18n import (
     CUSTOM_I18N_FORMAT,
     CUSTOM_I18N_VERSION,
+    TEXT_DIRECTION_LTR,
     _,
     bootstrap_msgids,
     install_custom_catalog,
     msgid_hash,
-    read_custom_catalog,
+    read_catalog,
 )
 
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 90
 
-# Preset languages offered in Add language… (code, native menu name, English name).
-UI_LANGUAGE_PRESETS: list[tuple[str, str, str]] = [
-    ("it", "Italiano", "Italian"),
-    ("pl", "Polski", "Polish"),
-    ("uk", "Українська", "Ukrainian"),
-    ("cs", "Čeština", "Czech"),
-    ("tr", "Türkçe", "Turkish"),
-    ("zh-hans", "简体中文", "Chinese (Simplified)"),
+# Preset languages offered in Add language… (code, native, English, direction).
+UI_LANGUAGE_PRESETS: list[tuple[str, str, str, str]] = [
+    ("it", "Italiano", "Italian", "ltr"),
+    ("pl", "Polski", "Polish", "ltr"),
+    ("uk", "Українська", "Ukrainian", "ltr"),
+    ("cs", "Čeština", "Czech", "ltr"),
+    ("tr", "Türkçe", "Turkish", "ltr"),
+    ("zh-hans", "简体中文", "Chinese (Simplified)", "ltr"),
+    ("ar", "العربية", "Arabic", "rtl"),
+    ("he", "עברית", "Hebrew", "rtl"),
 ]
 
 
@@ -88,6 +91,7 @@ def ensure_ui_translation(
     code: str,
     native_name: str,
     display_name: str,
+    direction: str = TEXT_DIRECTION_LTR,
     force: bool = False,
     progress: ProgressFn | None = None,
     cancel_event: threading.Event | None = None,
@@ -127,12 +131,17 @@ def ensure_ui_translation(
             detail=conn_detail or "",
         )
 
-    existing_catalog = read_custom_catalog(code)
+    existing_catalog = read_catalog(code)
     existing_strings: dict[str, str] = {}
     if existing_catalog and not force:
         existing_strings = dict(existing_catalog.get("strings") or {})
         native_name = str(existing_catalog.get("native_name") or native_name)
         display_name = str(existing_catalog.get("display_name") or display_name)
+        direction = str(existing_catalog.get("direction") or direction)
+    elif existing_catalog and force:
+        native_name = str(existing_catalog.get("native_name") or native_name)
+        display_name = str(existing_catalog.get("display_name") or display_name)
+        direction = str(existing_catalog.get("direction") or direction)
 
     todo = _keys_needing_translation(existing_strings, force=force)
     skipped = len(bootstrap_msgids()) - len(todo)
@@ -143,6 +152,7 @@ def ensure_ui_translation(
             "code": code,
             "native_name": native_name,
             "display_name": display_name,
+            "direction": direction,
             "source_msgid_hash": msgid_hash(),
             "strings": existing_strings,
         }
@@ -224,6 +234,7 @@ def ensure_ui_translation(
             "code": code,
             "native_name": native_name,
             "display_name": display_name,
+            "direction": direction,
             "source_msgid_hash": "",
             "strings": merged,
         }
@@ -238,6 +249,7 @@ def ensure_ui_translation(
         "code": code,
         "native_name": native_name,
         "display_name": display_name,
+        "direction": direction,
         "source_msgid_hash": msgid_hash(),
         "strings": merged,
     }

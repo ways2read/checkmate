@@ -460,6 +460,17 @@ def build(
             file=sys.stderr,
         )
 
+    locales = ROOT / "checkmate" / "locales"
+    if locales.is_dir():
+        sep = ";" if sys.platform == "win32" else ":"
+        cmd.extend(["--add-data", f"{locales}{sep}checkmate/locales"])
+        print(f"Bundling UI language catalogs from {locales}")
+    else:
+        print(
+            f"Warning: UI locales folder not found ({locales})",
+            file=sys.stderr,
+        )
+
     if onefile:
         cmd.append("--onefile")
     else:

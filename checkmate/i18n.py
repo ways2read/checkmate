@@ -5,11 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
+from .paths import app_data_dir, is_frozen
 from .settings import read_settings, update_settings
-from .paths import app_data_dir
 
 # BCP 47-ish codes used in settings and menus
 LANG_EN = "en"
@@ -25,3527 +26,51 @@ LANG_NB = "nb"  # Norwegian Bokmål (OS "no" locales map here)
 LANG_RU = "ru"
 LANG_SV = "sv"
 
-LANGUAGES: dict[str, str] = {
-    LANG_EN: "English",
-    LANG_FR: "Français",
-    LANG_ES: "Español",
-    LANG_DE: "Deutsch",
-    LANG_PT: "Português",
-    LANG_DA: "Dansk",
-    LANG_NL: "Nederlands",
-    LANG_FI: "Suomi",
-    LANG_HI: "हिन्दी",
-    LANG_NB: "Norsk",
-    LANG_RU: "Русский",
-    LANG_SV: "Svenska",
-}
-
-# English names for AI prompts (must cover every LANGUAGES code).
-LANGUAGE_DISPLAY_NAMES: dict[str, str] = {
-    LANG_EN: "English",
-    LANG_FR: "French",
-    LANG_ES: "Spanish",
-    LANG_DE: "German",
-    LANG_PT: "Portuguese",
-    LANG_DA: "Danish",
-    LANG_NL: "Dutch",
-    LANG_FI: "Finnish",
-    LANG_HI: "Hindi",
-    LANG_NB: "Norwegian",
-    LANG_RU: "Russian",
-    LANG_SV: "Swedish",
-}
-
 DEFAULT_LANGUAGE = LANG_EN
 
-# Snapshot of shipped languages (never includes AI/custom overlays).
-BUILTIN_LANGUAGES: dict[str, str] = dict(LANGUAGES)
-BUILTIN_DISPLAY_NAMES: dict[str, str] = dict(LANGUAGE_DISPLAY_NAMES)
+TEXT_DIRECTION_LTR = "ltr"
+TEXT_DIRECTION_RTL = "rtl"
+VALID_DIRECTIONS = frozenset({TEXT_DIRECTION_LTR, TEXT_DIRECTION_RTL})
 
 CUSTOM_I18N_FORMAT = "checkmate-ui-i18n"
-CUSTOM_I18N_VERSION = 1
+CUSTOM_I18N_VERSION = 2
+
+# Populated from packaged + overlay catalogs (English always present).
+LANGUAGES: dict[str, str] = {LANG_EN: "English"}
+LANGUAGE_DISPLAY_NAMES: dict[str, str] = {LANG_EN: "English"}
+
+# Snapshot aliases kept for callers that still import these names.
+BUILTIN_LANGUAGES: dict[str, str] = {LANG_EN: "English"}
+BUILTIN_DISPLAY_NAMES: dict[str, str] = {LANG_EN: "English"}
 
 # English msgid → translation. Missing keys fall back to English.
-_TRANSLATIONS: dict[str, dict[str, str]] = {
-    LANG_FR: {
-        "eBraille Checker": "eBraille Checker",
-        "CheckMate": "CheckMate",
-        "Publication": "Publication",
-        "Path:": "Chemin :",
-        "Select or drop a .ebrl / .epub / .pdf file or folder — "
-        "checking starts automatically": (
-            "Sélectionnez ou déposez un fichier .ebrl / .epub / .pdf ou un dossier — "
-            "la vérification démarre automatiquement"
-        ),
-        "Select &file…": "Sélectionner un &fichier…",
-        "Select file": "Sélectionner un fichier",
-        "Select a packaged publication (Ctrl+O)": (
-            "Sélectionner une publication empaquetée (Ctrl+O)"
-        ),
-        "Select f&older…": "Sélectionner un d&ossier…",
-        "Select folder": "Sélectionner un dossier",
-        "Select an exploded publication folder (Ctrl+Shift+O)": (
-            "Sélectionner un dossier de publication décompressé (Ctrl+Shift+O)"
-        ),
-        "Result": "Résultat",
-        "Check result": "Résultat de la vérification",
-        "No check run yet.": "Aucune vérification effectuée.",
-        "CheckMate ready.": "CheckMate est prêt.",
-        "Status:": "État :",
-        "Status": "État",
-        "Status: {text}": "État : {text}",
-        "Current check status (announced to screen readers when it changes)": (
-            "État actuel de la vérification (annoncé aux lecteurs d’écran "
-            "lorsqu’il change)"
-        ),
-        "Checking…": "Vérification…",
-        "Issues": "Problèmes",
-        "Filter:": "Filtre :",
-        "Issue filter": "Filtre des problèmes",
-        "Source:": "Source :",
-        "Issue source filter": "Filtre par vérificateur",
-        "EPUBCheck + Ace": "EPUBCheck + Ace",
-        "Show issues from a specific checker, or all": (
-            "Afficher les problèmes d'un vérificateur précis, ou tous"
-        ),
-        "All issues": "Tous les problèmes",
-        "Errors only": "Erreurs uniquement",
-        "Warnings only": "Avertissements uniquement",
-        "Info / usage": "Info / usage",
-        "Show one example of each issue": (
-            "Afficher un exemple de chaque problème"
-        ),
-        "&Copy summary": "&Copier le résumé",
-        "Copy the result summary (Ctrl+Shift+C)": (
-            "Copier le résumé du résultat (Ctrl+Shift+C)"
-        ),
-        "&Report…": "&Rapport…",
-        "View or save reports, AI overview (when available), "
-        "copy the summary, or view the full log": (
-            "Afficher ou enregistrer les rapports, aperçu IA (si disponible), "
-            "copier le résumé ou afficher le journal complet"
-        ),
-        "Issues list": "Liste des problèmes",
-        "Severity": "Sévérité",
-        "Impact": "Impact",
-        "Ruleset": "Jeu de règles",
-        "Help": "Aide",
-        "Occurrences": "Occurrences",
-        "Code": "Code",
-        "Location": "Emplacement",
-        "Message": "Message",
-        "Issue details": "Détails du problème",
-        "Issue details pages": "Pages des détails du problème",
-        "Issue": "Problème",
-        "Explain": "Expliquer",
-        "Fix": "Corriger",
-        "Severity: {value}": "Sévérité : {value}",
-        "Impact: {value}": "Impact : {value}",
-        "Ruleset: {value}": "Jeu de règles : {value}",
-        "Code: {value}": "Code : {value}",
-        "(none)": "(aucun)",
-        "Press Enter or double-click an issue to read the full details.": (
-            "Appuyez sur Entrée ou double-cliquez un problème pour lire "
-            "tous les détails."
-        ),
-        "Issues hint": "Conseil sur les problèmes",
-        "Note": "Remarque",
-        "Full checker log": "Journal complet",
-        "The log is empty.": "Le journal est vide.",
-        "&File": "&Fichier",
-        "Select &file…\tCtrl+O": "Sélectionner un &fichier…\tCtrl+O",
-        "Select f&older…\tCtrl+Shift+O": "Sélectionner un d&ossier…\tCtrl+Shift+O",
-        "&Report": "&Rapport",
-        "View &text report\tCtrl+T": "Afficher le rapport &texte\tCtrl+T",
-        "Save &text report…\tCtrl+Shift+S": (
-            "Enregistrer le rapport &texte…\tCtrl+Shift+S"
-        ),
-        "View &HTML report in browser\tCtrl+H": (
-            "Afficher le rapport &HTML dans le navigateur\tCtrl+H"
-        ),
-        "AI &overview…\tCtrl+Shift+A": "Aperçu &IA…\tCtrl+Shift+A",
-        "AI &overview": "Aperçu &IA",
-        "Generate an AI overview of this report (Ctrl+Shift+A)": (
-            "Générer un aperçu IA de ce rapport (Ctrl+Shift+A)"
-        ),
-        "Save &HTML report…\tCtrl+S": "Enregistrer le rapport &HTML…\tCtrl+S",
-        "Save &HTML report…": "Enregistrer le rapport &HTML…",
-        "E&xit\tEsc": "&Quitter\tÉchap",
-        "&Copy summary\tCtrl+Shift+C": "&Copier le résumé\tCtrl+Shift+C",
-        "C&lear results\tCtrl+Shift+N": "&Effacer les résultats\tCtrl+Shift+N",
-        "C&lear results": "&Effacer les résultats",
-        "A check is already running. Wait for it to finish, then clear.": (
-            "Une vérification est déjà en cours. Attendez qu’elle se termine, "
-            "puis effacez."
-        ),
-        "&Tools": "&Outils",
-        "&Re-check publication\tF5": "&Revérifier la publication\tF5",
-        "Show &issues": "Afficher les &problèmes",
-        "Hide &issues": "Masquer les &problèmes",
-        "Show the issues list": "Afficher la liste des problèmes",
-        "Hide the issues list": "Masquer la liste des problèmes",
-        "Show &issues always": "Toujours afficher les &problèmes",
-        "When checked, open the issues list automatically after a check "
-        "that finds issues (instead of pressing Show issues)": (
-            "Si coché, ouvre automatiquement la liste des problèmes après une "
-            "vérification qui en trouve (sans appuyer sur Afficher les problèmes)"
-        ),
-        "Play completion &sounds": "Lire les &sons de fin",
-        "Play a short sound when a check finishes "
-        "(different tones for passed and failed)": (
-            "Joue un son court à la fin d’une vérification "
-            "(tons différents pour réussite et échec)"
-        ),
-        "Allow only one window": "N’autoriser qu’une seule fenêtre",
-        "When opening CheckMate again, focus the existing window "
-        "instead of starting another. Files passed to the second "
-        "launch open in that window. Helps avoid conflicting edits "
-        "on the same publication.": (
-            "En rouvrant CheckMate, active la fenêtre existante au lieu "
-            "d’en démarrer une autre. Les fichiers passés au second "
-            "lancement s’ouvrent dans cette fenêtre. Évite les modifications "
-            "conflictuelles sur la même publication."
-        ),
-        "View full &log\tCtrl+L": "Afficher le journal &complet\tCtrl+L",
-        "Check for &updates…": "Rechercher des &mises à jour…",
-        "&Download / reinstall checkers…": "&Télécharger / réinstaller les vérificateurs…",
-        "&Language": "&Langue",
-        "&Add language…": "A&jouter une langue…",
-        "&Import language…": "&Importer une langue…",
-        "Add language": "Ajouter une langue",
-        "Import language": "Importer une langue",
-        "Update translations…": "Mettre à jour les traductions…",
-        "Export…": "Exporter…",
-        "Remove…": "Supprimer…",
-        "Manage {name}…": "Gérer {name}…",
-        "Export language": "Exporter la langue",
-        "Remove language": "Supprimer la langue",
-        "Update translations": "Mettre à jour les traductions",
-        "Translating UI strings ({current}/{total})…": (
-            "Traduction des chaînes de l’interface ({current}/{total})…"
-        ),
-        "Adding language": "Ajout de la langue",
-        "Updating translations": "Mise à jour des traductions",
-        "Custom…": "Personnalisé…",
-        "Language:": "Langue :",
-        "Language": "Langue",
-        "Some CheckMate translations are generated by AI "
-        "(including Knowledge Base articles and languages added with AI) "
-        "and may contain mistakes.": (
-            "Certaines traductions de CheckMate sont générées par l’IA "
-            "(y compris les articles de la base de connaissances et les langues "
-            "ajoutées avec l’IA) et peuvent contenir des erreurs."
-        ),
-        "Code:": "Code :",
-        "Menu name:": "Nom du menu :",
-        "English name:": "Nom anglais :",
-        "Language code": "Code de langue",
-        "Menu name": "Nom du menu",
-        "English name": "Nom anglais",
-        "e.g. it, zh-hans": "p. ex. it, zh-hans",
-        "Native name shown in the Language menu": (
-            "Nom natif affiché dans le menu Langue"
-        ),
-        "English name for AI prompts": "Nom anglais pour les invites IA",
-        "Choose a language CheckMate does not ship. AI will translate "
-        "the UI strings and save them on this computer.": (
-            "Choisissez une langue non fournie avec CheckMate. L’IA traduira "
-            "les chaînes de l’interface et les enregistrera sur cet ordinateur."
-        ),
-        "AI features must be enabled in Settings to add or update "
-        "UI languages.": (
-            "Les fonctions d’IA doivent être activées dans les paramètres pour "
-            "ajouter ou mettre à jour des langues d’interface."
-        ),
-        "Configure FIDO AI settings before translating UI languages.": (
-            "Configurez les paramètres d’IA FIDO avant de traduire des langues "
-            "d’interface."
-        ),
-        "Enter a valid language code, menu name, and English name.": (
-            "Saisissez un code de langue, un nom de menu et un nom anglais valides."
-        ),
-        "“{code}” is already included with CheckMate.": (
-            "« {code} » est déjà inclus avec CheckMate."
-        ),
-        "A custom catalog for “{code}” already exists. "
-        "Update its translations?": (
-            "Un catalogue personnalisé pour « {code} » existe déjà. "
-            "Mettre à jour ses traductions ?"
-        ),
-        "No custom catalog found for “{code}”.": (
-            "Aucun catalogue personnalisé trouvé pour « {code} »."
-        ),
-        "Translations for {name} were updated.": (
-            "Les traductions pour {name} ont été mises à jour."
-        ),
-        "Export language catalog": "Exporter le catalogue de langue",
-        "JSON files (*.json)|*.json": "Fichiers JSON (*.json)|*.json",
-        "Could not export the language catalog:\n{detail}": (
-            "Impossible d’exporter le catalogue de langue :\n{detail}"
-        ),
-        "Exported {name} to:\n{path}": "Exporté {name} vers :\n{path}",
-        "Remove the custom language “{name}” from this computer?": (
-            "Supprimer la langue personnalisée « {name} » de cet ordinateur ?"
-        ),
-        "Could not remove the language:\n{detail}": (
-            "Impossible de supprimer la langue :\n{detail}"
-        ),
-        "Import language catalog": "Importer un catalogue de langue",
-        "This file is not a valid CheckMate UI language catalog.": (
-            "Ce fichier n’est pas un catalogue de langue d’interface CheckMate valide."
-        ),
-        "A custom catalog for “{code}” already exists. Overwrite it?": (
-            "Un catalogue personnalisé pour « {code} » existe déjà. L’écraser ?"
-        ),
-        "Cannot import over a built-in CheckMate language.": (
-            "Impossible d’importer par-dessus une langue CheckMate intégrée."
-        ),
-        "A catalog for this language already exists.": (
-            "Un catalogue pour cette langue existe déjà."
-        ),
-        "Could not import the language catalog:\n{detail}": (
-            "Impossible d’importer le catalogue de langue :\n{detail}"
-        ),
-        "Imported “{name}”. Switch CheckMate to this language now?": (
-            "« {name} » a été importé. Passer CheckMate à cette langue maintenant ?"
-        ),
-        "Could not save the language catalog ({detail}).": (
-            "Impossible d’enregistrer le catalogue de langue ({detail})."
-        ),
-        "Preparing…": "Préparation…",
-        "&Help": "&Aide",
-        "&About": "À &propos",
-        "Starting…": "Démarrage…",
-        "Ready": "Prêt",
-        "In the explanation: focus starts at the top; Tab moves between links. "
-        "Tab after the last link, or Ctrl+Tab, moves to the next dialog control.": (
-            "Dans l’explication : le focus commence en haut ; Tab parcourt les liens. "
-            "Tab après le dernier lien, ou Ctrl+Tab, passe au contrôle suivant."
-        ),
-        "Java required": "Java requis",
-        "Java was not found.\n\n"
-        "If you are running from source, install a Java Runtime "
-        "(JRE 17 or newer recommended) and ensure java is on your PATH.\n\n"
-        "If you received a packaged build, reinstall from the full "
-        "distribution folder — it should include a runtime/ directory "
-        "with a bundled JRE.\n\n"
-        "The checker itself can still be downloaded, but checks "
-        "cannot run without Java.": (
-            "Java est introuvable.\n\n"
-            "Si vous exécutez depuis les sources, installez un environnement "
-            "d’exécution Java (JRE 17 ou plus recommandé) et assurez-vous que "
-            "java est dans le PATH.\n\n"
-            "Si vous utilisez une version empaquetée, réinstallez depuis le "
-            "dossier complet de distribution — il doit contenir un répertoire "
-            "runtime/ avec un JRE inclus.\n\n"
-            "Le vérificateur peut toujours être téléchargé, mais les "
-            "contrôles ne peuvent pas s’exécuter sans Java."
-        ),
-        "Busy": "Occupé",
-        "A check is already running. Wait for it to finish, then drop again.": (
-            "Une vérification est déjà en cours. Attendez la fin, puis déposez à nouveau."
-        ),
-        "Unsupported drop": "Dépôt non pris en charge",
-        "Drop a packaged .ebrl, .epub, or .pdf file, or an exploded "
-        "eBraille/EPUB publication folder.": (
-            "Déposez un fichier .ebrl, .epub ou .pdf empaqueté, ou un dossier de "
-            "publication eBraille/EPUB décompressé."
-        ),
-        "Using first publication ({name}); ignored {count} other item(s).": (
-            "Utilisation de la première publication ({name}) ; "
-            "{count} autre(s) élément(s) ignoré(s)."
-        ),
-        "Multiple items": "Plusieurs éléments",
-        "Select an eBraille, EPUB, or PDF publication": (
-            "Sélectionner une publication eBraille, EPUB ou PDF"
-        ),
-        "Publications (*.ebrl;*.epub;*.pdf)|"
-        "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
-        "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
-        "EPUB (*.epub)|*.epub;*.EPUB|"
-        "PDF (*.pdf)|*.pdf;*.PDF|"
-        "All files (*.*)|*.*": (
-            "Publications (*.ebrl;*.epub;*.pdf)|"
-            "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
-            "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
-            "EPUB (*.epub)|*.epub;*.EPUB|"
-            "PDF (*.pdf)|*.pdf;*.PDF|"
-            "Tous les fichiers (*.*)|*.*"
-        ),
-        "Select an exploded eBraille or EPUB publication folder": (
-            "Sélectionner un dossier de publication eBraille ou EPUB décompressé"
-        ),
-        "Nothing to check": "Rien à vérifier",
-        "Select a publication file or folder first.": (
-            "Sélectionnez d’abord un fichier ou un dossier de publication."
-        ),
-        "Invalid path": "Chemin invalide",
-        "Path not found:\n{path}": "Chemin introuvable :\n{path}",
-        "Nothing to copy": "Rien à copier",
-        "Run a check first.": "Lancez d’abord une vérification.",
-        "Summary copied to clipboard.": "Résumé copié dans le presse-papiers.",
-        "Nothing to save": "Rien à enregistrer",
-        "Nothing to view": "Rien à afficher",
-        "Save text report": "Enregistrer le rapport texte",
-        "Save HTML report": "Enregistrer le rapport HTML",
-        "HTML files (*.html)|*.html;*.htm|All files (*.*)|*.*": (
-            "Fichiers HTML (*.html)|*.html;*.htm|Tous les fichiers (*.*)|*.*"
-        ),
-        "Text files (*.txt)|*.txt|All files (*.*)|*.*": (
-            "Fichiers texte (*.txt)|*.txt|Tous les fichiers (*.*)|*.*"
-        ),
-        "Report saved to {path}": "Rapport enregistré dans {path}",
-        "Opened HTML report in browser.": (
-            "Rapport HTML ouvert dans le navigateur."
-        ),
-        "Could not open HTML report:\n{error}": (
-            "Impossible d’ouvrir le rapport HTML :\n{error}"
-        ),
-        "Check report": "Rapport de vérification",
-        "EPUBCheck report": "Rapport EPUBCheck",
-        "eBraille Checker report": "Rapport eBraille Checker",
-        "veraPDF report": "Rapport veraPDF",
-        "Checker": "Vérificateur",
-        "Date": "Date",
-        "GUI version": "Version de l’interface",
-        "No issues listed.": "Aucun problème listé.",
-        "Generated by CheckMate": (
-            "Généré par CheckMate"
-        ),
-        "Skip to issues": "Aller aux problèmes",
-        "Issue counts": "Nombre de problèmes",
-        "All sources": "Toutes les sources",
-        "Filter issues": "Filtrer les problèmes",
-        "Search": "Rechercher",
-        "Search issues": "Rechercher des problèmes",
-        "Clear filters": "Effacer les filtres",
-        "Showing {visible} of {total}": "Affichage de {visible} sur {total}",
-        "No matching issues.": "Aucun problème correspondant.",
-        "{n} info": "{n} info",
-        "{n} infos": "{n} infos",
-        "{n} usage": "{n} usage",
-        "{n} usages": "{n} usages",
-        "Checking for updates…": "Recherche de mises à jour…",
-        "Update check failed": "Échec de la recherche de mises à jour",
-        "Could not check for updates:\n{error}": (
-            "Impossible de rechercher les mises à jour :\n{error}"
-        ),
-        "Up to date": "À jour",
-        "You have the latest checkers.\n\n{detail}": (
-            "Vous avez les dernières versions des vérificateurs.\n\n{detail}"
-        ),
-        "Update available": "Mise à jour disponible",
-        "New checker releases are available.\n\n"
-        "{detail}\n\n"
-        "Download and install them now?": (
-            "De nouvelles versions des vérificateurs sont disponibles.\n\n"
-            "{detail}\n\n"
-            "Télécharger et installer maintenant ?"
-        ),
-        "{name}\n  Installed: {installed}\n  Latest: {tag} — {label}": (
-            "{name}\n  Installée : {installed}\n  Dernière : {tag} — {label}"
-        ),
-        "Download and reinstall the latest checkers now?\n\n{detail}": (
-            "Télécharger et réinstaller les dernières versions maintenant ?\n\n{detail}"
-        ),
-        "none": "aucune",
-        "Fetching latest releases…": "Récupération des dernières versions…",
-        "Installing {tag}…": "Installation de {tag}…",
-        "Installed": "Installé",
-        "Checkers installed successfully.\n\n{path}": (
-            "Vérificateurs installés avec succès.\n\n{path}"
-        ),
-        "Install failed": "Échec de l’installation",
-        "Installation failed:\n{error}": "Échec de l’installation :\n{error}",
-        "An accessible, cross-platform front-end for the DAISY "
-        "eBraille Checker, W3C EPUBCheck, and veraPDF (PDF/UA).": (
-            "Une interface accessible et multiplateforme pour le "
-            "vérificateur eBraille de la DAISY, EPUBCheck du W3C et "
-            "veraPDF (PDF/UA)."
-        ),
-        "EPUBCheck": "EPUBCheck",
-        "veraPDF": "veraPDF",
-        "About CheckMate": "À propos de CheckMate",
-        "Version {version}": "Version {version}",
-        "Links": "Liens",
-        "DAISY Consortium website": "Site web du consortium DAISY",
-        "eBraille on the DAISY website": "eBraille sur le site DAISY",
-        "eBraille specification": "Spécification eBraille",
-        "eBraille Checker": "eBraille Checker",
-        "Passed": "Réussi",
-        "Passed with warnings": "Réussi avec avertissements",
-        "Failed": "Échoué",
-        "Could not complete check": "Vérification impossible",
-        "Check finished. {headline}.": "Vérification terminée. {headline}.",
-        "{n} fatal": "{n} fatale",
-        "{n} fatals": "{n} fatales",
-        "{n} error": "{n} erreur",
-        "{n} errors": "{n} erreurs",
-        "{n} warning": "{n} avertissement",
-        "{n} warnings": "{n} avertissements",
-        "{label} — no errors or warnings": "{label} — aucune erreur ni avertissement",
-        "{label} — see the full log for details": (
-            "{label} — voir le journal complet pour les détails"
-        ),
-        "{label} — {details}": "{label} — {details}",
-        "no errors or warnings": "aucune erreur ni avertissement",
-        "see the full log for details": "voir le journal complet pour les détails",
-        "Check result: {text}": "Résultat : {text}",
-        "--- Full log ---": "--- Journal complet ---",
-        "Fatal": "Fatale",
-        "Error": "Erreur",
-        "Warning": "Avertissement",
-        "Info": "Info",
-        "Usage": "Usage",
-        "Unknown": "Inconnu",
-        "Checker {version}": "Vérificateur {version}",
-        "Checker {version} (bundled)": "Vérificateur {version} (inclus)",
-        "Checker installed": "Vérificateur installé",
-        "Checker not installed": "Vérificateur non installé",
-        "{name} {version}": "{name} {version}",
-        "{name} {version} (bundled)": "{name} {version} (inclus)",
-        "{name} installed": "{name} installé",
-        "{name} not installed": "{name} non installé",
-        "Publication: {path}": "Publication : {path}",
-        "Checker: {name} {version}": "Vérificateur : {name} {version}",
-        "Checker: {name}": "Vérificateur : {name}",
-        "Date: {when}": "Date : {when}",
-        "Parser": "Analyseur",
-        "Build date": "Date de compilation",
-        "Processing time": "Temps de traitement",
-        "Validation profile": "Profil de validation",
-        "Total rules in profile": "Règles totales dans le profil",
-        "Passed checks": "Contrôles réussis",
-        "Failed checks": "Contrôles échoués",
-        "Java not found": "Java introuvable",
-        "Language changed to {language}.": "Langue changée : {language}.",
-        "Explain with AI": "Expliquer avec l’IA",
-        "Explain this issue": "Expliquer ce problème",
-        "Fix with AI": "Corriger avec l’IA",
-        "AI assistance": "Assistance IA",
-        "AI-generated responses will be shown here.": (
-            "Les réponses générées par l’IA s’afficheront ici."
-        ),
-        "AI overview": "Aperçu IA",
-        "Overall assessment": "Évaluation générale",
-        "Main themes": "Thèmes principaux",
-        "Suggested priorities": "Priorités suggérées",
-        "Practical next steps": "Prochaines étapes pratiques",
-        "Caveats": "Précautions",
-        "Writing overview…": "Rédaction de l’aperçu…",
-        "Nothing to overview": "Rien à résumer",
-        "Save AI overview as HTML": "Enregistrer l’aperçu IA en HTML",
-        "Save AI overview as Markdown": "Enregistrer l’aperçu IA en Markdown",
-        "A check is already running. Wait for it to finish, then try again.": (
-            "Une vérification est déjà en cours. Attendez qu’elle se termine, "
-            "puis réessayez."
-        ),
-        "Opening issue details…": "Ouverture des détails du problème…",
-        "Loading AI view…": "Chargement de la vue IA…",
-        "Suggest fix with AI": "Suggérer une correction avec l’IA",
-        "Suggest fix for many": "Suggérer une correction pour plusieurs",
-        "Ask AI to suggest a minimal markup fix for this EPUB "
-        "or eBraille issue (uses FIDO AI settings)": (
-            "Demander à l’IA de suggérer une correction minimale du balisage "
-            "pour ce problème EPUB ou eBraille (utilise les réglages IA de FIDO)"
-        ),
-        "Ask AI to suggest unique fixes for every issue with the "
-        "same checker code in this report (uses FIDO AI settings)": (
-            "Demander à l’IA de suggérer des corrections uniques pour chaque "
-            "problème portant le même code dans ce rapport (utilise les réglages IA de FIDO)"
-        ),
-        "Apply fix and validate": "Appliquer la correction et valider",
-        "Write the proposed fix into the publication "
-        "(creates a .bak backup first)": (
-            "Écrire la correction proposée dans la publication "
-            "(crée d’abord une sauvegarde .bak)"
-        ),
-        "Write the proposed fix into the publication, "
-        "then re-check and confirm whether the issue is resolved": (
-            "Écrire la correction proposée dans la publication, "
-            "puis revérifier et confirmer si le problème est résolu"
-        ),
-        "Write the proposed fix into the publication, "
-        "then re-check automatically": (
-            "Écrire la correction proposée dans la publication, "
-            "puis revérifier automatiquement"
-        ),
-        "Proposed fix": "Correction proposée",
-        "Before": "Avant",
-        "After": "Après",
-        "File": "Fichier",
-        "(no rationale)": "(aucune justification)",
-        "Suggesting fix…": "Suggestion de correction…",
-        "Suggesting fixes…": "Suggestion des corrections…",
-        "Applying fix…": "Application de la correction…",
-        "Could not propose a fix.": "Impossible de proposer une correction.",
-        "Could not apply the fix.": "Impossible d’appliquer la correction.",
-        "Fix suggested. Review, then Apply fix and validate.": (
-            "Correction suggérée. Vérifiez, puis appliquez et validez la correction."
-        ),
-        "Fix updated. Review, then Apply fix and validate.": (
-            "Correction mise à jour. Vérifiez, puis appliquez et validez la correction."
-        ),
-        "Could not continue the fix conversation.": (
-            "Impossible de poursuivre la conversation sur la correction."
-        ),
-        "Batch fix suggested ({n} patch(es)). Review, then "
-        "Apply fix and validate.": (
-            "Correction groupée suggérée ({n} correctif(s)). Vérifiez, puis "
-            "appliquez et validez la correction."
-        ),
-        "This proposal covers {n} text replacement(s) for {m} matching issue(s).": (
-            "Cette proposition couvre {n} remplacement(s) de texte pour "
-            "{m} problème(s) correspondant(s)."
-        ),
-        "Patch": "Correctif",
-        "Skipped": "Ignorés",
-        "All matching issues with code {code} appear to be resolved "
-        "({before} → {after}).": (
-            "Tous les problèmes correspondant au code {code} semblent résolus "
-            "({before} → {after})."
-        ),
-        "Matching issues with code {code}: {before} before, "
-        "{after} after the batch fix.": (
-            "Problèmes correspondant au code {code} : {before} avant, "
-            "{after} après la correction groupée."
-        ),
-        "Patches applied: {n}.": "Correctifs appliqués : {n}.",
-        "Fix applied": "Correction appliquée",
-        "Fix applied. Re-check the publication with F5.": (
-            "Correction appliquée. Revérifiez la publication avec F5."
-        ),
-        "Fix applied. Backup: {path}. Re-check with F5.": (
-            "Correction appliquée. Sauvegarde : {path}. Revérifiez avec F5."
-        ),
-        "The issue appears to be resolved after applying the fix.": (
-            "Le problème semble résolu après application de la correction."
-        ),
-        "The targeted issue appears to be resolved (code: {code}).": (
-            "Le problème ciblé semble résolu (code : {code})."
-        ),
-        "The targeted issue is still reported after the fix was applied "
-        "(code: {code}).": (
-            "Le problème ciblé est toujours signalé après application de la "
-            "correction (code : {code})."
-        ),
-        "Totals before: {fatals} fatal(s), {errors} error(s), "
-        "{warnings} warning(s).": (
-            "Totaux avant : {fatals} fatal(s), {errors} erreur(s), "
-            "{warnings} avertissement(s)."
-        ),
-        "Totals after: {fatals} fatal(s), {errors} error(s), "
-        "{warnings} warning(s).": (
-            "Totaux après : {fatals} fatal(s), {errors} erreur(s), "
-            "{warnings} avertissement(s)."
-        ),
-        "Overall errors/warnings decreased.": (
-            "Le total des erreurs/avertissements a diminué."
-        ),
-        "Overall errors/warnings did not decrease after the fix.": (
-            "Le total des erreurs/avertissements n’a pas diminué après "
-            "la correction."
-        ),
-        "Fixing this Ace issue introduced {n} new EPUBCheck "
-        "error(s) that were not present before:": (
-            "La correction de ce problème Ace a introduit {n} nouvelle(s) "
-            "erreur(s) EPUBCheck absentes auparavant :"
-        ),
-        "No new EPUBCheck errors were introduced by this Ace fix.": (
-            "Aucune nouvelle erreur EPUBCheck n’a été introduite par "
-            "cette correction Ace."
-        ),
-        "…and {n} more.": "…et {n} de plus.",
-        "No backup file was found to revert.": (
-            "Aucun fichier de sauvegarde n’a été trouvé pour le rétablissement."
-        ),
-        "Do you want to revert to the backup?\n\n"
-        "Backup:\n{backup}": (
-            "Voulez-vous rétablir la sauvegarde ?\n\n"
-            "Sauvegarde :\n{backup}"
-        ),
-        "Fix confirmed": "Correction confirmée",
-        "Edit log:\n{path}": "Journal des modifications :\n{path}",
-        "Edit changelog": "Journal des modifications",
-        "View edit &changelog…\tCtrl+Shift+G": (
-            "Voir le &journal des modifications…\tCtrl+Shift+G"
-        ),
-        "Open in &browser": "Ouvrir dans le &navigateur",
-        "Open &folder": "Ouvrir le &dossier",
-        "No changelog": "Aucun journal",
-        "No CheckMate edit changelog was found for this publication.\n\n"
-        "A changelog is created beside the file (or inside an exploded "
-        "folder) when you apply an AI fix.": (
-            "Aucun journal des modifications CheckMate n’a été trouvé pour "
-            "cette publication.\n\n"
-            "Un journal est créé à côté du fichier (ou dans un dossier "
-            "éclaté) lorsque vous appliquez une correction par IA."
-        ),
-        "Could not read the changelog:\n{error}": (
-            "Impossible de lire le journal des modifications :\n{error}"
-        ),
-        "Could not open the changelog in a browser:\n{error}": (
-            "Impossible d’ouvrir le journal dans un navigateur :\n{error}"
-        ),
-        "Could not open the folder:\n{error}": (
-            "Impossible d’ouvrir le dossier :\n{error}"
-        ),
-        "Open the CheckMate edit changelog for this publication "
-        "(AI fixes and backups), when one exists": (
-            "Ouvrir le journal des modifications CheckMate pour cette "
-            "publication (corrections IA et sauvegardes), s’il existe"
-        ),
-        "Open a formatted HTML view in your browser": (
-            "Ouvrir une vue HTML formatée dans votre navigateur"
-        ),
-        "Reveal the changelog file in the file manager": (
-            "Afficher le fichier journal dans le gestionnaire de fichiers"
-        ),
-        "Fix not confirmed": "Correction non confirmée",
-        "Re-check failed": "Échec de la revérification",
-        "Revert": "Rétablir",
-        "Keep": "Conserver",
-        "Reverted": "Rétabli",
-        "The publication was reverted to the backup.": (
-            "La publication a été rétablie à partir de la sauvegarde."
-        ),
-        "Could not revert to the backup:\n{detail}": (
-            "Impossible de rétablir à partir de la sauvegarde :\n{detail}"
-        ),
-        "Do you want to revert to the backup created before the fix?": (
-            "Voulez-vous rétablir la sauvegarde créée avant la correction ?"
-        ),
-        "The publication was changed, but the re-check could not be completed.\n\n"
-        "{detail}": (
-            "La publication a été modifiée, mais la revérification n’a pas pu "
-            "être terminée.\n\n{detail}"
-        ),
-        "The issue is still reported after the fix was applied "
-        "(code: {code}).\n\n"
-        "No backup file was found to revert.": (
-            "Le problème est toujours signalé après application de la "
-            "correction (code : {code}).\n\n"
-            "Aucun fichier de sauvegarde n’a été trouvé pour le rétablissement."
-        ),
-        "The issue is still reported after the fix was applied "
-        "(code: {code}).\n\n"
-        "Do you want to revert to the backup?\n\n"
-        "Backup:\n{backup}": (
-            "Le problème est toujours signalé après application de la "
-            "correction (code : {code}).\n\n"
-            "Voulez-vous rétablir la sauvegarde ?\n\n"
-            "Sauvegarde :\n{backup}"
-        ),
-        "Apply this fix to the publication?\n\n"
-        "File: {file}\n\n"
-        "A .bak backup will be created first. "
-        "Re-check the publication (F5) afterward to verify.": (
-            "Appliquer cette correction à la publication ?\n\n"
-            "Fichier : {file}\n\n"
-            "Une sauvegarde .bak sera créée d’abord. "
-            "Revérifiez ensuite la publication (F5)."
-        ),
-        "Fix with AI is only available for EPUB and eBraille publications.": (
-            "Corriger avec l’IA n’est disponible que pour les publications "
-            "EPUB et eBraille."
-        ),
-        "The AI did not return an applicable patch. You can still read the "
-        "reply above, or try Explain with AI.": (
-            "L’IA n’a pas renvoyé de correctif applicable. Réessayez "
-            "Corriger avec l’IA, ou utilisez Expliquer avec l’IA."
-        ),
-        "The AI did not return an applicable patch. Try Fix with AI again, "
-        "or use Explain with AI.": (
-            "L’IA n’a pas renvoyé de correctif applicable. Réessayez "
-            "Corriger avec l’IA, ou utilisez Expliquer avec l’IA."
-        ),
-        "The AI reply was incomplete or unusable (draft text or invalid JSON). "
-        "Try Fix with AI again.": (
-            "La réponse de l’IA était incomplète ou inutilisable (brouillon "
-            "ou JSON invalide). Réessayez Corriger avec l’IA."
-        ),
-        "The AI reply was cut off before a complete patch was ready. "
-        "Try Fix with AI again.": (
-            "La réponse de l’IA a été coupée avant qu’un correctif complet "
-            "soit prêt. Réessayez Corriger avec l’IA."
-        ),
-        "The AI proposed a patch that does not match the publication file. "
-        "Try Fix with AI again.": (
-            "L’IA a proposé un correctif qui ne correspond pas au fichier "
-            "de la publication. Réessayez Corriger avec l’IA."
-        ),
-        "The proposed patch has an empty original string.": (
-            "Le correctif proposé a une chaîne d’origine vide."
-        ),
-        "Could not apply the fix: the original text was not found in the file "
-        "(it may have changed).": (
-            "Impossible d’appliquer la correction : le texte d’origine "
-            "est introuvable dans le fichier (il a peut‑être changé)."
-        ),
-        "Could not apply the fix: the original text appears more than once "
-        "in the file.": (
-            "Impossible d’appliquer la correction : le texte d’origine "
-            "apparaît plusieurs fois dans le fichier."
-        ),
-        "The publication path is missing or no longer exists.": (
-            "Le chemin de la publication est manquant ou n’existe plus."
-        ),
-        "Could not find the file to edit inside the publication.": (
-            "Impossible de trouver le fichier à modifier dans la publication."
-        ),
-        "This publication type cannot be edited in place by CheckMate.": (
-            "Ce type de publication ne peut pas être modifié sur place "
-            "par CheckMate."
-        ),
-        "Could not write the fixed publication.": (
-            "Impossible d’écrire la publication corrigée."
-        ),
-        "The publication package could not be read or rebuilt.": (
-            "Le paquet de publication n’a pas pu être lu ou reconstruit."
-        ),
-        "What this means": "Ce que cela signifie",
-        "Why it matters": "Pourquoi c’est important",
-        "Where in the file": "Où dans le fichier",
-        "How to fix": "Comment corriger",
-        "Learn more": "En savoir plus",
-        "Model:": "Modèle :",
-        "AI model": "Modèle IA",
-        "AI model selected in FIDO (read-only)": (
-            "Modèle IA sélectionné dans FIDO (lecture seule)"
-        ),
-        "(no model selected)": "(aucun modèle sélectionné)",
-        "View in browser": "Afficher dans le navigateur",
-        "Open the explanation in your web browser": (
-            "Ouvrir l’explication dans le navigateur web"
-        ),
-        "Open the current view in your web browser": (
-            "Ouvrir la vue actuelle dans le navigateur web"
-        ),
-        "Save as HTML…": "Enregistrer en HTML…",
-        "Save the explanation as an HTML file": (
-            "Enregistrer l’explication dans un fichier HTML"
-        ),
-        "Save the current view as an HTML file": (
-            "Enregistrer la vue actuelle dans un fichier HTML"
-        ),
-        "Save as Markdown…": "Enregistrer en Markdown…",
-        "Save the explanation as a Markdown file": (
-            "Enregistrer l’explication dans un fichier Markdown"
-        ),
-        "Save the AI explanation as a Markdown file": (
-            "Enregistrer l’explication IA dans un fichier Markdown"
-        ),
-        "Copy to clipboard": "Copier dans le presse-papiers",
-        "Copy the explanation markdown to the clipboard": (
-            "Copier l’explication Markdown dans le presse-papiers"
-        ),
-        "Copy the current view to the clipboard": (
-            "Copier la vue actuelle dans le presse-papiers"
-        ),
-        "Save AI explanation as HTML": "Enregistrer l’explication IA en HTML",
-        "Save issue details as HTML": "Enregistrer les détails du problème en HTML",
-        "Save AI explanation as Markdown": (
-            "Enregistrer l’explication IA en Markdown"
-        ),
-        "Markdown files (*.md)|*.md;*.markdown|All files (*.*)|*.*": (
-            "Fichiers Markdown (*.md)|*.md;*.markdown|Tous les fichiers (*.*)|*.*"
-        ),
-        "Opened in browser.": "Ouvert dans le navigateur.",
-        "Saved to {path}": "Enregistré dans {path}",
-        "Copied to clipboard.": "Copié dans le presse-papiers.",
-        "Copied to clipboard": "Copié dans le presse-papiers",
-        "The explanation was copied to the clipboard.": (
-            "L’explication a été copiée dans le presse-papiers."
-        ),
-        "The issue details were copied to the clipboard.": (
-            "Les détails du problème ont été copiés dans le presse-papiers."
-        ),
-        "AI status": "État IA",
-        "Could not copy to the clipboard.": (
-            "Impossible de copier dans le presse-papiers."
-        ),
-        "Close": "Fermer",
-        "Could not open the explanation in a browser:\n{error}": (
-            "Impossible d’ouvrir l’explication dans un navigateur :\n{error}"
-        ),
-        "Could not open the issue details in a browser:\n{error}": (
-            "Impossible d’ouvrir les détails du problème dans un navigateur :\n{error}"
-        ),
-        "Could not save the explanation:\n{error}": (
-            "Impossible d’enregistrer l’explication :\n{error}"
-        ),
-        "Ask AI to explain this issue in plain language "
-        "(uses FIDO AI settings)": (
-            "Demander à l’IA d’expliquer ce problème en langage clair "
-            "(utilise les réglages IA de FIDO)"
-        ),
-        "AI explanation": "Explication IA",
-        "Suggested fix": "Correction suggérée",
-        "The suggested fix was copied to the clipboard.": (
-            "La correction suggérée a été copiée dans le presse-papiers."
-        ),
-        "Follow-up question": "Question de suivi",
-        "Ask a follow-up question…": "Posez une question de suivi…",
-        "Ask": "Demander",
-        "Explaining…": "Explication…",
-        "Thinking…": "Réflexion…",
-        "Done": "Terminé",
-        "This explanation was generated by AI and may contain mistakes!": (
-            "Cette explication a été générée par l’IA et peut contenir des erreurs !"
-        ),
-        "Follow-up": "Suivi",
-        "You asked": "Vous avez demandé",
-        "Could not explain this issue.": "Impossible d’expliquer ce problème.",
-        "AI support is not available (litellm is not installed).": (
-            "L’assistance IA n’est pas disponible (litellm n’est pas installé)."
-        ),
-        "No AI credentials found. Configure API keys or an unlock code in FIDO.": (
-            "Aucun identifiant IA trouvé. Configurez des clés API ou un code "
-            "de déverrouillage dans FIDO."
-        ),
-        "No API key is available for the selected AI model. Check FIDO settings or your unlock code.": (
-            "Aucune clé API disponible pour le modèle IA sélectionné. "
-            "Vérifiez les réglages FIDO ou votre code de déverrouillage."
-        ),
-        "No AI model is selected in FIDO settings.": (
-            "Aucun modèle IA n’est sélectionné dans les réglages FIDO."
-        ),
-        "The AI services unlock code was not found. Check the code in FIDO.": (
-            "Le code de déverrouillage des services IA est introuvable. "
-            "Vérifiez le code dans FIDO."
-        ),
-        "Could not reach the unlock server or AI provider. Check your connection.": (
-            "Impossible de joindre le serveur de déverrouillage ou le "
-            "fournisseur d’IA. Vérifiez votre connexion."
-        ),
-        "The unlock server returned invalid data.": (
-            "Le serveur de déverrouillage a renvoyé des données invalides."
-        ),
-        "The AI services unlock code has expired.": (
-            "Le code de déverrouillage des services IA a expiré."
-        ),
-        "The unlock data could not be processed.": (
-            "Les données de déverrouillage n’ont pas pu être traitées."
-        ),
-        "Could not refresh AI credentials from the unlock code.": (
-            "Impossible d’actualiser les identifiants IA à partir du "
-            "code de déverrouillage."
-        ),
-        "The unlock code did not provide usable API keys.": (
-            "Le code de déverrouillage n’a pas fourni de clés API utilisables."
-        ),
-        "The AI returned an empty response.": (
-            "L’IA a renvoyé une réponse vide."
-        ),
-        "Enter a follow-up question.": "Saisissez une question de suivi.",
-        "The AI provider returned an error.": (
-            "Le fournisseur d’IA a renvoyé une erreur."
-        ),
-        "Explain the issue first, then ask a follow-up.": (
-            "Expliquez d’abord le problème, puis posez une question de suivi."
-        ),
-        "The AI request timed out. Try again, or check your connection and FIDO settings.": (
-            "La requête IA a expiré. Réessayez, ou vérifiez votre connexion "
-            "et les paramètres FIDO."
-        ),
-        "The AI request was cancelled.": "La requête IA a été annulée.",
-        "Checking AI credentials…": "Vérification des identifiants IA…",
-        "Checking AI connection…": "Vérification de la connexion IA…",
-        "Loading AI libraries…": "Chargement des bibliothèques IA…",
-        "Could not load AI libraries.": "Impossible de charger les bibliothèques IA.",
-        "Cancelling…": "Annulation…",
-        "Cancelled.": "Annulé.",
-        "Open debugging &log…": "Ouvrir le journal de &débogage…",
-        "No debugging log has been written yet.": (
-            "Aucun journal de débogage n’a encore été écrit."
-        ),
-        "Debugging log": "Journal de débogage",
-        "Could not open the debugging log:\n{path}": (
-            "Impossible d’ouvrir le journal de débogage :\n{path}"
-        ),
-        "Continuing truncated reply…": "Poursuite de la réponse tronquée…",
-        "\n\n---\n*Note: The AI reply was cut off again. "
-        "Ask a follow-up such as “Please continue.”*": (
-            "\n\n---\n*Remarque : la réponse de l’IA a encore été coupée. "
-            "Posez une question de suivi telle que « Veuillez continuer. »*"
-        ),
-        # Knowledge Base / Settings (newer UI)
-        "Open Knowledge Base article…": "Ouvrir l’article de la base de connaissances…",
-        "Open Knowledge Base article": "Ouvrir l’article de la base de connaissances",
-        "DAISY Knowledge Base": "Base de connaissances DAISY",
-        "Article language": "Langue de l’article",
-        "Go online": "Ouvrir en ligne",
-        "Update…": "Mettre à jour…",
-        "Translate…": "Traduire…",
-        "Retranslate…": "Retraduire…",
-        "Loading…": "Chargement…",
-        "Translated ({lang})": "Traduit ({lang})",
-        "Original English": "Anglais d’origine",
-        "KB as of {date}": "BC au {date}",
-        "KB not downloaded yet": "BC pas encore téléchargée",
-        "This Knowledge Base article is not available offline yet.\n"
-        "Use Update… to download articles, or Go online to open it in your browser.": (
-            "Cet article de la base de connaissances n’est pas encore disponible hors ligne.\n"
-            "Utilisez Mettre à jour… pour télécharger des articles, ou Ouvrir en ligne "
-            "pour l’ouvrir dans le navigateur."
-        ),
-        "Could not read the local article.": "Impossible de lire l’article local.",
-        "Download the English article before translating.": (
-            "Téléchargez l’article en anglais avant de le traduire."
-        ),
-        "Translating Knowledge Base article": "Traduction de l’article",
-        "Translating…": "Traduction…",
-        "Could not translate this article. Check that AI features "
-        "are configured, then try again.": (
-            "Impossible de traduire cet article. Vérifiez que les fonctions IA "
-            "sont configurées, puis réessayez."
-        ),
-        "Updating Knowledge Base": "Mise à jour de la base de connaissances",
-        "Preparing Knowledge Base update…": (
-            "Préparation de la mise à jour de la base de connaissances…"
-        ),
-        "Checking Knowledge Base version…": (
-            "Vérification de la version de la base de connaissances…"
-        ),
-        "Downloading KB article {n} of {total}…": (
-            "Téléchargement de l’article BC {n} sur {total}…"
-        ),
-        "Knowledge Base update finished with {n} errors.": (
-            "Mise à jour de la base de connaissances terminée avec {n} erreur(s)."
-        ),
-        "Knowledge Base updated.": "Base de connaissances mise à jour.",
-        "Knowledge Base update failed:\n{detail}": (
-            "Échec de la mise à jour de la base de connaissances :\n{detail}"
-        ),
-        "Downloaded {ok} of {total} articles.": (
-            "Téléchargement de {ok} article(s) sur {total}."
-        ),
-        "KB as of {date}.": "BC au {date}.",
-        "{n} articles failed.": "{n} article(s) ont échoué.",
-        "Knowledge Base updated ({n} articles).": (
-            "Base de connaissances mise à jour ({n} articles)."
-        ),
-        "Knowledge Base": "Base de connaissances",
-        "Downloading article…": "Téléchargement de l’article…",
-        "Save Knowledge Base article as HTML": (
-            "Enregistrer l’article de la base de connaissances en HTML"
-        ),
-        "Could not open the Knowledge Base article in a browser:\n{error}": (
-            "Impossible d’ouvrir l’article de la base de connaissances "
-            "dans un navigateur :\n{error}"
-        ),
-        "The Knowledge Base article was copied to the clipboard.": (
-            "L’article de la base de connaissances a été copié dans le presse-papiers."
-        ),
-        "&Settings…": "&Paramètres…",
-        "Settings": "Paramètres",
-        "General": "Général",
-        "Show issues always": "Toujours afficher les problèmes",
-        "Play completion sounds": "Jouer les sons de fin",
-        "Allow only one window": "N’autoriser qu’une seule fenêtre",
-        "Enable AI features": "Activer les fonctions IA",
-        "PDF (veraPDF)": "PDF (veraPDF)",
-        "EPUB": "EPUB",
-        "Checkers used when checking EPUB files:": (
-            "Vérificateurs utilisés pour les fichiers EPUB :"
-        ),
-        "EPUB checkers": "Vérificateurs EPUB",
-        "EPUBCheck only": "EPUBCheck uniquement",
-        "Ace only": "Ace uniquement",
-        "EPUBCheck + Ace is the default. Choose EPUBCheck only or Ace "
-        "only when you want a single tool. eBraille always uses the "
-        "eBraille Checker.": (
-            "EPUBCheck + Ace est la valeur par défaut. Choisissez EPUBCheck "
-            "uniquement ou Ace uniquement pour un seul outil. eBraille utilise "
-            "toujours le eBraille Checker."
-        ),
-        "Validation profile used when checking PDF files:": (
-            "Profil de validation utilisé pour les fichiers PDF :"
-        ),
-        "PDF validation profile": "Profil de validation PDF",
-        "CheckMate translation of DAISY KB article {path}. "
-        "Switch to Original English in the viewer for the authoritative text.": (
-            "Traduction CheckMate de l’article DAISY BC {path}. "
-            "Passez à l’anglais d’origine dans la visionneuse pour le texte de référence."
-        ),
-        "General preferences, EPUB checkers, and PDF validation profile": (
-            "Préférences générales, vérificateurs EPUB et profil de validation PDF"
-        ),
-        "General preferences and PDF validation profile (PDF/UA)": (
-            "Préférences générales et profil de validation PDF (PDF/UA)"
-        ),
-        "When checked, open the issues list automatically after a check "
-        "that finds issues (instead of pressing Show issues)": (
-            "Si coché, ouvre automatiquement la liste des problèmes après une "
-            "vérification qui en trouve (au lieu d’appuyer sur Afficher les problèmes)"
-        ),
-        "Play a short sound when a check finishes "
-        "(different tones for passed and failed)": (
-            "Joue un court son à la fin d’une vérification "
-            "(tons différents pour réussi et échoué)"
-        ),
-        "When opening CheckMate again, focus the existing window "
-        "instead of starting another. Files passed to the second "
-        "launch open in that window. Helps avoid conflicting edits "
-        "on the same publication.": (
-            "En rouvrant CheckMate, active la fenêtre existante au lieu "
-            "d’en démarrer une autre. Les fichiers passés au second "
-            "lancement s’ouvrent dans cette fenêtre. Évite les modifications "
-            "conflictuelles sur la même publication."
-        ),
-        "Show or hide AI features when FIDO AI is available "
-        "(useful for training)": (
-            "Affiche ou masque les fonctions IA lorsque l’IA FIDO est disponible "
-            "(utile pour la formation)"
-        ),
-        "PDF/UA-2 is the default. If veraPDF hits an internal error on "
-        "UA-2, CheckMate falls back to PDF/UA-1 automatically.": (
-            "PDF/UA-2 est la valeur par défaut. Si veraPDF rencontre une erreur "
-            "interne sur UA-2, CheckMate repasse automatiquement à PDF/UA-1."
-        ),
-    },
-    LANG_ES: {
-        "eBraille Checker": "eBraille Checker",
-        "CheckMate": "CheckMate",
-        "Publication": "Publicación",
-        "Path:": "Ruta:",
-        "Select or drop a .ebrl / .epub / .pdf file or folder — "
-        "checking starts automatically": (
-            "Seleccione o suelte un archivo .ebrl / .epub / .pdf o una carpeta — "
-            "la comprobación empieza automáticamente"
-        ),
-        "Select &file…": "Seleccionar &archivo…",
-        "Select file": "Seleccionar archivo",
-        "Select a packaged publication (Ctrl+O)": (
-            "Seleccionar una publicación empaquetada (Ctrl+O)"
-        ),
-        "Select f&older…": "Seleccionar &carpeta…",
-        "Select folder": "Seleccionar carpeta",
-        "Select an exploded publication folder (Ctrl+Shift+O)": (
-            "Seleccionar una carpeta de publicación descomprimida (Ctrl+Shift+O)"
-        ),
-        "Result": "Resultado",
-        "Check result": "Resultado de la comprobación",
-        "No check run yet.": "Aún no se ha ejecutado ninguna comprobación.",
-        "CheckMate ready.": "CheckMate listo.",
-        "Status:": "Estado:",
-        "Status": "Estado",
-        "Status: {text}": "Estado: {text}",
-        "Current check status (announced to screen readers when it changes)": (
-            "Estado actual de la comprobación (anunciado a los lectores de "
-            "pantalla cuando cambia)"
-        ),
-        "Checking…": "Comprobando…",
-        "Issues": "Problemas",
-        "Filter:": "Filtro:",
-        "Issue filter": "Filtro de problemas",
-        "Source:": "Origen:",
-        "Issue source filter": "Filtro por verificador",
-        "EPUBCheck + Ace": "EPUBCheck + Ace",
-        "Show issues from a specific checker, or all": (
-            "Mostrar problemas de un verificador concreto, o de todos"
-        ),
-        "All issues": "Todos los problemas",
-        "Errors only": "Solo errores",
-        "Warnings only": "Solo advertencias",
-        "Info / usage": "Info / uso",
-        "Show one example of each issue": (
-            "Mostrar un ejemplo de cada problema"
-        ),
-        "&Copy summary": "&Copiar resumen",
-        "Copy the result summary (Ctrl+Shift+C)": (
-            "Copiar el resumen del resultado (Ctrl+Shift+C)"
-        ),
-        "&Report…": "&Informe…",
-        "View or save reports, AI overview (when available), "
-        "copy the summary, or view the full log": (
-            "Ver o guardar informes, resumen de IA (si está disponible), "
-            "copiar el resumen o ver el registro completo"
-        ),
-        "Issues list": "Lista de problemas",
-        "Severity": "Gravedad",
-        "Impact": "Impacto",
-        "Ruleset": "Conjunto de reglas",
-        "Help": "Ayuda",
-        "Occurrences": "Ocurrencias",
-        "Code": "Código",
-        "Location": "Ubicación",
-        "Message": "Mensaje",
-        "Issue details": "Detalles del problema",
-        "Issue details pages": "Páginas de detalles del problema",
-        "Issue": "Problema",
-        "Explain": "Explicar",
-        "Fix": "Corregir",
-        "Knowledge Base": "Base de conocimientos",
-        "Save Knowledge Base article as HTML": (
-            "Guardar artículo de la base de conocimientos como HTML"
-        ),
-        "Could not open the Knowledge Base article in a browser:\n{error}": (
-            "No se pudo abrir el artículo de la base de conocimientos "
-            "en un navegador:\n{error}"
-        ),
-        "The Knowledge Base article was copied to the clipboard.": (
-            "El artículo de la base de conocimientos se copió al portapapeles."
-        ),
-        "Severity: {value}": "Gravedad: {value}",
-        "Impact: {value}": "Impacto: {value}",
-        "Ruleset: {value}": "Conjunto de reglas: {value}",
-        "Code: {value}": "Código: {value}",
-        "(none)": "(ninguno)",
-        "Press Enter or double-click an issue to read the full details.": (
-            "Pulse Intro o haga doble clic en un problema para leer "
-            "todos los detalles."
-        ),
-        "Issues hint": "Consejo de problemas",
-        "Note": "Nota",
-        "Full checker log": "Registro completo",
-        "The log is empty.": "El registro está vacío.",
-        "&File": "&Archivo",
-        "Select &file…\tCtrl+O": "Seleccionar &archivo…\tCtrl+O",
-        "Select f&older…\tCtrl+Shift+O": "Seleccionar &carpeta…\tCtrl+Shift+O",
-        "&Report": "&Informe",
-        "View &text report\tCtrl+T": "Ver informe de &texto\tCtrl+T",
-        "Save &text report…\tCtrl+Shift+S": (
-            "Guardar informe de &texto…\tCtrl+Shift+S"
-        ),
-        "View &HTML report in browser\tCtrl+H": (
-            "Ver informe &HTML en el navegador\tCtrl+H"
-        ),
-        "AI &overview…\tCtrl+Shift+A": "Resumen de &IA…\tCtrl+Shift+A",
-        "AI &overview": "Resumen de &IA",
-        "Generate an AI overview of this report (Ctrl+Shift+A)": (
-            "Generar un resumen de IA de este informe (Ctrl+Shift+A)"
-        ),
-        "Save &HTML report…\tCtrl+S": "Guardar informe &HTML…\tCtrl+S",
-        "Save &HTML report…": "Guardar informe &HTML…",
-        "E&xit\tEsc": "&Salir\tEsc",
-        "&Copy summary\tCtrl+Shift+C": "&Copiar resumen\tCtrl+Shift+C",
-        "C&lear results\tCtrl+Shift+N": "&Borrar resultados\tCtrl+Shift+N",
-        "C&lear results": "&Borrar resultados",
-        "A check is already running. Wait for it to finish, then clear.": (
-            "Ya hay una comprobación en curso. Espere a que termine y luego borre."
-        ),
-        "&Tools": "&Herramientas",
-        "&Re-check publication\tF5": "&Volver a comprobar\tF5",
-        "Show &issues": "Mostrar &problemas",
-        "Hide &issues": "Ocultar &problemas",
-        "Show the issues list": "Mostrar la lista de problemas",
-        "Hide the issues list": "Ocultar la lista de problemas",
-        "Show &issues always": "Mostrar &problemas siempre",
-        "When checked, open the issues list automatically after a check "
-        "that finds issues (instead of pressing Show issues)": (
-            "Si está marcado, abre automáticamente la lista de problemas después "
-            "de una comprobación que encuentre problemas (sin pulsar Mostrar problemas)"
-        ),
-        "Play completion &sounds": "Reproducir &sonidos al finalizar",
-        "Play a short sound when a check finishes "
-        "(different tones for passed and failed)": (
-            "Reproduce un sonido breve al terminar una comprobación "
-            "(tonos distintos para aprobado y fallido)"
-        ),
-        "Allow only one window": "Permitir solo una ventana",
-        "When opening CheckMate again, focus the existing window "
-        "instead of starting another. Files passed to the second "
-        "launch open in that window. Helps avoid conflicting edits "
-        "on the same publication.": (
-            "Al abrir CheckMate de nuevo, enfoca la ventana existente en "
-            "lugar de iniciar otra. Los archivos pasados al segundo "
-            "inicio se abren en esa ventana. Ayuda a evitar ediciones "
-            "conflictivas en la misma publicación."
-        ),
-        "View full &log\tCtrl+L": "Ver registro &completo\tCtrl+L",
-        "Check for &updates…": "Buscar &actualizaciones…",
-        "&Download / reinstall checkers…": "&Descargar / reinstalar los comprobadores…",
-        "&Language": "&Idioma",
-        "&Help": "A&yuda",
-        "&About": "&Acerca de",
-        "Starting…": "Iniciando…",
-        "Ready": "Listo",
-        "In the explanation: focus starts at the top; Tab moves between links. "
-        "Tab after the last link, or Ctrl+Tab, moves to the next dialog control.": (
-            "En la explicación: el foco empieza arriba; Tab se mueve entre enlaces. "
-            "Tab después del último enlace, o Ctrl+Tab, pasa al siguiente control."
-        ),
-        "Java required": "Se requiere Java",
-        "Java was not found.\n\n"
-        "If you are running from source, install a Java Runtime "
-        "(JRE 17 or newer recommended) and ensure java is on your PATH.\n\n"
-        "If you received a packaged build, reinstall from the full "
-        "distribution folder — it should include a runtime/ directory "
-        "with a bundled JRE.\n\n"
-        "The checker itself can still be downloaded, but checks "
-        "cannot run without Java.": (
-            "No se encontró Java.\n\n"
-            "Si ejecuta desde el código fuente, instale un entorno de "
-            "ejecución Java (se recomienda JRE 17 o posterior) y asegúrese "
-            "de que java esté en el PATH.\n\n"
-            "Si recibió una versión empaquetada, reinstale desde la carpeta "
-            "completa de distribución — debe incluir un directorio runtime/ "
-            "con un JRE incluido.\n\n"
-            "El comprobador aún se puede descargar, pero las comprobaciones "
-            "no pueden ejecutarse sin Java."
-        ),
-        "Busy": "Ocupado",
-        "A check is already running. Wait for it to finish, then drop again.": (
-            "Ya hay una comprobación en curso. Espere a que termine y vuelva a soltar."
-        ),
-        "Unsupported drop": "Soltar no admitido",
-        "Drop a packaged .ebrl, .epub, or .pdf file, or an exploded "
-        "eBraille/EPUB publication folder.": (
-            "Suelte un archivo .ebrl, .epub o .pdf empaquetado, o una carpeta de "
-            "publicación eBraille/EPUB descomprimida."
-        ),
-        "Using first publication ({name}); ignored {count} other item(s).": (
-            "Usando la primera publicación ({name}); "
-            "se ignoraron {count} elemento(s)."
-        ),
-        "Multiple items": "Varios elementos",
-        "Select an eBraille, EPUB, or PDF publication": (
-            "Seleccionar una publicación eBraille, EPUB o PDF"
-        ),
-        "Publications (*.ebrl;*.epub;*.pdf)|"
-        "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
-        "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
-        "EPUB (*.epub)|*.epub;*.EPUB|"
-        "PDF (*.pdf)|*.pdf;*.PDF|"
-        "All files (*.*)|*.*": (
-            "Publications (*.ebrl;*.epub;*.pdf)|"
-            "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
-            "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
-            "EPUB (*.epub)|*.epub;*.EPUB|"
-            "PDF (*.pdf)|*.pdf;*.PDF|"
-            "Todos los archivos (*.*)|*.*"
-        ),
-        "Select an exploded eBraille or EPUB publication folder": (
-            "Seleccionar una carpeta de publicación eBraille o EPUB descomprimida"
-        ),
-        "Nothing to check": "Nada que comprobar",
-        "Select a publication file or folder first.": (
-            "Seleccione primero un archivo o carpeta de publicación."
-        ),
-        "Invalid path": "Ruta no válida",
-        "Path not found:\n{path}": "Ruta no encontrada:\n{path}",
-        "Nothing to copy": "Nada que copiar",
-        "Run a check first.": "Ejecute primero una comprobación.",
-        "Summary copied to clipboard.": "Resumen copiado al portapapeles.",
-        "Nothing to save": "Nada que guardar",
-        "Nothing to view": "Nada que ver",
-        "Save text report": "Guardar informe de texto",
-        "Save HTML report": "Guardar informe HTML",
-        "HTML files (*.html)|*.html;*.htm|All files (*.*)|*.*": (
-            "Archivos HTML (*.html)|*.html;*.htm|Todos los archivos (*.*)|*.*"
-        ),
-        "Text files (*.txt)|*.txt|All files (*.*)|*.*": (
-            "Archivos de texto (*.txt)|*.txt|Todos los archivos (*.*)|*.*"
-        ),
-        "Report saved to {path}": "Informe guardado en {path}",
-        "Opened HTML report in browser.": (
-            "Informe HTML abierto en el navegador."
-        ),
-        "Could not open HTML report:\n{error}": (
-            "No se pudo abrir el informe HTML:\n{error}"
-        ),
-        "Check report": "Informe de comprobación",
-        "EPUBCheck report": "Informe EPUBCheck",
-        "eBraille Checker report": "Informe eBraille Checker",
-        "veraPDF report": "Informe veraPDF",
-        "Checker": "Comprobador",
-        "Date": "Fecha",
-        "GUI version": "Versión de la interfaz",
-        "No issues listed.": "No hay problemas listados.",
-        "Generated by CheckMate": (
-            "Generado por CheckMate"
-        ),
-        "Skip to issues": "Ir a los problemas",
-        "Issue counts": "Recuento de problemas",
-        "All sources": "Todas las fuentes",
-        "Filter issues": "Filtrar problemas",
-        "Search": "Buscar",
-        "Search issues": "Buscar problemas",
-        "Clear filters": "Borrar filtros",
-        "Showing {visible} of {total}": "Mostrando {visible} de {total}",
-        "No matching issues.": "No hay problemas coincidentes.",
-        "{n} info": "{n} info",
-        "{n} infos": "{n} infos",
-        "{n} usage": "{n} uso",
-        "{n} usages": "{n} usos",
-        "Checking for updates…": "Buscando actualizaciones…",
-        "Update check failed": "Error al buscar actualizaciones",
-        "Could not check for updates:\n{error}": (
-            "No se pudieron buscar actualizaciones:\n{error}"
-        ),
-        "Up to date": "Actualizado",
-        "You have the latest checkers.\n\n{detail}": (
-            "Tiene las últimas versiones de los comprobadores.\n\n{detail}"
-        ),
-        "Update available": "Actualización disponible",
-        "New checker releases are available.\n\n"
-        "{detail}\n\n"
-        "Download and install them now?": (
-            "Hay nuevas versiones de los comprobadores disponibles.\n\n"
-            "{detail}\n\n"
-            "¿Descargar e instalar ahora?"
-        ),
-        "{name}\n  Installed: {installed}\n  Latest: {tag} — {label}": (
-            "{name}\n  Instalada: {installed}\n  Última: {tag} — {label}"
-        ),
-        "Download and reinstall the latest checkers now?\n\n{detail}": (
-            "¿Descargar y reinstalar las últimas versiones ahora?\n\n{detail}"
-        ),
-        "none": "ninguna",
-        "Fetching latest releases…": "Obteniendo las últimas versiones…",
-        "Installing {tag}…": "Instalando {tag}…",
-        "Installed": "Instalado",
-        "Checkers installed successfully.\n\n{path}": (
-            "Comprobadores instalados correctamente.\n\n{path}"
-        ),
-        "Install failed": "Error de instalación",
-        "Installation failed:\n{error}": "Error de instalación:\n{error}",
-        "An accessible, cross-platform front-end for the DAISY "
-        "eBraille Checker, W3C EPUBCheck, and veraPDF (PDF/UA).": (
-            "Una interfaz accesible y multiplataforma para el "
-            "comprobador eBraille de DAISY, EPUBCheck del W3C y "
-            "veraPDF (PDF/UA)."
-        ),
-        "EPUBCheck": "EPUBCheck",
-        "veraPDF": "veraPDF",
-        "About CheckMate": "Acerca de CheckMate",
-        "Version {version}": "Versión {version}",
-        "Links": "Enlaces",
-        "DAISY Consortium website": "Sitio web del consorcio DAISY",
-        "eBraille on the DAISY website": "eBraille en el sitio de DAISY",
-        "eBraille specification": "Especificación eBraille",
-        "eBraille Checker": "eBraille Checker",
-        "Passed": "Correcto",
-        "Passed with warnings": "Correcto con advertencias",
-        "Failed": "Incorrecto",
-        "Could not complete check": "No se pudo completar la comprobación",
-        "Check finished. {headline}.": "Comprobación finalizada. {headline}.",
-        "{n} fatal": "{n} fatal",
-        "{n} fatals": "{n} fatales",
-        "{n} error": "{n} error",
-        "{n} errors": "{n} errores",
-        "{n} warning": "{n} advertencia",
-        "{n} warnings": "{n} advertencias",
-        "{label} — no errors or warnings": "{label} — sin errores ni advertencias",
-        "{label} — see the full log for details": (
-            "{label} — consulte el registro completo para más detalles"
-        ),
-        "{label} — {details}": "{label} — {details}",
-        "no errors or warnings": "sin errores ni advertencias",
-        "see the full log for details": (
-            "consulte el registro completo para más detalles"
-        ),
-        "Check result: {text}": "Resultado: {text}",
-        "--- Full log ---": "--- Registro completo ---",
-        "Fatal": "Fatal",
-        "Error": "Error",
-        "Warning": "Advertencia",
-        "Info": "Info",
-        "Usage": "Uso",
-        "Unknown": "Desconocido",
-        "Checker {version}": "Comprobador {version}",
-        "Checker {version} (bundled)": "Comprobador {version} (incluido)",
-        "Checker installed": "Comprobador instalado",
-        "Checker not installed": "Comprobador no instalado",
-        "{name} {version}": "{name} {version}",
-        "{name} {version} (bundled)": "{name} {version} (incluido)",
-        "{name} installed": "{name} instalado",
-        "{name} not installed": "{name} no instalado",
-        "Publication: {path}": "Publicación: {path}",
-        "Checker: {name} {version}": "Comprobador: {name} {version}",
-        "Checker: {name}": "Comprobador: {name}",
-        "Date: {when}": "Fecha: {when}",
-        "Parser": "Analizador",
-        "Build date": "Fecha de compilación",
-        "Processing time": "Tiempo de procesamiento",
-        "Validation profile": "Perfil de validación",
-        "Total rules in profile": "Reglas totales en el perfil",
-        "Passed checks": "Comprobaciones correctas",
-        "Failed checks": "Comprobaciones fallidas",
-        "Java not found": "Java no encontrado",
-        "Language changed to {language}.": "Idioma cambiado a {language}.",
-        "Explain with AI": "Explicar con IA",
-        "Explain this issue": "Explicar este problema",
-        "Fix with AI": "Corregir con IA",
-        "AI assistance": "Asistencia de IA",
-        "AI-generated responses will be shown here.": (
-            "Las respuestas generadas por IA se mostrarán aquí."
-        ),
-        "AI overview": "Resumen de IA",
-        "Overall assessment": "Evaluación general",
-        "Main themes": "Temas principales",
-        "Suggested priorities": "Prioridades sugeridas",
-        "Practical next steps": "Próximos pasos prácticos",
-        "Caveats": "Advertencias",
-        "Writing overview…": "Redactando el resumen…",
-        "Nothing to overview": "Nada que resumir",
-        "Save AI overview as HTML": "Guardar resumen de IA como HTML",
-        "Save AI overview as Markdown": "Guardar resumen de IA como Markdown",
-        "A check is already running. Wait for it to finish, then try again.": (
-            "Ya hay una comprobación en curso. Espere a que termine e "
-            "inténtelo de nuevo."
-        ),
-        "Opening issue details…": "Abriendo detalles del problema…",
-        "Loading AI view…": "Cargando la vista de IA…",
-        "Suggest fix with AI": "Sugerir corrección con IA",
-        "Suggest fix for many": "Sugerir corrección para varias",
-        "Ask AI to suggest a minimal markup fix for this EPUB "
-        "or eBraille issue (uses FIDO AI settings)": (
-            "Pedir a la IA una corrección mínima de marcado para este "
-            "problema de EPUB o eBraille (usa la configuración de IA de FIDO)"
-        ),
-        "Ask AI to suggest unique fixes for every issue with the "
-        "same checker code in this report (uses FIDO AI settings)": (
-            "Pedir a la IA correcciones únicas para cada problema con el "
-            "mismo código en este informe (usa la configuración de IA de FIDO)"
-        ),
-        "Apply fix and validate": "Aplicar corrección y validar",
-        "Write the proposed fix into the publication "
-        "(creates a .bak backup first)": (
-            "Escribir la corrección propuesta en la publicación "
-            "(crea primero una copia .bak)"
-        ),
-        "Write the proposed fix into the publication, "
-        "then re-check and confirm whether the issue is resolved": (
-            "Escribir la corrección propuesta en la publicación "
-            "y volver a comprobar para confirmar si el problema está resuelto"
-        ),
-        "Write the proposed fix into the publication, "
-        "then re-check automatically": (
-            "Escribir la corrección propuesta en la publicación "
-            "y volver a comprobar automáticamente"
-        ),
-        "Proposed fix": "Corrección propuesta",
-        "Before": "Antes",
-        "After": "Después",
-        "File": "Archivo",
-        "(no rationale)": "(sin justificación)",
-        "Suggesting fix…": "Sugiriendo corrección…",
-        "Suggesting fixes…": "Sugiriendo correcciones…",
-        "Applying fix…": "Aplicando corrección…",
-        "Could not propose a fix.": "No se pudo proponer una corrección.",
-        "Could not apply the fix.": "No se pudo aplicar la corrección.",
-        "Fix suggested. Review, then Apply fix and validate.": (
-            "Corrección sugerida. Revísela y luego aplíquela y valídela."
-        ),
-        "Fix updated. Review, then Apply fix and validate.": (
-            "Corrección actualizada. Revísela y luego aplíquela y valídela."
-        ),
-        "Could not continue the fix conversation.": (
-            "No se pudo continuar la conversación sobre la corrección."
-        ),
-        "Batch fix suggested ({n} patch(es)). Review, then "
-        "Apply fix and validate.": (
-            "Corrección por lotes sugerida ({n} parche(s)). Revísela y luego "
-            "aplíquela y valídela."
-        ),
-        "This proposal covers {n} text replacement(s) for {m} matching issue(s).": (
-            "Esta propuesta cubre {n} reemplazo(s) de texto para "
-            "{m} problema(s) coincidente(s)."
-        ),
-        "Patch": "Parche",
-        "Skipped": "Omitidos",
-        "All matching issues with code {code} appear to be resolved "
-        "({before} → {after}).": (
-            "Todos los problemas con el código {code} parecen resueltos "
-            "({before} → {after})."
-        ),
-        "Matching issues with code {code}: {before} before, "
-        "{after} after the batch fix.": (
-            "Problemas con el código {code}: {before} antes, "
-            "{after} después de la corrección por lotes."
-        ),
-        "Patches applied: {n}.": "Parches aplicados: {n}.",
-        "Fix applied": "Corrección aplicada",
-        "Fix applied. Re-check the publication with F5.": (
-            "Corrección aplicada. Vuelva a comprobar la publicación con F5."
-        ),
-        "Fix applied. Backup: {path}. Re-check with F5.": (
-            "Corrección aplicada. Copia de seguridad: {path}. "
-            "Vuelva a comprobar con F5."
-        ),
-        "The issue appears to be resolved after applying the fix.": (
-            "El problema parece resuelto tras aplicar la corrección."
-        ),
-        "The targeted issue appears to be resolved (code: {code}).": (
-            "El problema concreto parece resuelto (código: {code})."
-        ),
-        "The targeted issue is still reported after the fix was applied "
-        "(code: {code}).": (
-            "El problema concreto sigue apareciendo tras aplicar la "
-            "corrección (código: {code})."
-        ),
-        "Totals before: {fatals} fatal(s), {errors} error(s), "
-        "{warnings} warning(s).": (
-            "Totales antes: {fatals} fatal(es), {errors} error(es), "
-            "{warnings} advertencia(s)."
-        ),
-        "Totals after: {fatals} fatal(s), {errors} error(s), "
-        "{warnings} warning(s).": (
-            "Totales después: {fatals} fatal(es), {errors} error(es), "
-            "{warnings} advertencia(s)."
-        ),
-        "Overall errors/warnings decreased.": (
-            "El total de errores/advertencias disminuyó."
-        ),
-        "Overall errors/warnings did not decrease after the fix.": (
-            "El total de errores/advertencias no disminuyó tras la corrección."
-        ),
-        "Fixing this Ace issue introduced {n} new EPUBCheck "
-        "error(s) that were not present before:": (
-            "Al corregir este problema de Ace se introdujeron {n} error(es) "
-            "nuevos de EPUBCheck que antes no estaban:"
-        ),
-        "No new EPUBCheck errors were introduced by this Ace fix.": (
-            "Esta corrección de Ace no introdujo errores nuevos de EPUBCheck."
-        ),
-        "…and {n} more.": "…y {n} más.",
-        "No backup file was found to revert.": (
-            "No se encontró ningún archivo de copia de seguridad para revertir."
-        ),
-        "Do you want to revert to the backup?\n\n"
-        "Backup:\n{backup}": (
-            "¿Desea revertir a la copia de seguridad?\n\n"
-            "Copia de seguridad:\n{backup}"
-        ),
-        "Fix confirmed": "Corrección confirmada",
-        "Edit log:\n{path}": "Registro de ediciones:\n{path}",
-        "Edit changelog": "Registro de ediciones",
-        "View edit &changelog…\tCtrl+Shift+G": (
-            "Ver &registro de ediciones…\tCtrl+Shift+G"
-        ),
-        "Open in &browser": "Abrir en el &navegador",
-        "Open &folder": "Abrir &carpeta",
-        "No changelog": "Sin registro",
-        "No CheckMate edit changelog was found for this publication.\n\n"
-        "A changelog is created beside the file (or inside an exploded "
-        "folder) when you apply an AI fix.": (
-            "No se encontró un registro de ediciones de CheckMate para esta "
-            "publicación.\n\n"
-            "Se crea un registro junto al archivo (o dentro de una carpeta "
-            "descomprimida) al aplicar una corrección con IA."
-        ),
-        "Could not read the changelog:\n{error}": (
-            "No se pudo leer el registro de ediciones:\n{error}"
-        ),
-        "Could not open the changelog in a browser:\n{error}": (
-            "No se pudo abrir el registro en un navegador:\n{error}"
-        ),
-        "Could not open the folder:\n{error}": (
-            "No se pudo abrir la carpeta:\n{error}"
-        ),
-        "Open the CheckMate edit changelog for this publication "
-        "(AI fixes and backups), when one exists": (
-            "Abrir el registro de ediciones de CheckMate para esta "
-            "publicación (correcciones IA y copias de seguridad), si existe"
-        ),
-        "Open a formatted HTML view in your browser": (
-            "Abrir una vista HTML formateada en el navegador"
-        ),
-        "Reveal the changelog file in the file manager": (
-            "Mostrar el archivo de registro en el explorador de archivos"
-        ),
-        "Fix not confirmed": "Corrección no confirmada",
-        "Re-check failed": "Error al volver a comprobar",
-        "Revert": "Revertir",
-        "Keep": "Conservar",
-        "Reverted": "Revertido",
-        "The publication was reverted to the backup.": (
-            "La publicación se revirtió a la copia de seguridad."
-        ),
-        "Could not revert to the backup:\n{detail}": (
-            "No se pudo revertir a la copia de seguridad:\n{detail}"
-        ),
-        "Do you want to revert to the backup created before the fix?": (
-            "¿Desea revertir a la copia de seguridad creada antes de la corrección?"
-        ),
-        "The publication was changed, but the re-check could not be completed.\n\n"
-        "{detail}": (
-            "La publicación se modificó, pero no se pudo completar la "
-            "nueva comprobación.\n\n{detail}"
-        ),
-        "The issue is still reported after the fix was applied "
-        "(code: {code}).\n\n"
-        "No backup file was found to revert.": (
-            "El problema sigue apareciendo tras aplicar la corrección "
-            "(código: {code}).\n\n"
-            "No se encontró ningún archivo de copia de seguridad para revertir."
-        ),
-        "The issue is still reported after the fix was applied "
-        "(code: {code}).\n\n"
-        "Do you want to revert to the backup?\n\n"
-        "Backup:\n{backup}": (
-            "El problema sigue apareciendo tras aplicar la corrección "
-            "(código: {code}).\n\n"
-            "¿Desea revertir a la copia de seguridad?\n\n"
-            "Copia de seguridad:\n{backup}"
-        ),
-        "Apply this fix to the publication?\n\n"
-        "File: {file}\n\n"
-        "A .bak backup will be created first. "
-        "Re-check the publication (F5) afterward to verify.": (
-            "¿Aplicar esta corrección a la publicación?\n\n"
-            "Archivo: {file}\n\n"
-            "Se creará primero una copia .bak. "
-            "Después, vuelva a comprobar la publicación (F5)."
-        ),
-        "Fix with AI is only available for EPUB and eBraille publications.": (
-            "Corregir con IA solo está disponible para publicaciones "
-            "EPUB y eBraille."
-        ),
-        "The AI did not return an applicable patch. You can still read the "
-        "reply above, or try Explain with AI.": (
-            "La IA no devolvió un parche aplicable. Vuelva a intentar "
-            "Corregir con IA, o use Explicar con IA."
-        ),
-        "The AI did not return an applicable patch. Try Fix with AI again, "
-        "or use Explain with AI.": (
-            "La IA no devolvió un parche aplicable. Vuelva a intentar "
-            "Corregir con IA, o use Explicar con IA."
-        ),
-        "The AI reply was incomplete or unusable (draft text or invalid JSON). "
-        "Try Fix with AI again.": (
-            "La respuesta de la IA estaba incompleta o era inutilizable "
-            "(borrador o JSON no válido). Vuelva a intentar Corregir con IA."
-        ),
-        "The AI reply was cut off before a complete patch was ready. "
-        "Try Fix with AI again.": (
-            "La respuesta de la IA se cortó antes de un parche completo. "
-            "Vuelva a intentar Corregir con IA."
-        ),
-        "The AI proposed a patch that does not match the publication file. "
-        "Try Fix with AI again.": (
-            "La IA propuso un parche que no coincide con el archivo de la "
-            "publicación. Vuelva a intentar Corregir con IA."
-        ),
-        "The proposed patch has an empty original string.": (
-            "El parche propuesto tiene una cadena original vacía."
-        ),
-        "Could not apply the fix: the original text was not found in the file "
-        "(it may have changed).": (
-            "No se pudo aplicar la corrección: no se encontró el texto "
-            "original en el archivo (puede haber cambiado)."
-        ),
-        "Could not apply the fix: the original text appears more than once "
-        "in the file.": (
-            "No se pudo aplicar la corrección: el texto original aparece "
-            "más de una vez en el archivo."
-        ),
-        "The publication path is missing or no longer exists.": (
-            "Falta la ruta de la publicación o ya no existe."
-        ),
-        "Could not find the file to edit inside the publication.": (
-            "No se pudo encontrar el archivo a editar dentro de la publicación."
-        ),
-        "This publication type cannot be edited in place by CheckMate.": (
-            "CheckMate no puede editar este tipo de publicación in situ."
-        ),
-        "Could not write the fixed publication.": (
-            "No se pudo escribir la publicación corregida."
-        ),
-        "The publication package could not be read or rebuilt.": (
-            "No se pudo leer o reconstruir el paquete de la publicación."
-        ),
-        "What this means": "Qué significa",
-        "Why it matters": "Por qué importa",
-        "Where in the file": "Dónde en el archivo",
-        "How to fix": "Cómo corregirlo",
-        "Learn more": "Más información",
-        "Model:": "Modelo:",
-        "AI model": "Modelo de IA",
-        "AI model selected in FIDO (read-only)": (
-            "Modelo de IA seleccionado en FIDO (solo lectura)"
-        ),
-        "(no model selected)": "(ningún modelo seleccionado)",
-        "View in browser": "Ver en el navegador",
-        "Open the explanation in your web browser": (
-            "Abrir la explicación en el navegador web"
-        ),
-        "Open the current view in your web browser": (
-            "Abrir la vista actual en el navegador web"
-        ),
-        "Save as HTML…": "Guardar como HTML…",
-        "Save the explanation as an HTML file": (
-            "Guardar la explicación como archivo HTML"
-        ),
-        "Save the current view as an HTML file": (
-            "Guardar la vista actual como archivo HTML"
-        ),
-        "Save as Markdown…": "Guardar como Markdown…",
-        "Save the explanation as a Markdown file": (
-            "Guardar la explicación como archivo Markdown"
-        ),
-        "Save the AI explanation as a Markdown file": (
-            "Guardar la explicación de IA como archivo Markdown"
-        ),
-        "Copy to clipboard": "Copiar al portapapeles",
-        "Copy the explanation markdown to the clipboard": (
-            "Copiar la explicación Markdown al portapapeles"
-        ),
-        "Copy the current view to the clipboard": (
-            "Copiar la vista actual al portapapeles"
-        ),
-        "Save AI explanation as HTML": "Guardar explicación de IA como HTML",
-        "Save issue details as HTML": "Guardar detalles del problema como HTML",
-        "Save AI explanation as Markdown": (
-            "Guardar explicación de IA como Markdown"
-        ),
-        "Markdown files (*.md)|*.md;*.markdown|All files (*.*)|*.*": (
-            "Archivos Markdown (*.md)|*.md;*.markdown|Todos los archivos (*.*)|*.*"
-        ),
-        "Opened in browser.": "Abierto en el navegador.",
-        "Saved to {path}": "Guardado en {path}",
-        "Copied to clipboard.": "Copiado al portapapeles.",
-        "Copied to clipboard": "Copiado al portapapeles",
-        "The explanation was copied to the clipboard.": (
-            "La explicación se copió al portapapeles."
-        ),
-        "The issue details were copied to the clipboard.": (
-            "Los detalles del problema se copiaron al portapapeles."
-        ),
-        "AI status": "Estado de la IA",
-        "Could not copy to the clipboard.": (
-            "No se pudo copiar al portapapeles."
-        ),
-        "Close": "Cerrar",
-        "Could not open the explanation in a browser:\n{error}": (
-            "No se pudo abrir la explicación en un navegador:\n{error}"
-        ),
-        "Could not open the issue details in a browser:\n{error}": (
-            "No se pudo abrir los detalles del problema en un navegador:\n{error}"
-        ),
-        "Could not save the explanation:\n{error}": (
-            "No se pudo guardar la explicación:\n{error}"
-        ),
-        "Ask AI to explain this issue in plain language "
-        "(uses FIDO AI settings)": (
-            "Pedir a la IA que explique este problema en lenguaje sencillo "
-            "(usa la configuración de IA de FIDO)"
-        ),
-        "AI explanation": "Explicación de la IA",
-        "Suggested fix": "Corrección sugerida",
-        "The suggested fix was copied to the clipboard.": (
-            "La corrección sugerida se copió al portapapeles."
-        ),
-        "Follow-up question": "Pregunta de seguimiento",
-        "Ask a follow-up question…": "Haga una pregunta de seguimiento…",
-        "Ask": "Preguntar",
-        "Explaining…": "Explicando…",
-        "Thinking…": "Pensando…",
-        "Done": "Listo",
-        "This explanation was generated by AI and may contain mistakes!": (
-            "Esta explicación fue generada por IA y puede contener errores."
-        ),
-        "Follow-up": "Seguimiento",
-        "You asked": "Usted preguntó",
-        "Could not explain this issue.": "No se pudo explicar este problema.",
-        "AI support is not available (litellm is not installed).": (
-            "La asistencia de IA no está disponible (litellm no está instalado)."
-        ),
-        "No AI credentials found. Configure API keys or an unlock code in FIDO.": (
-            "No se encontraron credenciales de IA. Configure claves API o un "
-            "código de desbloqueo en FIDO."
-        ),
-        "No API key is available for the selected AI model. Check FIDO settings or your unlock code.": (
-            "No hay clave API disponible para el modelo de IA seleccionado. "
-            "Revise la configuración de FIDO o su código de desbloqueo."
-        ),
-        "No AI model is selected in FIDO settings.": (
-            "No hay ningún modelo de IA seleccionado en la configuración de FIDO."
-        ),
-        "The AI services unlock code was not found. Check the code in FIDO.": (
-            "No se encontró el código de desbloqueo de servicios de IA. "
-            "Compruebe el código en FIDO."
-        ),
-        "Could not reach the unlock server or AI provider. Check your connection.": (
-            "No se pudo contactar con el servidor de desbloqueo o el "
-            "proveedor de IA. Compruebe su conexión."
-        ),
-        "The unlock server returned invalid data.": (
-            "El servidor de desbloqueo devolvió datos no válidos."
-        ),
-        "The AI services unlock code has expired.": (
-            "El código de desbloqueo de servicios de IA ha caducado."
-        ),
-        "The unlock data could not be processed.": (
-            "No se pudieron procesar los datos de desbloqueo."
-        ),
-        "Could not refresh AI credentials from the unlock code.": (
-            "No se pudieron actualizar las credenciales de IA a partir "
-            "del código de desbloqueo."
-        ),
-        "The unlock code did not provide usable API keys.": (
-            "El código de desbloqueo no proporcionó claves API utilizables."
-        ),
-        "The AI returned an empty response.": (
-            "La IA devolvió una respuesta vacía."
-        ),
-        "Enter a follow-up question.": "Introduzca una pregunta de seguimiento.",
-        "The AI provider returned an error.": (
-            "El proveedor de IA devolvió un error."
-        ),
-        "Explain the issue first, then ask a follow-up.": (
-            "Explique primero el problema y luego haga una pregunta de seguimiento."
-        ),
-        "The AI request timed out. Try again, or check your connection and FIDO settings.": (
-            "La solicitud de IA agotó el tiempo de espera. Inténtelo de nuevo, "
-            "o compruebe su conexión y la configuración de FIDO."
-        ),
-        "The AI request was cancelled.": "La solicitud de IA se canceló.",
-        "Checking AI credentials…": "Comprobando credenciales de IA…",
-        "Checking AI connection…": "Comprobando conexión de IA…",
-        "Loading AI libraries…": "Cargando bibliotecas de IA…",
-        "Could not load AI libraries.": "No se pudieron cargar las bibliotecas de IA.",
-        "Cancelling…": "Cancelando…",
-        "Cancelled.": "Cancelado.",
-        "Open debugging &log…": "Abrir el registro de &depuración…",
-        "No debugging log has been written yet.": (
-            "Todavía no se ha escrito ningún registro de depuración."
-        ),
-        "Debugging log": "Registro de depuración",
-        "Could not open the debugging log:\n{path}": (
-            "No se pudo abrir el registro de depuración:\n{path}"
-        ),
-        "Continuing truncated reply…": "Continuando la respuesta truncada…",
-        "\n\n---\n*Note: The AI reply was cut off again. "
-        "Ask a follow-up such as “Please continue.”*": (
-            "\n\n---\n*Nota: la respuesta de la IA se cortó otra vez. "
-            "Haga una pregunta de seguimiento como «Por favor, continúe.»*"
-        ),
-    },
-    LANG_DE: {
-        "eBraille Checker": "eBraille Checker",
-        "CheckMate": "CheckMate",
-        "Publication": "Publikation",
-        "Path:": "Pfad:",
-        "Select or drop a .ebrl / .epub / .pdf file or folder — "
-        "checking starts automatically": (
-            "Wählen oder ziehen Sie eine .ebrl-/.epub-/.pdf-Datei oder einen Ordner — "
-            "die Prüfung startet automatisch"
-        ),
-        "Select &file…": "&Datei auswählen…",
-        "Select file": "Datei auswählen",
-        "Select a packaged publication (Ctrl+O)": (
-            "Gepackte Publikation auswählen (Ctrl+O)"
-        ),
-        "Select f&older…": "&Ordner auswählen…",
-        "Select folder": "Ordner auswählen",
-        "Select an exploded publication folder (Ctrl+Shift+O)": (
-            "Entpackten Publikationsordner auswählen (Ctrl+Shift+O)"
-        ),
-        "Result": "Ergebnis",
-        "Check result": "Prüfergebnis",
-        "No check run yet.": "Noch keine Prüfung ausgeführt.",
-        "CheckMate ready.": "CheckMate bereit.",
-        "Status:": "Status:",
-        "Status": "Status",
-        "Status: {text}": "Status: {text}",
-        "Current check status (announced to screen readers when it changes)": (
-            "Aktueller Prüfstatus (wird bei Änderung von Screenreadern "
-            "angesagt)"
-        ),
-        "Checking…": "Prüfung läuft…",
-        "Issues": "Probleme",
-        "Filter:": "Filter:",
-        "Issue filter": "Problemfilter",
-        "Source:": "Quelle:",
-        "Issue source filter": "Filter nach Prüfprogramm",
-        "EPUBCheck + Ace": "EPUBCheck + Ace",
-        "Show issues from a specific checker, or all": (
-            "Probleme eines bestimmten Prüfprogramms oder aller anzeigen"
-        ),
-        "All issues": "Alle Probleme",
-        "Errors only": "Nur Fehler",
-        "Warnings only": "Nur Warnungen",
-        "Info / usage": "Info / Verwendung",
-        "Show one example of each issue": (
-            "Ein Beispiel für jedes Problem anzeigen"
-        ),
-        "&Copy summary": "Zusammenfassung &kopieren",
-        "Copy the result summary (Ctrl+Shift+C)": (
-            "Ergebniszusammenfassung kopieren (Ctrl+Shift+C)"
-        ),
-        "&Report…": "&Bericht…",
-        "View or save reports, AI overview (when available), "
-        "copy the summary, or view the full log": (
-            "Berichte anzeigen oder speichern, KI-Überblick (falls verfügbar), "
-            "Zusammenfassung kopieren oder vollständiges Protokoll anzeigen"
-        ),
-        "Issues list": "Problemliste",
-        "Severity": "Schweregrad",
-        "Impact": "Auswirkung",
-        "Ruleset": "Regelsatz",
-        "Help": "Hilfe",
-        "Occurrences": "Vorkommen",
-        "Code": "Code",
-        "Location": "Ort",
-        "Message": "Meldung",
-        "Issue details": "Problemdetails",
-        "Issue details pages": "Seiten der Problemdetails",
-        "Issue": "Problem",
-        "Explain": "Erklären",
-        "Fix": "Korrigieren",
-        "Knowledge Base": "Wissensdatenbank",
-        "Save Knowledge Base article as HTML": (
-            "Artikel der Wissensdatenbank als HTML speichern"
-        ),
-        "Could not open the Knowledge Base article in a browser:\n{error}": (
-            "Artikel der Wissensdatenbank konnte nicht im Browser geöffnet werden:\n{error}"
-        ),
-        "The Knowledge Base article was copied to the clipboard.": (
-            "Der Artikel der Wissensdatenbank wurde in die Zwischenablage kopiert."
-        ),
-        "Severity: {value}": "Schweregrad: {value}",
-        "Impact: {value}": "Auswirkung: {value}",
-        "Ruleset: {value}": "Regelsatz: {value}",
-        "Code: {value}": "Code: {value}",
-        "(none)": "(keine)",
-        "Press Enter or double-click an issue to read the full details.": (
-            "Drücken Sie die Eingabetaste oder doppelklicken Sie auf ein "
-            "Problem, um alle Details zu lesen."
-        ),
-        "Issues hint": "Hinweis zu Problemen",
-        "Note": "Hinweis",
-        "Full checker log": "Vollständiges Prüferprotokoll",
-        "The log is empty.": "Das Protokoll ist leer.",
-        "&File": "&Datei",
-        "Select &file…\tCtrl+O": "&Datei auswählen…\tCtrl+O",
-        "Select f&older…\tCtrl+Shift+O": "&Ordner auswählen…\tCtrl+Shift+O",
-        "&Report": "&Bericht",
-        "View &text report\tCtrl+T": "&Textbericht anzeigen\tCtrl+T",
-        "Save &text report…\tCtrl+Shift+S": (
-            "&Textbericht speichern…\tCtrl+Shift+S"
-        ),
-        "View &HTML report in browser\tCtrl+H": (
-            "&HTML-Bericht im Browser anzeigen\tCtrl+H"
-        ),
-        "AI &overview…\tCtrl+Shift+A": "KI-&Überblick…\tCtrl+Shift+A",
-        "AI &overview": "KI-&Überblick",
-        "Generate an AI overview of this report (Ctrl+Shift+A)": (
-            "Einen KI-Überblick zu diesem Bericht erzeugen (Ctrl+Shift+A)"
-        ),
-        "Save &HTML report…\tCtrl+S": "&HTML-Bericht speichern…\tCtrl+S",
-        "Save &HTML report…": "&HTML-Bericht speichern…",
-        "E&xit\tEsc": "Be&enden\tEsc",
-        "&Copy summary\tCtrl+Shift+C": "Zusammenfassung &kopieren\tCtrl+Shift+C",
-        "C&lear results\tCtrl+Shift+N": "Ergebnisse &löschen\tCtrl+Shift+N",
-        "C&lear results": "Ergebnisse &löschen",
-        "A check is already running. Wait for it to finish, then clear.": (
-            "Eine Prüfung läuft bereits. Warten Sie, bis sie beendet ist, "
-            "und löschen Sie dann."
-        ),
-        "&Tools": "&Extras",
-        "&Re-check publication\tF5": "Publikation erneut &prüfen\tF5",
-        "Show &issues": "&Probleme anzeigen",
-        "Hide &issues": "&Probleme ausblenden",
-        "Show the issues list": "Problemliste anzeigen",
-        "Hide the issues list": "Problemliste ausblenden",
-        "Show &issues always": "Probleme immer &anzeigen",
-        "When checked, open the issues list automatically after a check "
-        "that finds issues (instead of pressing Show issues)": (
-            "Wenn aktiviert, wird die Problemliste nach einer Prüfung mit "
-            "Problemen automatisch geöffnet (ohne „Probleme anzeigen“)"
-        ),
-        "Play completion &sounds": "Abschluss&töne abspielen",
-        "Play a short sound when a check finishes "
-        "(different tones for passed and failed)": (
-            "Spielt einen kurzen Ton ab, wenn eine Prüfung endet "
-            "(unterschiedliche Töne für bestanden und fehlgeschlagen)"
-        ),
-        "Allow only one window": "Nur ein Fenster zulassen",
-        "When opening CheckMate again, focus the existing window "
-        "instead of starting another. Files passed to the second "
-        "launch open in that window. Helps avoid conflicting edits "
-        "on the same publication.": (
-            "Beim erneuten Öffnen von CheckMate wird das vorhandene Fenster "
-            "fokussiert statt ein weiteres zu starten. Dateien der zweiten "
-            "Startaktion öffnen sich in diesem Fenster. Vermeidet "
-            "widersprüchliche Bearbeitungen derselben Publikation."
-        ),
-        "View full &log\tCtrl+L": "Vollständiges &Protokoll anzeigen\tCtrl+L",
-        "Check for &updates…": "Nach &Updates suchen…",
-        "&Download / reinstall checkers…": "Prüfer &herunterladen / neu installieren…",
-        "&Language": "&Sprache",
-        "&Help": "&Hilfe",
-        "&About": "&Info",
-        "Starting…": "Startet…",
-        "Ready": "Bereit",
-        "In the explanation: focus starts at the top; Tab moves between links. "
-        "Tab after the last link, or Ctrl+Tab, moves to the next dialog control.": (
-            "In der Erklärung: der Fokus beginnt oben; Tab wechselt zwischen Links. "
-            "Tab nach dem letzten Link oder Strg+Tab wechselt zum nächsten Steuerelement."
-        ),
-        "Java required": "Java erforderlich",
-        "Java was not found.\n\n"
-        "If you are running from source, install a Java Runtime "
-        "(JRE 17 or newer recommended) and ensure java is on your PATH.\n\n"
-        "If you received a packaged build, reinstall from the full "
-        "distribution folder — it should include a runtime/ directory "
-        "with a bundled JRE.\n\n"
-        "The checker itself can still be downloaded, but checks "
-        "cannot run without Java.": (
-            "Java wurde nicht gefunden.\n\n"
-            "Wenn Sie aus dem Quellcode starten, installieren Sie eine "
-            "Java-Laufzeitumgebung (JRE 17 oder neuer empfohlen) und stellen "
-            "Sie sicher, dass java im PATH liegt.\n\n"
-            "Wenn Sie eine gepackte Version erhalten haben, installieren Sie "
-            "sie erneut aus dem vollständigen Verteilungsordner — er sollte "
-            "ein runtime/-Verzeichnis mit gebündeltem JRE enthalten.\n\n"
-            "Der Prüfer kann weiterhin heruntergeladen werden, aber Prüfungen "
-            "sind ohne Java nicht möglich."
-        ),
-        "Busy": "Beschäftigt",
-        "A check is already running. Wait for it to finish, then drop again.": (
-            "Eine Prüfung läuft bereits. Warten Sie auf das Ende und ziehen Sie erneut."
-        ),
-        "Unsupported drop": "Ablegen nicht unterstützt",
-        "Drop a packaged .ebrl, .epub, or .pdf file, or an exploded "
-        "eBraille/EPUB publication folder.": (
-            "Legen Sie eine gepackte .ebrl-, .epub- oder .pdf-Datei oder einen "
-            "entpackten eBraille-/EPUB-Publikationsordner ab."
-        ),
-        "Using first publication ({name}); ignored {count} other item(s).": (
-            "Erste Publikation wird verwendet ({name}); "
-            "{count} weitere(s) Element(e) ignoriert."
-        ),
-        "Multiple items": "Mehrere Elemente",
-        "Select an eBraille, EPUB, or PDF publication": (
-            "eBraille-, EPUB- oder PDF-Publikation auswählen"
-        ),
-        "Publications (*.ebrl;*.epub;*.pdf)|"
-        "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
-        "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
-        "EPUB (*.epub)|*.epub;*.EPUB|"
-        "PDF (*.pdf)|*.pdf;*.PDF|"
-        "All files (*.*)|*.*": (
-            "Publications (*.ebrl;*.epub;*.pdf)|"
-            "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
-            "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
-            "EPUB (*.epub)|*.epub;*.EPUB|"
-            "PDF (*.pdf)|*.pdf;*.PDF|"
-            "Alle Dateien (*.*)|*.*"
-        ),
-        "Select an exploded eBraille or EPUB publication folder": (
-            "Entpackten eBraille- oder EPUB-Publikationsordner auswählen"
-        ),
-        "Nothing to check": "Nichts zu prüfen",
-        "Select a publication file or folder first.": (
-            "Wählen Sie zuerst eine Publikationsdatei oder einen Ordner."
-        ),
-        "Invalid path": "Ungültiger Pfad",
-        "Path not found:\n{path}": "Pfad nicht gefunden:\n{path}",
-        "Nothing to copy": "Nichts zu kopieren",
-        "Run a check first.": "Führen Sie zuerst eine Prüfung aus.",
-        "Summary copied to clipboard.": "Zusammenfassung in die Zwischenablage kopiert.",
-        "Nothing to save": "Nichts zu speichern",
-        "Nothing to view": "Nichts anzuzeigen",
-        "Save text report": "Textbericht speichern",
-        "Save HTML report": "HTML-Bericht speichern",
-        "HTML files (*.html)|*.html;*.htm|All files (*.*)|*.*": (
-            "HTML-Dateien (*.html)|*.html;*.htm|Alle Dateien (*.*)|*.*"
-        ),
-        "Text files (*.txt)|*.txt|All files (*.*)|*.*": (
-            "Textdateien (*.txt)|*.txt|Alle Dateien (*.*)|*.*"
-        ),
-        "Report saved to {path}": "Bericht gespeichert unter {path}",
-        "Opened HTML report in browser.": (
-            "HTML-Bericht im Browser geöffnet."
-        ),
-        "Could not open HTML report:\n{error}": (
-            "HTML-Bericht konnte nicht geöffnet werden:\n{error}"
-        ),
-        "Check report": "Prüfbericht",
-        "EPUBCheck report": "EPUBCheck-Bericht",
-        "eBraille Checker report": "eBraille-Checker-Bericht",
-        "veraPDF report": "veraPDF-Bericht",
-        "Checker": "Prüfer",
-        "Date": "Datum",
-        "GUI version": "GUI-Version",
-        "No issues listed.": "Keine Probleme aufgelistet.",
-        "Generated by CheckMate": (
-            "Erstellt mit CheckMate"
-        ),
-        "Skip to issues": "Zu den Problemen",
-        "Issue counts": "Problemzahlen",
-        "All sources": "Alle Quellen",
-        "Filter issues": "Probleme filtern",
-        "Search": "Suche",
-        "Search issues": "Probleme suchen",
-        "Clear filters": "Filter zurücksetzen",
-        "Showing {visible} of {total}": "{visible} von {total} angezeigt",
-        "No matching issues.": "Keine passenden Probleme.",
-        "{n} info": "{n} Info",
-        "{n} infos": "{n} Infos",
-        "{n} usage": "{n} Verwendung",
-        "{n} usages": "{n} Verwendungen",
-        "Checking for updates…": "Suche nach Updates…",
-        "Update check failed": "Update-Prüfung fehlgeschlagen",
-        "Could not check for updates:\n{error}": (
-            "Updates konnten nicht geprüft werden:\n{error}"
-        ),
-        "Up to date": "Aktuell",
-        "You have the latest checkers.\n\n{detail}": (
-            "Sie haben die neuesten Prüfer.\n\n{detail}"
-        ),
-        "Update available": "Update verfügbar",
-        "New checker releases are available.\n\n"
-        "{detail}\n\n"
-        "Download and install them now?": (
-            "Neue Prüferversionen sind verfügbar.\n\n"
-            "{detail}\n\n"
-            "Jetzt herunterladen und installieren?"
-        ),
-        "{name}\n  Installed: {installed}\n  Latest: {tag} — {label}": (
-            "{name}\n  Installiert: {installed}\n  Neueste: {tag} — {label}"
-        ),
-        "Download and reinstall the latest checkers now?\n\n{detail}": (
-            "Neueste Prüfer jetzt herunterladen und neu installieren?\n\n{detail}"
-        ),
-        "none": "keine",
-        "Fetching latest releases…": "Neueste Versionen werden geladen…",
-        "Installing {tag}…": "{tag} wird installiert…",
-        "Installed": "Installiert",
-        "Checkers installed successfully.\n\n{path}": (
-            "Prüfer erfolgreich installiert.\n\n{path}"
-        ),
-        "Install failed": "Installation fehlgeschlagen",
-        "Installation failed:\n{error}": "Installation fehlgeschlagen:\n{error}",
-        "An accessible, cross-platform front-end for the DAISY "
-        "eBraille Checker, W3C EPUBCheck, and veraPDF (PDF/UA).": (
-            "Eine barrierefreie, plattformübergreifende Oberfläche für den "
-            "DAISY eBraille Checker, W3C EPUBCheck und veraPDF (PDF/UA)."
-        ),
-        "EPUBCheck": "EPUBCheck",
-        "veraPDF": "veraPDF",
-        "About CheckMate": "Info zu CheckMate",
-        "Version {version}": "Version {version}",
-        "Links": "Links",
-        "DAISY Consortium website": "Website des DAISY-Konsortiums",
-        "eBraille on the DAISY website": "eBraille auf der DAISY-Website",
-        "eBraille specification": "eBraille-Spezifikation",
-        "eBraille Checker": "eBraille Checker",
-        "Passed": "Bestanden",
-        "Passed with warnings": "Bestanden mit Warnungen",
-        "Failed": "Fehlgeschlagen",
-        "Could not complete check": "Prüfung konnte nicht abgeschlossen werden",
-        "Check finished. {headline}.": "Prüfung beendet. {headline}.",
-        "{n} fatal": "{n} fataler Fehler",
-        "{n} fatals": "{n} fatale Fehler",
-        "{n} error": "{n} Fehler",
-        "{n} errors": "{n} Fehler",
-        "{n} warning": "{n} Warnung",
-        "{n} warnings": "{n} Warnungen",
-        "{label} — no errors or warnings": "{label} — keine Fehler oder Warnungen",
-        "{label} — see the full log for details": (
-            "{label} — Details im vollständigen Protokoll"
-        ),
-        "{label} — {details}": "{label} — {details}",
-        "no errors or warnings": "keine Fehler oder Warnungen",
-        "see the full log for details": "Details im vollständigen Protokoll",
-        "Check result: {text}": "Ergebnis: {text}",
-        "--- Full log ---": "--- Vollständiges Protokoll ---",
-        "Fatal": "Fatal",
-        "Error": "Fehler",
-        "Warning": "Warnung",
-        "Info": "Info",
-        "Usage": "Verwendung",
-        "Unknown": "Unbekannt",
-        "Checker {version}": "Prüfer {version}",
-        "Checker {version} (bundled)": "Prüfer {version} (mitgeliefert)",
-        "Checker installed": "Prüfer installiert",
-        "Checker not installed": "Prüfer nicht installiert",
-        "{name} {version}": "{name} {version}",
-        "{name} {version} (bundled)": "{name} {version} (mitgeliefert)",
-        "{name} installed": "{name} installiert",
-        "{name} not installed": "{name} nicht installiert",
-        "Publication: {path}": "Publikation: {path}",
-        "Checker: {name} {version}": "Prüfer: {name} {version}",
-        "Checker: {name}": "Prüfer: {name}",
-        "Date: {when}": "Datum: {when}",
-        "Parser": "Parser",
-        "Build date": "Build-Datum",
-        "Processing time": "Verarbeitungszeit",
-        "Validation profile": "Validierungsprofil",
-        "Total rules in profile": "Regeln im Profil gesamt",
-        "Passed checks": "Bestandene Prüfungen",
-        "Failed checks": "Fehlgeschlagene Prüfungen",
-        "Java not found": "Java nicht gefunden",
-        "Language changed to {language}.": "Sprache geändert: {language}.",
-        "Explain with AI": "Mit KI erklären",
-        "Explain this issue": "Dieses Problem erklären",
-        "Fix with AI": "Mit KI korrigieren",
-        "AI assistance": "KI-Unterstützung",
-        "AI-generated responses will be shown here.": (
-            "KI-generierte Antworten werden hier angezeigt."
-        ),
-        "AI overview": "KI-Überblick",
-        "Overall assessment": "Gesamteinschätzung",
-        "Main themes": "Hauptthemen",
-        "Suggested priorities": "Empfohlene Prioritäten",
-        "Practical next steps": "Praktische nächste Schritte",
-        "Caveats": "Hinweise",
-        "Writing overview…": "Überblick wird erstellt…",
-        "Nothing to overview": "Nichts zum Zusammenfassen",
-        "Save AI overview as HTML": "KI-Überblick als HTML speichern",
-        "Save AI overview as Markdown": "KI-Überblick als Markdown speichern",
-        "A check is already running. Wait for it to finish, then try again.": (
-            "Eine Prüfung läuft bereits. Warten Sie, bis sie fertig ist, "
-            "und versuchen Sie es erneut."
-        ),
-        "Opening issue details…": "Problemdetails werden geöffnet…",
-        "Loading AI view…": "KI-Ansicht wird geladen…",
-        "Suggest fix with AI": "Korrektur mit KI vorschlagen",
-        "Suggest fix for many": "Korrektur für mehrere vorschlagen",
-        "Ask AI to suggest a minimal markup fix for this EPUB "
-        "or eBraille issue (uses FIDO AI settings)": (
-            "KI um einen minimalen Markup-Fix für dieses EPUB- oder "
-            "eBraille-Problem bitten (nutzt FIDO-KI-Einstellungen)"
-        ),
-        "Ask AI to suggest unique fixes for every issue with the "
-        "same checker code in this report (uses FIDO AI settings)": (
-            "KI um eindeutige Korrekturen für jedes Problem mit demselben "
-            "Prüfcode in diesem Bericht bitten (nutzt FIDO-KI-Einstellungen)"
-        ),
-        "Apply fix and validate": "Korrektur anwenden und validieren",
-        "Write the proposed fix into the publication "
-        "(creates a .bak backup first)": (
-            "Die vorgeschlagene Korrektur in die Publikation schreiben "
-            "(erstellt zuerst eine .bak-Sicherung)"
-        ),
-        "Write the proposed fix into the publication, "
-        "then re-check and confirm whether the issue is resolved": (
-            "Die vorgeschlagene Korrektur in die Publikation schreiben, "
-            "dann erneut prüfen und bestätigen, ob das Problem behoben ist"
-        ),
-        "Write the proposed fix into the publication, "
-        "then re-check automatically": (
-            "Die vorgeschlagene Korrektur in die Publikation schreiben "
-            "und automatisch erneut prüfen"
-        ),
-        "Proposed fix": "Vorgeschlagene Korrektur",
-        "Before": "Vorher",
-        "After": "Nachher",
-        "File": "Datei",
-        "(no rationale)": "(keine Begründung)",
-        "Suggesting fix…": "Korrektur wird vorgeschlagen…",
-        "Suggesting fixes…": "Korrekturen werden vorgeschlagen…",
-        "Applying fix…": "Korrektur wird angewendet…",
-        "Could not propose a fix.": "Es konnte keine Korrektur vorgeschlagen werden.",
-        "Could not apply the fix.": "Die Korrektur konnte nicht angewendet werden.",
-        "Fix suggested. Review, then Apply fix and validate.": (
-            "Korrektur vorgeschlagen. Prüfen, dann anwenden und validieren."
-        ),
-        "Fix updated. Review, then Apply fix and validate.": (
-            "Korrektur aktualisiert. Prüfen, dann anwenden und validieren."
-        ),
-        "Could not continue the fix conversation.": (
-            "Die Korrektur-Unterhaltung konnte nicht fortgesetzt werden."
-        ),
-        "Batch fix suggested ({n} patch(es)). Review, then "
-        "Apply fix and validate.": (
-            "Sammelkorrektur vorgeschlagen ({n} Patch(es)). Prüfen, dann "
-            "anwenden und validieren."
-        ),
-        "This proposal covers {n} text replacement(s) for {m} matching issue(s).": (
-            "Dieser Vorschlag umfasst {n} Textersetzung(en) für "
-            "{m} passende(s) Problem(e)."
-        ),
-        "Patch": "Patch",
-        "Skipped": "Übersprungen",
-        "All matching issues with code {code} appear to be resolved "
-        "({before} → {after}).": (
-            "Alle passenden Probleme mit Code {code} scheinen behoben "
-            "({before} → {after})."
-        ),
-        "Matching issues with code {code}: {before} before, "
-        "{after} after the batch fix.": (
-            "Passende Probleme mit Code {code}: {before} vorher, "
-            "{after} nach der Sammelkorrektur."
-        ),
-        "Patches applied: {n}.": "Angewendete Patches: {n}.",
-        "Fix applied": "Korrektur angewendet",
-        "Fix applied. Re-check the publication with F5.": (
-            "Korrektur angewendet. Publikation mit F5 erneut prüfen."
-        ),
-        "Fix applied. Backup: {path}. Re-check with F5.": (
-            "Korrektur angewendet. Sicherung: {path}. Erneut prüfen mit F5."
-        ),
-        "The issue appears to be resolved after applying the fix.": (
-            "Das Problem scheint nach dem Anwenden der Korrektur behoben zu sein."
-        ),
-        "The targeted issue appears to be resolved (code: {code}).": (
-            "Das gezielte Problem scheint behoben zu sein (Code: {code})."
-        ),
-        "The targeted issue is still reported after the fix was applied "
-        "(code: {code}).": (
-            "Das gezielte Problem wird nach dem Anwenden der Korrektur "
-            "weiterhin gemeldet (Code: {code})."
-        ),
-        "Totals before: {fatals} fatal(s), {errors} error(s), "
-        "{warnings} warning(s).": (
-            "Summen vorher: {fatals} Fatal Error(s), {errors} Fehler, "
-            "{warnings} Warnung(en)."
-        ),
-        "Totals after: {fatals} fatal(s), {errors} error(s), "
-        "{warnings} warning(s).": (
-            "Summen nachher: {fatals} Fatal Error(s), {errors} Fehler, "
-            "{warnings} Warnung(en)."
-        ),
-        "Overall errors/warnings decreased.": (
-            "Die Gesamtzahl der Fehler/Warnungen ist gesunken."
-        ),
-        "Overall errors/warnings did not decrease after the fix.": (
-            "Die Gesamtzahl der Fehler/Warnungen ist nach der Korrektur "
-            "nicht gesunken."
-        ),
-        "Fixing this Ace issue introduced {n} new EPUBCheck "
-        "error(s) that were not present before:": (
-            "Das Beheben dieses Ace-Problems hat {n} neue EPUBCheck-Fehler "
-            "eingeführt, die vorher nicht vorhanden waren:"
-        ),
-        "No new EPUBCheck errors were introduced by this Ace fix.": (
-            "Durch diese Ace-Korrektur wurden keine neuen EPUBCheck-Fehler "
-            "eingeführt."
-        ),
-        "…and {n} more.": "…und {n} weitere.",
-        "No backup file was found to revert.": (
-            "Es wurde keine Sicherungsdatei zum Zurücksetzen gefunden."
-        ),
-        "Do you want to revert to the backup?\n\n"
-        "Backup:\n{backup}": (
-            "Möchten Sie die Sicherung wiederherstellen?\n\n"
-            "Sicherung:\n{backup}"
-        ),
-        "Fix confirmed": "Korrektur bestätigt",
-        "Edit log:\n{path}": "Änderungsprotokoll:\n{path}",
-        "Edit changelog": "Änderungsprotokoll",
-        "View edit &changelog…\tCtrl+Shift+G": (
-            "Änderungs&protokoll anzeigen…\tCtrl+Shift+G"
-        ),
-        "Open in &browser": "Im &Browser öffnen",
-        "Open &folder": "&Ordner öffnen",
-        "No changelog": "Kein Protokoll",
-        "No CheckMate edit changelog was found for this publication.\n\n"
-        "A changelog is created beside the file (or inside an exploded "
-        "folder) when you apply an AI fix.": (
-            "Für diese Publikation wurde kein CheckMate-Änderungsprotokoll "
-            "gefunden.\n\n"
-            "Ein Protokoll wird neben der Datei (oder in einem entpackten "
-            "Ordner) erstellt, wenn Sie eine KI-Korrektur anwenden."
-        ),
-        "Could not read the changelog:\n{error}": (
-            "Änderungsprotokoll konnte nicht gelesen werden:\n{error}"
-        ),
-        "Could not open the changelog in a browser:\n{error}": (
-            "Protokoll konnte nicht im Browser geöffnet werden:\n{error}"
-        ),
-        "Could not open the folder:\n{error}": (
-            "Ordner konnte nicht geöffnet werden:\n{error}"
-        ),
-        "Open the CheckMate edit changelog for this publication "
-        "(AI fixes and backups), when one exists": (
-            "CheckMate-Änderungsprotokoll für diese Publikation öffnen "
-            "(KI-Korrekturen und Sicherungen), falls vorhanden"
-        ),
-        "Open a formatted HTML view in your browser": (
-            "Formatierte HTML-Ansicht im Browser öffnen"
-        ),
-        "Reveal the changelog file in the file manager": (
-            "Protokolldatei im Dateimanager anzeigen"
-        ),
-        "Fix not confirmed": "Korrektur nicht bestätigt",
-        "Re-check failed": "Erneute Prüfung fehlgeschlagen",
-        "Revert": "Zurücksetzen",
-        "Keep": "Behalten",
-        "Reverted": "Zurückgesetzt",
-        "The publication was reverted to the backup.": (
-            "Die Publikation wurde auf die Sicherung zurückgesetzt."
-        ),
-        "Could not revert to the backup:\n{detail}": (
-            "Die Sicherung konnte nicht wiederhergestellt werden:\n{detail}"
-        ),
-        "Do you want to revert to the backup created before the fix?": (
-            "Möchten Sie die vor der Korrektur erstellte Sicherung wiederherstellen?"
-        ),
-        "The publication was changed, but the re-check could not be completed.\n\n"
-        "{detail}": (
-            "Die Publikation wurde geändert, aber die erneute Prüfung konnte "
-            "nicht abgeschlossen werden.\n\n{detail}"
-        ),
-        "The issue is still reported after the fix was applied "
-        "(code: {code}).\n\n"
-        "No backup file was found to revert.": (
-            "Das Problem wird nach dem Anwenden der Korrektur weiterhin "
-            "gemeldet (Code: {code}).\n\n"
-            "Es wurde keine Sicherungsdatei zum Zurücksetzen gefunden."
-        ),
-        "The issue is still reported after the fix was applied "
-        "(code: {code}).\n\n"
-        "Do you want to revert to the backup?\n\n"
-        "Backup:\n{backup}": (
-            "Das Problem wird nach dem Anwenden der Korrektur weiterhin "
-            "gemeldet (Code: {code}).\n\n"
-            "Möchten Sie die Sicherung wiederherstellen?\n\n"
-            "Sicherung:\n{backup}"
-        ),
-        "Apply this fix to the publication?\n\n"
-        "File: {file}\n\n"
-        "A .bak backup will be created first. "
-        "Re-check the publication (F5) afterward to verify.": (
-            "Diese Korrektur auf die Publikation anwenden?\n\n"
-            "Datei: {file}\n\n"
-            "Zuerst wird eine .bak-Sicherung erstellt. "
-            "Prüfen Sie die Publikation danach erneut (F5)."
-        ),
-        "Fix with AI is only available for EPUB and eBraille publications.": (
-            "Mit KI beheben ist nur für EPUB- und eBraille-Publikationen "
-            "verfügbar."
-        ),
-        "The AI did not return an applicable patch. You can still read the "
-        "reply above, or try Explain with AI.": (
-            "Die KI hat keinen anwendbaren Patch zurückgegeben. Versuchen Sie "
-            "Mit KI beheben erneut, oder nutzen Sie Mit KI erklären."
-        ),
-        "The AI did not return an applicable patch. Try Fix with AI again, "
-        "or use Explain with AI.": (
-            "Die KI hat keinen anwendbaren Patch zurückgegeben. Versuchen Sie "
-            "Mit KI beheben erneut, oder nutzen Sie Mit KI erklären."
-        ),
-        "The AI reply was incomplete or unusable (draft text or invalid JSON). "
-        "Try Fix with AI again.": (
-            "Die KI-Antwort war unvollständig oder unbrauchbar (Entwurf oder "
-            "ungültiges JSON). Versuchen Sie Mit KI beheben erneut."
-        ),
-        "The AI reply was cut off before a complete patch was ready. "
-        "Try Fix with AI again.": (
-            "Die KI-Antwort wurde abgeschnitten, bevor ein vollständiger Patch "
-            "fertig war. Versuchen Sie Mit KI beheben erneut."
-        ),
-        "The AI proposed a patch that does not match the publication file. "
-        "Try Fix with AI again.": (
-            "Die KI hat einen Patch vorgeschlagen, der nicht zur Publikationsdatei "
-            "passt. Versuchen Sie Mit KI beheben erneut."
-        ),
-        "The proposed patch has an empty original string.": (
-            "Der vorgeschlagene Patch hat eine leere Originalzeichenfolge."
-        ),
-        "Could not apply the fix: the original text was not found in the file "
-        "(it may have changed).": (
-            "Korrektur nicht anwendbar: der Originaltext wurde in der Datei "
-            "nicht gefunden (er könnte sich geändert haben)."
-        ),
-        "Could not apply the fix: the original text appears more than once "
-        "in the file.": (
-            "Korrektur nicht anwendbar: der Originaltext kommt in der Datei "
-            "mehrfach vor."
-        ),
-        "The publication path is missing or no longer exists.": (
-            "Der Publikationspfad fehlt oder existiert nicht mehr."
-        ),
-        "Could not find the file to edit inside the publication.": (
-            "Die zu bearbeitende Datei wurde in der Publikation nicht gefunden."
-        ),
-        "This publication type cannot be edited in place by CheckMate.": (
-            "Dieser Publikationstyp kann von CheckMate nicht vor Ort "
-            "bearbeitet werden."
-        ),
-        "Could not write the fixed publication.": (
-            "Die korrigierte Publikation konnte nicht geschrieben werden."
-        ),
-        "The publication package could not be read or rebuilt.": (
-            "Das Publikationspaket konnte nicht gelesen oder neu erstellt werden."
-        ),
-        "What this means": "Was das bedeutet",
-        "Why it matters": "Warum es wichtig ist",
-        "Where in the file": "Wo in der Datei",
-        "How to fix": "So beheben Sie es",
-        "Learn more": "Mehr erfahren",
-        "Model:": "Modell:",
-        "AI model": "KI-Modell",
-        "AI model selected in FIDO (read-only)": (
-            "In FIDO ausgewähltes KI-Modell (schreibgeschützt)"
-        ),
-        "(no model selected)": "(kein Modell ausgewählt)",
-        "View in browser": "Im Browser anzeigen",
-        "Open the explanation in your web browser": (
-            "Erklärung im Webbrowser öffnen"
-        ),
-        "Open the current view in your web browser": (
-            "Aktuelle Ansicht im Webbrowser öffnen"
-        ),
-        "Save as HTML…": "Als HTML speichern…",
-        "Save the explanation as an HTML file": (
-            "Erklärung als HTML-Datei speichern"
-        ),
-        "Save the current view as an HTML file": (
-            "Aktuelle Ansicht als HTML-Datei speichern"
-        ),
-        "Save as Markdown…": "Als Markdown speichern…",
-        "Save the explanation as a Markdown file": (
-            "Erklärung als Markdown-Datei speichern"
-        ),
-        "Save the AI explanation as a Markdown file": (
-            "KI-Erklärung als Markdown-Datei speichern"
-        ),
-        "Copy to clipboard": "In die Zwischenablage kopieren",
-        "Copy the explanation markdown to the clipboard": (
-            "Markdown-Erklärung in die Zwischenablage kopieren"
-        ),
-        "Copy the current view to the clipboard": (
-            "Aktuelle Ansicht in die Zwischenablage kopieren"
-        ),
-        "Save AI explanation as HTML": "KI-Erklärung als HTML speichern",
-        "Save issue details as HTML": "Problemdetails als HTML speichern",
-        "Save AI explanation as Markdown": (
-            "KI-Erklärung als Markdown speichern"
-        ),
-        "Markdown files (*.md)|*.md;*.markdown|All files (*.*)|*.*": (
-            "Markdown-Dateien (*.md)|*.md;*.markdown|Alle Dateien (*.*)|*.*"
-        ),
-        "Opened in browser.": "Im Browser geöffnet.",
-        "Saved to {path}": "Gespeichert unter {path}",
-        "Copied to clipboard.": "In die Zwischenablage kopiert.",
-        "Copied to clipboard": "In die Zwischenablage kopiert",
-        "The explanation was copied to the clipboard.": (
-            "Die Erklärung wurde in die Zwischenablage kopiert."
-        ),
-        "The issue details were copied to the clipboard.": (
-            "Die Problemdetails wurden in die Zwischenablage kopiert."
-        ),
-        "AI status": "KI-Status",
-        "Could not copy to the clipboard.": (
-            "Konnte nicht in die Zwischenablage kopiert werden."
-        ),
-        "Close": "Schließen",
-        "Could not open the explanation in a browser:\n{error}": (
-            "Erklärung konnte nicht im Browser geöffnet werden:\n{error}"
-        ),
-        "Could not open the issue details in a browser:\n{error}": (
-            "Problemdetails konnten nicht im Browser geöffnet werden:\n{error}"
-        ),
-        "Could not save the explanation:\n{error}": (
-            "Erklärung konnte nicht gespeichert werden:\n{error}"
-        ),
-        "Ask AI to explain this issue in plain language "
-        "(uses FIDO AI settings)": (
-            "KI bitten, dieses Problem in verständlicher Sprache zu erklären "
-            "(verwendet FIDO-KI-Einstellungen)"
-        ),
-        "AI explanation": "KI-Erklärung",
-        "Suggested fix": "Vorgeschlagene Korrektur",
-        "The suggested fix was copied to the clipboard.": (
-            "Die vorgeschlagene Korrektur wurde in die Zwischenablage kopiert."
-        ),
-        "Follow-up question": "Nachfrage",
-        "Ask a follow-up question…": "Stellen Sie eine Nachfrage…",
-        "Ask": "Fragen",
-        "Explaining…": "Wird erklärt…",
-        "Thinking…": "Nachdenken…",
-        "Done": "Fertig",
-        "This explanation was generated by AI and may contain mistakes!": (
-            "Diese Erklärung wurde von einer KI erzeugt und kann Fehler enthalten!"
-        ),
-        "Follow-up": "Nachfrage",
-        "You asked": "Ihre Frage",
-        "Could not explain this issue.": "Dieses Problem konnte nicht erklärt werden.",
-        "AI support is not available (litellm is not installed).": (
-            "KI-Unterstützung ist nicht verfügbar (litellm ist nicht installiert)."
-        ),
-        "No AI credentials found. Configure API keys or an unlock code in FIDO.": (
-            "Keine KI-Zugangsdaten gefunden. Konfigurieren Sie API-Schlüssel "
-            "oder einen Freischaltcode in FIDO."
-        ),
-        "No API key is available for the selected AI model. Check FIDO settings or your unlock code.": (
-            "Für das ausgewählte KI-Modell ist kein API-Schlüssel verfügbar. "
-            "Prüfen Sie die FIDO-Einstellungen oder Ihren Freischaltcode."
-        ),
-        "No AI model is selected in FIDO settings.": (
-            "In den FIDO-Einstellungen ist kein KI-Modell ausgewählt."
-        ),
-        "The AI services unlock code was not found. Check the code in FIDO.": (
-            "Der Freischaltcode für KI-Dienste wurde nicht gefunden. "
-            "Prüfen Sie den Code in FIDO."
-        ),
-        "Could not reach the unlock server or AI provider. Check your connection.": (
-            "Der Freischaltserver oder KI-Anbieter konnte nicht erreicht werden. "
-            "Prüfen Sie Ihre Verbindung."
-        ),
-        "The unlock server returned invalid data.": (
-            "Der Freischaltserver hat ungültige Daten zurückgegeben."
-        ),
-        "The AI services unlock code has expired.": (
-            "Der Freischaltcode für KI-Dienste ist abgelaufen."
-        ),
-        "The unlock data could not be processed.": (
-            "Die Freischaltdaten konnten nicht verarbeitet werden."
-        ),
-        "Could not refresh AI credentials from the unlock code.": (
-            "KI-Zugangsdaten konnten anhand des Freischaltcodes "
-            "nicht aktualisiert werden."
-        ),
-        "The unlock code did not provide usable API keys.": (
-            "Der Freischaltcode hat keine nutzbaren API-Schlüssel geliefert."
-        ),
-        "The AI returned an empty response.": (
-            "Die KI hat eine leere Antwort zurückgegeben."
-        ),
-        "Enter a follow-up question.": "Geben Sie eine Nachfrage ein.",
-        "The AI provider returned an error.": (
-            "Der KI-Anbieter hat einen Fehler zurückgegeben."
-        ),
-        "Explain the issue first, then ask a follow-up.": (
-            "Erklären Sie zuerst das Problem und stellen Sie dann eine Nachfrage."
-        ),
-        "The AI request timed out. Try again, or check your connection and FIDO settings.": (
-            "Die KI-Anfrage ist abgelaufen. Versuchen Sie es erneut, oder prüfen Sie "
-            "Ihre Verbindung und die FIDO-Einstellungen."
-        ),
-        "The AI request was cancelled.": "Die KI-Anfrage wurde abgebrochen.",
-        "Checking AI credentials…": "KI-Zugangsdaten werden geprüft…",
-        "Checking AI connection…": "KI-Verbindung wird geprüft…",
-        "Loading AI libraries…": "KI-Bibliotheken werden geladen…",
-        "Could not load AI libraries.": "KI-Bibliotheken konnten nicht geladen werden.",
-        "Cancelling…": "Wird abgebrochen…",
-        "Cancelled.": "Abgebrochen.",
-        "Open debugging &log…": "&Debug-Protokoll öffnen…",
-        "No debugging log has been written yet.": (
-            "Es wurde noch kein Debug-Protokoll geschrieben."
-        ),
-        "Debugging log": "Debug-Protokoll",
-        "Could not open the debugging log:\n{path}": (
-            "Das Debug-Protokoll konnte nicht geöffnet werden:\n{path}"
-        ),
-        "Continuing truncated reply…": "Gekürzte Antwort wird fortgesetzt…",
-        "\n\n---\n*Note: The AI reply was cut off again. "
-        "Ask a follow-up such as “Please continue.”*": (
-            "\n\n---\n*Hinweis: Die KI-Antwort wurde erneut abgeschnitten. "
-            "Stellen Sie eine Nachfrage wie „Bitte fortsetzen.“*"
-        ),
-    },
-    LANG_PT: {
-        "eBraille Checker": "eBraille Checker",
-        "CheckMate": "CheckMate",
-        "Publication": "Publicação",
-        "Path:": "Caminho:",
-        "Select or drop a .ebrl / .epub / .pdf file or folder — "
-        "checking starts automatically": (
-            "Selecione ou solte um ficheiro .ebrl / .epub / .pdf ou uma pasta — "
-            "a verificação inicia automaticamente"
-        ),
-        "Select &file…": "Selecionar &ficheiro…",
-        "Select file": "Selecionar ficheiro",
-        "Select a packaged publication (Ctrl+O)": (
-            "Selecionar uma publicação empacotada (Ctrl+O)"
-        ),
-        "Select f&older…": "Selecionar &pasta…",
-        "Select folder": "Selecionar pasta",
-        "Select an exploded publication folder (Ctrl+Shift+O)": (
-            "Selecionar uma pasta de publicação descompactada (Ctrl+Shift+O)"
-        ),
-        "Result": "Resultado",
-        "Check result": "Resultado da verificação",
-        "No check run yet.": "Ainda não foi executada nenhuma verificação.",
-        "CheckMate ready.": "CheckMate pronto.",
-        "Status:": "Estado:",
-        "Status": "Estado",
-        "Status: {text}": "Estado: {text}",
-        "Current check status (announced to screen readers when it changes)": (
-            "Estado atual da verificação (anunciado a leitores de ecrã "
-            "quando muda)"
-        ),
-        "Checking…": "A verificar…",
-        "Issues": "Problemas",
-        "Filter:": "Filtro:",
-        "Issue filter": "Filtro de problemas",
-        "Source:": "Origem:",
-        "Issue source filter": "Filtro por verificador",
-        "EPUBCheck + Ace": "EPUBCheck + Ace",
-        "Show issues from a specific checker, or all": (
-            "Mostrar problemas de um verificador específico, ou de todos"
-        ),
-        "All issues": "Todos os problemas",
-        "Errors only": "Apenas erros",
-        "Warnings only": "Apenas avisos",
-        "Info / usage": "Info / utilização",
-        "Show one example of each issue": (
-            "Mostrar um exemplo de cada problema"
-        ),
-        "&Copy summary": "&Copiar resumo",
-        "Copy the result summary (Ctrl+Shift+C)": (
-            "Copiar o resumo do resultado (Ctrl+Shift+C)"
-        ),
-        "&Report…": "&Relatório…",
-        "View or save reports, AI overview (when available), "
-        "copy the summary, or view the full log": (
-            "Ver ou guardar relatórios, visão geral de IA (quando disponível), "
-            "copiar o resumo ou ver o registo completo"
-        ),
-        "Issues list": "Lista de problemas",
-        "Severity": "Gravidade",
-        "Impact": "Impacto",
-        "Ruleset": "Conjunto de regras",
-        "Help": "Ajuda",
-        "Occurrences": "Ocorrências",
-        "Code": "Código",
-        "Location": "Localização",
-        "Message": "Mensagem",
-        "Issue details": "Detalhes do problema",
-        "Issue details pages": "Páginas dos detalhes do problema",
-        "Issue": "Problema",
-        "Explain": "Explicar",
-        "Fix": "Corrigir",
-        "Knowledge Base": "Base de conhecimentos",
-        "Save Knowledge Base article as HTML": (
-            "Guardar artigo da base de conhecimentos como HTML"
-        ),
-        "Could not open the Knowledge Base article in a browser:\n{error}": (
-            "Não foi possível abrir o artigo da base de conhecimentos "
-            "num navegador:\n{error}"
-        ),
-        "The Knowledge Base article was copied to the clipboard.": (
-            "O artigo da base de conhecimentos foi copiado para a área de transferência."
-        ),
-        "Severity: {value}": "Gravidade: {value}",
-        "Impact: {value}": "Impacto: {value}",
-        "Ruleset: {value}": "Conjunto de regras: {value}",
-        "Code: {value}": "Código: {value}",
-        "(none)": "(nenhum)",
-        "Press Enter or double-click an issue to read the full details.": (
-            "Prima Enter ou faça duplo clique num problema para ler "
-            "todos os detalhes."
-        ),
-        "Issues hint": "Dica de problemas",
-        "Note": "Nota",
-        "Full checker log": "Registo completo",
-        "The log is empty.": "O registo está vazio.",
-        "&File": "&Ficheiro",
-        "Select &file…\tCtrl+O": "Selecionar &ficheiro…\tCtrl+O",
-        "Select f&older…\tCtrl+Shift+O": "Selecionar &pasta…\tCtrl+Shift+O",
-        "&Report": "&Relatório",
-        "View &text report\tCtrl+T": "Ver relatório de &texto\tCtrl+T",
-        "Save &text report…\tCtrl+Shift+S": (
-            "Guardar relatório de &texto…\tCtrl+Shift+S"
-        ),
-        "View &HTML report in browser\tCtrl+H": (
-            "Ver relatório &HTML no navegador\tCtrl+H"
-        ),
-        "AI &overview…\tCtrl+Shift+A": "Visão geral de &IA…\tCtrl+Shift+A",
-        "AI &overview": "Visão geral de &IA",
-        "Generate an AI overview of this report (Ctrl+Shift+A)": (
-            "Gerar uma visão geral de IA deste relatório (Ctrl+Shift+A)"
-        ),
-        "Save &HTML report…\tCtrl+S": "Guardar relatório &HTML…\tCtrl+S",
-        "Save &HTML report…": "Guardar relatório &HTML…",
-        "E&xit\tEsc": "&Sair\tEsc",
-        "&Copy summary\tCtrl+Shift+C": "&Copiar resumo\tCtrl+Shift+C",
-        "C&lear results\tCtrl+Shift+N": "&Limpar resultados\tCtrl+Shift+N",
-        "C&lear results": "&Limpar resultados",
-        "A check is already running. Wait for it to finish, then clear.": (
-            "Já está a decorrer uma verificação. Aguarde que termine e depois limpe."
-        ),
-        "&Tools": "&Ferramentas",
-        "&Re-check publication\tF5": "&Verificar novamente\tF5",
-        "Show &issues": "Mostrar &problemas",
-        "Hide &issues": "Ocultar &problemas",
-        "Show the issues list": "Mostrar a lista de problemas",
-        "Hide the issues list": "Ocultar a lista de problemas",
-        "Show &issues always": "Mostrar &problemas sempre",
-        "When checked, open the issues list automatically after a check "
-        "that finds issues (instead of pressing Show issues)": (
-            "Se marcado, abre automaticamente a lista de problemas após uma "
-            "verificação que encontre problemas (sem premir Mostrar problemas)"
-        ),
-        "Play completion &sounds": "Reproduzir &sons de conclusão",
-        "Play a short sound when a check finishes "
-        "(different tones for passed and failed)": (
-            "Reproduz um som curto quando uma verificação termina "
-            "(tons diferentes para aprovado e reprovado)"
-        ),
-        "Allow only one window": "Permitir apenas uma janela",
-        "When opening CheckMate again, focus the existing window "
-        "instead of starting another. Files passed to the second "
-        "launch open in that window. Helps avoid conflicting edits "
-        "on the same publication.": (
-            "Ao abrir o CheckMate novamente, foca a janela existente em "
-            "vez de iniciar outra. Os ficheiros passados ao segundo "
-            "arranque abrem nessa janela. Ajuda a evitar edições "
-            "conflituosas na mesma publicação."
-        ),
-        "View full &log\tCtrl+L": "Ver registo &completo\tCtrl+L",
-        "Check for &updates…": "Procurar &atualizações…",
-        "&Download / reinstall checkers…": "&Descarregar / reinstalar os verificadores…",
-        "&Language": "&Idioma",
-        "&Help": "A&juda",
-        "&About": "&Acerca de",
-        "Starting…": "A iniciar…",
-        "Ready": "Pronto",
-        "In the explanation: focus starts at the top; Tab moves between links. "
-        "Tab after the last link, or Ctrl+Tab, moves to the next dialog control.": (
-            "Na explicação: o foco começa no topo; Tab move-se entre ligações. "
-            "Tab após a última ligação, ou Ctrl+Tab, passa para o controlo seguinte."
-        ),
-        "Java required": "Java necessário",
-        "Java was not found.\n\n"
-        "If you are running from source, install a Java Runtime "
-        "(JRE 17 or newer recommended) and ensure java is on your PATH.\n\n"
-        "If you received a packaged build, reinstall from the full "
-        "distribution folder — it should include a runtime/ directory "
-        "with a bundled JRE.\n\n"
-        "The checker itself can still be downloaded, but checks "
-        "cannot run without Java.": (
-            "O Java não foi encontrado.\n\n"
-            "Se estiver a executar a partir do código-fonte, instale um "
-            "ambiente de execução Java (recomenda-se JRE 17 ou mais recente) "
-            "e certifique-se de que o java está no PATH.\n\n"
-            "Se recebeu uma versão empacotada, reinstale a partir da pasta "
-            "completa de distribuição — deve incluir um diretório runtime/ "
-            "com um JRE incluído.\n\n"
-            "O verificador ainda pode ser descarregado, mas as verificações "
-            "não podem ser executadas sem Java."
-        ),
-        "Busy": "Ocupado",
-        "A check is already running. Wait for it to finish, then drop again.": (
-            "Já existe uma verificação em curso. Aguarde que termine e solte novamente."
-        ),
-        "Unsupported drop": "Soltar não suportado",
-        "Drop a packaged .ebrl, .epub, or .pdf file, or an exploded "
-        "eBraille/EPUB publication folder.": (
-            "Solte um ficheiro .ebrl, .epub ou .pdf empacotado, ou uma pasta de "
-            "publicação eBraille/EPUB descompactada."
-        ),
-        "Using first publication ({name}); ignored {count} other item(s).": (
-            "A utilizar a primeira publicação ({name}); "
-            "ignorado(s) {count} outro(s) item(ns)."
-        ),
-        "Multiple items": "Vários itens",
-        "Select an eBraille, EPUB, or PDF publication": (
-            "Selecionar uma publicação eBraille, EPUB ou PDF"
-        ),
-        "Publications (*.ebrl;*.epub;*.pdf)|"
-        "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
-        "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
-        "EPUB (*.epub)|*.epub;*.EPUB|"
-        "PDF (*.pdf)|*.pdf;*.PDF|"
-        "All files (*.*)|*.*": (
-            "Publications (*.ebrl;*.epub;*.pdf)|"
-            "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
-            "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
-            "EPUB (*.epub)|*.epub;*.EPUB|"
-            "PDF (*.pdf)|*.pdf;*.PDF|"
-            "Todos os ficheiros (*.*)|*.*"
-        ),
-        "Select an exploded eBraille or EPUB publication folder": (
-            "Selecionar uma pasta de publicação eBraille ou EPUB descompactada"
-        ),
-        "Nothing to check": "Nada a verificar",
-        "Select a publication file or folder first.": (
-            "Selecione primeiro um ficheiro ou pasta de publicação."
-        ),
-        "Invalid path": "Caminho inválido",
-        "Path not found:\n{path}": "Caminho não encontrado:\n{path}",
-        "Nothing to copy": "Nada a copiar",
-        "Run a check first.": "Execute primeiro uma verificação.",
-        "Summary copied to clipboard.": "Resumo copiado para a área de transferência.",
-        "Nothing to save": "Nada a guardar",
-        "Nothing to view": "Nada a ver",
-        "Save text report": "Guardar relatório de texto",
-        "Save HTML report": "Guardar relatório HTML",
-        "HTML files (*.html)|*.html;*.htm|All files (*.*)|*.*": (
-            "Ficheiros HTML (*.html)|*.html;*.htm|Todos os ficheiros (*.*)|*.*"
-        ),
-        "Text files (*.txt)|*.txt|All files (*.*)|*.*": (
-            "Ficheiros de texto (*.txt)|*.txt|Todos os ficheiros (*.*)|*.*"
-        ),
-        "Report saved to {path}": "Relatório guardado em {path}",
-        "Opened HTML report in browser.": (
-            "Relatório HTML aberto no navegador."
-        ),
-        "Could not open HTML report:\n{error}": (
-            "Não foi possível abrir o relatório HTML:\n{error}"
-        ),
-        "Check report": "Relatório de verificação",
-        "EPUBCheck report": "Relatório EPUBCheck",
-        "eBraille Checker report": "Relatório eBraille Checker",
-        "veraPDF report": "Relatório veraPDF",
-        "Checker": "Verificador",
-        "Date": "Data",
-        "GUI version": "Versão da interface",
-        "No issues listed.": "Nenhum problema listado.",
-        "Generated by CheckMate": (
-            "Gerado pelo CheckMate"
-        ),
-        "Skip to issues": "Ir para os problemas",
-        "Issue counts": "Contagem de problemas",
-        "All sources": "Todas as fontes",
-        "Filter issues": "Filtrar problemas",
-        "Search": "Pesquisar",
-        "Search issues": "Pesquisar problemas",
-        "Clear filters": "Limpar filtros",
-        "Showing {visible} of {total}": "A mostrar {visible} de {total}",
-        "No matching issues.": "Nenhum problema correspondente.",
-        "{n} info": "{n} info",
-        "{n} infos": "{n} infos",
-        "{n} usage": "{n} utilização",
-        "{n} usages": "{n} utilizações",
-        "Checking for updates…": "A procurar atualizações…",
-        "Update check failed": "Falha ao procurar atualizações",
-        "Could not check for updates:\n{error}": (
-            "Não foi possível procurar atualizações:\n{error}"
-        ),
-        "Up to date": "Atualizado",
-        "You have the latest checkers.\n\n{detail}": (
-            "Tem as versões mais recentes dos verificadores.\n\n{detail}"
-        ),
-        "Update available": "Atualização disponível",
-        "New checker releases are available.\n\n"
-        "{detail}\n\n"
-        "Download and install them now?": (
-            "Estão disponíveis novas versões dos verificadores.\n\n"
-            "{detail}\n\n"
-            "Descarregar e instalar agora?"
-        ),
-        "{name}\n  Installed: {installed}\n  Latest: {tag} — {label}": (
-            "{name}\n  Instalada: {installed}\n  Mais recente: {tag} — {label}"
-        ),
-        "Download and reinstall the latest checkers now?\n\n{detail}": (
-            "Descarregar e reinstalar as versões mais recentes agora?\n\n{detail}"
-        ),
-        "none": "nenhuma",
-        "Fetching latest releases…": "A obter as versões mais recentes…",
-        "Installing {tag}…": "A instalar {tag}…",
-        "Installed": "Instalado",
-        "Checkers installed successfully.\n\n{path}": (
-            "Verificadores instalados com sucesso.\n\n{path}"
-        ),
-        "Install failed": "Falha na instalação",
-        "Installation failed:\n{error}": "Falha na instalação:\n{error}",
-        "An accessible, cross-platform front-end for the DAISY "
-        "eBraille Checker, W3C EPUBCheck, and veraPDF (PDF/UA).": (
-            "Uma interface acessível e multiplataforma para o "
-            "verificador eBraille da DAISY, o EPUBCheck do W3C e o "
-            "veraPDF (PDF/UA)."
-        ),
-        "EPUBCheck": "EPUBCheck",
-        "veraPDF": "veraPDF",
-        "About CheckMate": "Acerca do CheckMate",
-        "Version {version}": "Versão {version}",
-        "Links": "Ligações",
-        "DAISY Consortium website": "Site do consórcio DAISY",
-        "eBraille on the DAISY website": "eBraille no site da DAISY",
-        "eBraille specification": "Especificação eBraille",
-        "eBraille Checker": "eBraille Checker",
-        "Passed": "Aprovado",
-        "Passed with warnings": "Aprovado com avisos",
-        "Failed": "Reprovado",
-        "Could not complete check": "Não foi possível concluir a verificação",
-        "Check finished. {headline}.": "Verificação concluída. {headline}.",
-        "{n} fatal": "{n} fatal",
-        "{n} fatals": "{n} fatais",
-        "{n} error": "{n} erro",
-        "{n} errors": "{n} erros",
-        "{n} warning": "{n} aviso",
-        "{n} warnings": "{n} avisos",
-        "{label} — no errors or warnings": "{label} — sem erros nem avisos",
-        "{label} — see the full log for details": (
-            "{label} — consulte o registo completo para mais detalhes"
-        ),
-        "{label} — {details}": "{label} — {details}",
-        "no errors or warnings": "sem erros nem avisos",
-        "see the full log for details": (
-            "consulte o registo completo para mais detalhes"
-        ),
-        "Check result: {text}": "Resultado: {text}",
-        "--- Full log ---": "--- Registo completo ---",
-        "Fatal": "Fatal",
-        "Error": "Erro",
-        "Warning": "Aviso",
-        "Info": "Info",
-        "Usage": "Utilização",
-        "Unknown": "Desconhecido",
-        "Checker {version}": "Verificador {version}",
-        "Checker {version} (bundled)": "Verificador {version} (incluído)",
-        "Checker installed": "Verificador instalado",
-        "Checker not installed": "Verificador não instalado",
-        "{name} {version}": "{name} {version}",
-        "{name} {version} (bundled)": "{name} {version} (incluído)",
-        "{name} installed": "{name} instalado",
-        "{name} not installed": "{name} não instalado",
-        "Publication: {path}": "Publicação: {path}",
-        "Checker: {name} {version}": "Verificador: {name} {version}",
-        "Checker: {name}": "Verificador: {name}",
-        "Date: {when}": "Data: {when}",
-        "Parser": "Analisador",
-        "Build date": "Data de compilação",
-        "Processing time": "Tempo de processamento",
-        "Validation profile": "Perfil de validação",
-        "Total rules in profile": "Regras totais no perfil",
-        "Passed checks": "Verificações aprovadas",
-        "Failed checks": "Verificações falhadas",
-        "Java not found": "Java não encontrado",
-        "Language changed to {language}.": "Idioma alterado para {language}.",
-        "Explain with AI": "Explicar com IA",
-        "Explain this issue": "Explicar este problema",
-        "Fix with AI": "Corrigir com IA",
-        "AI assistance": "Assistência de IA",
-        "AI-generated responses will be shown here.": (
-            "As respostas geradas por IA serão mostradas aqui."
-        ),
-        "AI overview": "Visão geral de IA",
-        "Overall assessment": "Avaliação geral",
-        "Main themes": "Temas principais",
-        "Suggested priorities": "Prioridades sugeridas",
-        "Practical next steps": "Próximos passos práticos",
-        "Caveats": "Avisos",
-        "Writing overview…": "A redigir a visão geral…",
-        "Nothing to overview": "Nada a resumir",
-        "Save AI overview as HTML": "Guardar visão geral de IA como HTML",
-        "Save AI overview as Markdown": "Guardar visão geral de IA como Markdown",
-        "A check is already running. Wait for it to finish, then try again.": (
-            "Já há uma verificação em curso. Aguarde que termine e tente "
-            "novamente."
-        ),
-        "Opening issue details…": "A abrir os detalhes do problema…",
-        "Loading AI view…": "A carregar a vista de IA…",
-        "Suggest fix with AI": "Sugerir correção com IA",
-        "Suggest fix for many": "Sugerir correção para várias",
-        "Ask AI to suggest a minimal markup fix for this EPUB "
-        "or eBraille issue (uses FIDO AI settings)": (
-            "Pedir à IA uma correção mínima de marcação para este "
-            "problema de EPUB ou eBraille (usa as definições de IA do FIDO)"
-        ),
-        "Ask AI to suggest unique fixes for every issue with the "
-        "same checker code in this report (uses FIDO AI settings)": (
-            "Pedir à IA correções únicas para cada problema com o mesmo "
-            "código neste relatório (usa as definições de IA do FIDO)"
-        ),
-        "Apply fix and validate": "Aplicar correção e validar",
-        "Write the proposed fix into the publication "
-        "(creates a .bak backup first)": (
-            "Escrever a correção proposta na publicação "
-            "(cria primeiro uma cópia .bak)"
-        ),
-        "Write the proposed fix into the publication, "
-        "then re-check and confirm whether the issue is resolved": (
-            "Escrever a correção proposta na publicação, "
-            "depois voltar a verificar e confirmar se o problema ficou resolvido"
-        ),
-        "Write the proposed fix into the publication, "
-        "then re-check automatically": (
-            "Escrever a correção proposta na publicação "
-            "e voltar a verificar automaticamente"
-        ),
-        "Proposed fix": "Correção proposta",
-        "Before": "Antes",
-        "After": "Depois",
-        "File": "Ficheiro",
-        "(no rationale)": "(sem justificação)",
-        "Suggesting fix…": "A sugerir correção…",
-        "Suggesting fixes…": "A sugerir correções…",
-        "Applying fix…": "A aplicar correção…",
-        "Could not propose a fix.": "Não foi possível propor uma correção.",
-        "Could not apply the fix.": "Não foi possível aplicar a correção.",
-        "Fix suggested. Review, then Apply fix and validate.": (
-            "Correção sugerida. Reveja e depois aplique e valide a correção."
-        ),
-        "Fix updated. Review, then Apply fix and validate.": (
-            "Correção atualizada. Reveja e depois aplique e valide a correção."
-        ),
-        "Could not continue the fix conversation.": (
-            "Não foi possível continuar a conversa sobre a correção."
-        ),
-        "Batch fix suggested ({n} patch(es)). Review, then "
-        "Apply fix and validate.": (
-            "Correção em lote sugerida ({n} correção(ões)). Reveja e depois "
-            "aplique e valide a correção."
-        ),
-        "This proposal covers {n} text replacement(s) for {m} matching issue(s).": (
-            "Esta proposta cobre {n} substituição(ões) de texto para "
-            "{m} problema(s) correspondente(s)."
-        ),
-        "Patch": "Correção",
-        "Skipped": "Ignorados",
-        "All matching issues with code {code} appear to be resolved "
-        "({before} → {after}).": (
-            "Todos os problemas com o código {code} parecem resolvidos "
-            "({before} → {after})."
-        ),
-        "Matching issues with code {code}: {before} before, "
-        "{after} after the batch fix.": (
-            "Problemas com o código {code}: {before} antes, "
-            "{after} depois da correção em lote."
-        ),
-        "Patches applied: {n}.": "Correções aplicadas: {n}.",
-        "Fix applied": "Correção aplicada",
-        "Fix applied. Re-check the publication with F5.": (
-            "Correção aplicada. Volte a verificar a publicação com F5."
-        ),
-        "Fix applied. Backup: {path}. Re-check with F5.": (
-            "Correção aplicada. Cópia de segurança: {path}. "
-            "Volte a verificar com F5."
-        ),
-        "The issue appears to be resolved after applying the fix.": (
-            "O problema parece resolvido após aplicar a correção."
-        ),
-        "The targeted issue appears to be resolved (code: {code}).": (
-            "O problema em causa parece resolvido (código: {code})."
-        ),
-        "The targeted issue is still reported after the fix was applied "
-        "(code: {code}).": (
-            "O problema em causa continua a ser reportado após aplicar a "
-            "correção (código: {code})."
-        ),
-        "Totals before: {fatals} fatal(s), {errors} error(s), "
-        "{warnings} warning(s).": (
-            "Totais antes: {fatals} fatal(is), {errors} erro(s), "
-            "{warnings} aviso(s)."
-        ),
-        "Totals after: {fatals} fatal(s), {errors} error(s), "
-        "{warnings} warning(s).": (
-            "Totais depois: {fatals} fatal(is), {errors} erro(s), "
-            "{warnings} aviso(s)."
-        ),
-        "Overall errors/warnings decreased.": (
-            "O total de erros/avisos diminuiu."
-        ),
-        "Overall errors/warnings did not decrease after the fix.": (
-            "O total de erros/avisos não diminuiu após a correção."
-        ),
-        "Fixing this Ace issue introduced {n} new EPUBCheck "
-        "error(s) that were not present before:": (
-            "Corrigir este problema do Ace introduziu {n} novo(s) erro(s) "
-            "do EPUBCheck que não existiam antes:"
-        ),
-        "No new EPUBCheck errors were introduced by this Ace fix.": (
-            "Esta correção do Ace não introduziu novos erros do EPUBCheck."
-        ),
-        "…and {n} more.": "…e mais {n}.",
-        "No backup file was found to revert.": (
-            "Não foi encontrado nenhum ficheiro de cópia de segurança para reverter."
-        ),
-        "Do you want to revert to the backup?\n\n"
-        "Backup:\n{backup}": (
-            "Pretende reverter para a cópia de segurança?\n\n"
-            "Cópia de segurança:\n{backup}"
-        ),
-        "Fix confirmed": "Correção confirmada",
-        "Edit log:\n{path}": "Registo de edições:\n{path}",
-        "Edit changelog": "Registo de edições",
-        "View edit &changelog…\tCtrl+Shift+G": (
-            "Ver &registo de edições…\tCtrl+Shift+G"
-        ),
-        "Open in &browser": "Abrir no &navegador",
-        "Open &folder": "Abrir &pasta",
-        "No changelog": "Sem registo",
-        "No CheckMate edit changelog was found for this publication.\n\n"
-        "A changelog is created beside the file (or inside an exploded "
-        "folder) when you apply an AI fix.": (
-            "Não foi encontrado um registo de edições do CheckMate para esta "
-            "publicação.\n\n"
-            "Um registo é criado junto ao ficheiro (ou dentro de uma pasta "
-            "expandida) quando aplica uma correção com IA."
-        ),
-        "Could not read the changelog:\n{error}": (
-            "Não foi possível ler o registo de edições:\n{error}"
-        ),
-        "Could not open the changelog in a browser:\n{error}": (
-            "Não foi possível abrir o registo no navegador:\n{error}"
-        ),
-        "Could not open the folder:\n{error}": (
-            "Não foi possível abrir a pasta:\n{error}"
-        ),
-        "Open the CheckMate edit changelog for this publication "
-        "(AI fixes and backups), when one exists": (
-            "Abrir o registo de edições do CheckMate para esta publicação "
-            "(correções IA e cópias de segurança), se existir"
-        ),
-        "Open a formatted HTML view in your browser": (
-            "Abrir uma vista HTML formatada no navegador"
-        ),
-        "Reveal the changelog file in the file manager": (
-            "Mostrar o ficheiro de registo no gestor de ficheiros"
-        ),
-        "Fix not confirmed": "Correção não confirmada",
-        "Re-check failed": "Falha na nova verificação",
-        "Revert": "Reverter",
-        "Keep": "Manter",
-        "Reverted": "Revertido",
-        "The publication was reverted to the backup.": (
-            "A publicação foi revertida para a cópia de segurança."
-        ),
-        "Could not revert to the backup:\n{detail}": (
-            "Não foi possível reverter para a cópia de segurança:\n{detail}"
-        ),
-        "Do you want to revert to the backup created before the fix?": (
-            "Pretende reverter para a cópia de segurança criada antes da correção?"
-        ),
-        "The publication was changed, but the re-check could not be completed.\n\n"
-        "{detail}": (
-            "A publicação foi alterada, mas a nova verificação não pôde "
-            "ser concluída.\n\n{detail}"
-        ),
-        "The issue is still reported after the fix was applied "
-        "(code: {code}).\n\n"
-        "No backup file was found to revert.": (
-            "O problema continua a ser reportado após aplicar a correção "
-            "(código: {code}).\n\n"
-            "Não foi encontrado nenhum ficheiro de cópia de segurança para reverter."
-        ),
-        "The issue is still reported after the fix was applied "
-        "(code: {code}).\n\n"
-        "Do you want to revert to the backup?\n\n"
-        "Backup:\n{backup}": (
-            "O problema continua a ser reportado após aplicar a correção "
-            "(código: {code}).\n\n"
-            "Pretende reverter para a cópia de segurança?\n\n"
-            "Cópia de segurança:\n{backup}"
-        ),
-        "Apply this fix to the publication?\n\n"
-        "File: {file}\n\n"
-        "A .bak backup will be created first. "
-        "Re-check the publication (F5) afterward to verify.": (
-            "Aplicar esta correção à publicação?\n\n"
-            "Ficheiro: {file}\n\n"
-            "Será criada primeiro uma cópia .bak. "
-            "Depois, volte a verificar a publicação (F5)."
-        ),
-        "Fix with AI is only available for EPUB and eBraille publications.": (
-            "Corrigir com IA só está disponível para publicações "
-            "EPUB e eBraille."
-        ),
-        "The AI did not return an applicable patch. You can still read the "
-        "reply above, or try Explain with AI.": (
-            "A IA não devolveu uma correção aplicável. Tente novamente "
-            "Corrigir com IA, ou use Explicar com IA."
-        ),
-        "The AI did not return an applicable patch. Try Fix with AI again, "
-        "or use Explain with AI.": (
-            "A IA não devolveu uma correção aplicável. Tente novamente "
-            "Corrigir com IA, ou use Explicar com IA."
-        ),
-        "The AI reply was incomplete or unusable (draft text or invalid JSON). "
-        "Try Fix with AI again.": (
-            "A resposta da IA estava incompleta ou inutilizável (rascunho "
-            "ou JSON inválido). Tente novamente Corrigir com IA."
-        ),
-        "The AI reply was cut off before a complete patch was ready. "
-        "Try Fix with AI again.": (
-            "A resposta da IA foi cortada antes de uma correção completa. "
-            "Tente novamente Corrigir com IA."
-        ),
-        "The AI proposed a patch that does not match the publication file. "
-        "Try Fix with AI again.": (
-            "A IA propôs uma correção que não corresponde ao ficheiro da "
-            "publicação. Tente novamente Corrigir com IA."
-        ),
-        "The proposed patch has an empty original string.": (
-            "A correção proposta tem uma cadeia original vazia."
-        ),
-        "Could not apply the fix: the original text was not found in the file "
-        "(it may have changed).": (
-            "Não foi possível aplicar a correção: o texto original "
-            "não foi encontrado no ficheiro (pode ter mudado)."
-        ),
-        "Could not apply the fix: the original text appears more than once "
-        "in the file.": (
-            "Não foi possível aplicar a correção: o texto original "
-            "aparece mais do que uma vez no ficheiro."
-        ),
-        "The publication path is missing or no longer exists.": (
-            "O caminho da publicação está em falta ou já não existe."
-        ),
-        "Could not find the file to edit inside the publication.": (
-            "Não foi possível encontrar o ficheiro a editar na publicação."
-        ),
-        "This publication type cannot be edited in place by CheckMate.": (
-            "Este tipo de publicação não pode ser editado no local "
-            "pelo CheckMate."
-        ),
-        "Could not write the fixed publication.": (
-            "Não foi possível escrever a publicação corrigida."
-        ),
-        "The publication package could not be read or rebuilt.": (
-            "O pacote da publicação não pôde ser lido ou reconstruído."
-        ),
-        "What this means": "O que isto significa",
-        "Why it matters": "Porque é importante",
-        "Where in the file": "Onde no ficheiro",
-        "How to fix": "Como corrigir",
-        "Learn more": "Saber mais",
-        "Model:": "Modelo:",
-        "AI model": "Modelo de IA",
-        "AI model selected in FIDO (read-only)": (
-            "Modelo de IA selecionado no FIDO (só de leitura)"
-        ),
-        "(no model selected)": "(nenhum modelo selecionado)",
-        "View in browser": "Ver no navegador",
-        "Open the explanation in your web browser": (
-            "Abrir a explicação no navegador web"
-        ),
-        "Open the current view in your web browser": (
-            "Abrir a vista atual no navegador web"
-        ),
-        "Save as HTML…": "Guardar como HTML…",
-        "Save the explanation as an HTML file": (
-            "Guardar a explicação como ficheiro HTML"
-        ),
-        "Save the current view as an HTML file": (
-            "Guardar a vista atual como ficheiro HTML"
-        ),
-        "Save as Markdown…": "Guardar como Markdown…",
-        "Save the explanation as a Markdown file": (
-            "Guardar a explicação como ficheiro Markdown"
-        ),
-        "Save the AI explanation as a Markdown file": (
-            "Guardar a explicação da IA como ficheiro Markdown"
-        ),
-        "Copy to clipboard": "Copiar para a área de transferência",
-        "Copy the explanation markdown to the clipboard": (
-            "Copiar a explicação Markdown para a área de transferência"
-        ),
-        "Copy the current view to the clipboard": (
-            "Copiar a vista atual para a área de transferência"
-        ),
-        "Save AI explanation as HTML": "Guardar explicação da IA como HTML",
-        "Save issue details as HTML": "Guardar detalhes do problema como HTML",
-        "Save AI explanation as Markdown": (
-            "Guardar explicação da IA como Markdown"
-        ),
-        "Markdown files (*.md)|*.md;*.markdown|All files (*.*)|*.*": (
-            "Ficheiros Markdown (*.md)|*.md;*.markdown|Todos os ficheiros (*.*)|*.*"
-        ),
-        "Opened in browser.": "Aberto no navegador.",
-        "Saved to {path}": "Guardado em {path}",
-        "Copied to clipboard.": "Copiado para a área de transferência.",
-        "Copied to clipboard": "Copiado para a área de transferência",
-        "The explanation was copied to the clipboard.": (
-            "A explicação foi copiada para a área de transferência."
-        ),
-        "The issue details were copied to the clipboard.": (
-            "Os detalhes do problema foram copiados para a área de transferência."
-        ),
-        "AI status": "Estado da IA",
-        "Could not copy to the clipboard.": (
-            "Não foi possível copiar para a área de transferência."
-        ),
-        "Close": "Fechar",
-        "Could not open the explanation in a browser:\n{error}": (
-            "Não foi possível abrir a explicação num navegador:\n{error}"
-        ),
-        "Could not open the issue details in a browser:\n{error}": (
-            "Não foi possível abrir os detalhes do problema num navegador:\n{error}"
-        ),
-        "Could not save the explanation:\n{error}": (
-            "Não foi possível guardar a explicação:\n{error}"
-        ),
-        "Ask AI to explain this issue in plain language "
-        "(uses FIDO AI settings)": (
-            "Pedir à IA que explique este problema em linguagem simples "
-            "(usa as definições de IA do FIDO)"
-        ),
-        "AI explanation": "Explicação da IA",
-        "Suggested fix": "Correção sugerida",
-        "The suggested fix was copied to the clipboard.": (
-            "A correção sugerida foi copiada para a área de transferência."
-        ),
-        "Follow-up question": "Pergunta de seguimento",
-        "Ask a follow-up question…": "Faça uma pergunta de seguimento…",
-        "Ask": "Perguntar",
-        "Explaining…": "A explicar…",
-        "Thinking…": "A pensar…",
-        "Done": "Concluído",
-        "This explanation was generated by AI and may contain mistakes!": (
-            "Esta explicação foi gerada por IA e pode conter erros!"
-        ),
-        "Follow-up": "Seguimento",
-        "You asked": "Você perguntou",
-        "Could not explain this issue.": "Não foi possível explicar este problema.",
-        "AI support is not available (litellm is not installed).": (
-            "A assistência de IA não está disponível (litellm não está instalado)."
-        ),
-        "No AI credentials found. Configure API keys or an unlock code in FIDO.": (
-            "Não foram encontradas credenciais de IA. Configure chaves API "
-            "ou um código de desbloqueio no FIDO."
-        ),
-        "No API key is available for the selected AI model. Check FIDO settings or your unlock code.": (
-            "Não há chave API disponível para o modelo de IA selecionado. "
-            "Verifique as definições do FIDO ou o seu código de desbloqueio."
-        ),
-        "No AI model is selected in FIDO settings.": (
-            "Nenhum modelo de IA está selecionado nas definições do FIDO."
-        ),
-        "The AI services unlock code was not found. Check the code in FIDO.": (
-            "O código de desbloqueio dos serviços de IA não foi encontrado. "
-            "Verifique o código no FIDO."
-        ),
-        "Could not reach the unlock server or AI provider. Check your connection.": (
-            "Não foi possível contactar o servidor de desbloqueio ou o "
-            "fornecedor de IA. Verifique a sua ligação."
-        ),
-        "The unlock server returned invalid data.": (
-            "O servidor de desbloqueio devolveu dados inválidos."
-        ),
-        "The AI services unlock code has expired.": (
-            "O código de desbloqueio dos serviços de IA expirou."
-        ),
-        "The unlock data could not be processed.": (
-            "Os dados de desbloqueio não puderam ser processados."
-        ),
-        "Could not refresh AI credentials from the unlock code.": (
-            "Não foi possível atualizar as credenciais de IA a partir "
-            "do código de desbloqueio."
-        ),
-        "The unlock code did not provide usable API keys.": (
-            "O código de desbloqueio não forneceu chaves API utilizáveis."
-        ),
-        "The AI returned an empty response.": (
-            "A IA devolveu uma resposta vazia."
-        ),
-        "Enter a follow-up question.": "Introduza uma pergunta de seguimento.",
-        "The AI provider returned an error.": (
-            "O fornecedor de IA devolveu um erro."
-        ),
-        "Explain the issue first, then ask a follow-up.": (
-            "Explique primeiro o problema e depois faça uma pergunta de seguimento."
-        ),
-        "The AI request timed out. Try again, or check your connection and FIDO settings.": (
-            "O pedido de IA expirou. Tente novamente, ou verifique a sua ligação "
-            "e as definições do FIDO."
-        ),
-        "The AI request was cancelled.": "O pedido de IA foi cancelado.",
-        "Checking AI credentials…": "A verificar credenciais de IA…",
-        "Checking AI connection…": "A verificar ligação de IA…",
-        "Loading AI libraries…": "A carregar bibliotecas de IA…",
-        "Could not load AI libraries.": "Não foi possível carregar as bibliotecas de IA.",
-        "Cancelling…": "A cancelar…",
-        "Cancelled.": "Cancelado.",
-        "Open debugging &log…": "Abrir o registo de &depuração…",
-        "No debugging log has been written yet.": (
-            "Ainda não foi escrito nenhum registo de depuração."
-        ),
-        "Debugging log": "Registo de depuração",
-        "Could not open the debugging log:\n{path}": (
-            "Não foi possível abrir o registo de depuração:\n{path}"
-        ),
-        "Continuing truncated reply…": "A continuar a resposta truncada…",
-        "\n\n---\n*Note: The AI reply was cut off again. "
-        "Ask a follow-up such as “Please continue.”*": (
-            "\n\n---\n*Nota: a resposta da IA foi cortada outra vez. "
-            "Faça uma pergunta de seguimento como «Por favor, continue.»*"
-        ),
-    },
-}
-
-# Danish, Dutch, Finnish, Hindi, Norwegian, Russian, Swedish
-from .i18n_extra import EXTRA_TRANSLATIONS
-
-_TRANSLATIONS.update(EXTRA_TRANSLATIONS)
-
-_current_language = DEFAULT_LANGUAGE
-
-# Custom (AI / imported) languages: code → native menu label / English display name.
+_TRANSLATIONS: dict[str, dict[str, str]] = {}
+_catalog_directions: dict[str, str] = {}
+_shipped_codes: set[str] = set()
+_overlay_codes: set[str] = set()
+# Non-shipped codes currently registered from AppData overlays.
 _custom_languages: dict[str, str] = {}
 _custom_display_names: dict[str, str] = {}
+
+_current_language = DEFAULT_LANGUAGE
+_catalogs_loaded = False
+
+
+def packaged_locales_dir() -> Path:
+    """Directory with shipped ``*.json`` UI catalogs."""
+    if is_frozen():
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass is not None:
+            bundled = Path(meipass) / "checkmate" / "locales"
+            if bundled.is_dir():
+                return bundled
+            alt = Path(meipass) / "locales"
+            if alt.is_dir():
+                return alt
+        beside = Path(sys.executable).resolve().parent / "locales"
+        if beside.is_dir():
+            return beside
+    return Path(__file__).resolve().parent / "locales"
 
 
 def custom_i18n_dir() -> Path:
@@ -3557,11 +82,19 @@ def custom_catalog_path(code: str) -> Path:
     return custom_i18n_dir() / f"{safe}.json"
 
 
+def overlay_catalog_path(code: str) -> Path:
+    return custom_catalog_path(code)
+
+
+def packaged_catalog_path(code: str) -> Path:
+    safe = _normalize_lang_code(code) or "xx"
+    return packaged_locales_dir() / f"{safe}.json"
+
+
 def _normalize_lang_code(code: str) -> str:
     raw = (code or "").strip().lower().replace("_", "-")
     if not raw:
         return ""
-    # Keep primary subtag (+ optional script/region) as a simple token.
     parts = [p for p in raw.split("-") if p]
     if not parts or not re.fullmatch(r"[a-z]{2,3}", parts[0]):
         return ""
@@ -3572,29 +105,109 @@ def _normalize_lang_code(code: str) -> str:
     return "-".join(out)
 
 
+def _normalize_direction(value: object) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in VALID_DIRECTIONS:
+        return raw
+    return TEXT_DIRECTION_LTR
+
+
+def is_shipped_language(code: str) -> bool:
+    ensure_catalogs_loaded()
+    return _normalize_lang_code(code) in _shipped_codes
+
+
 def is_builtin_language(code: str) -> bool:
-    return _normalize_lang_code(code) in BUILTIN_LANGUAGES
+    """Compatibility alias: shipped non-English (+ English registry)."""
+    c = _normalize_lang_code(code)
+    if c == LANG_EN:
+        return True
+    return is_shipped_language(c)
 
 
 def is_custom_language(code: str) -> bool:
+    """True when an AppData overlay exists for a non-shipped code."""
+    ensure_catalogs_loaded()
     return _normalize_lang_code(code) in _custom_languages
 
 
+def has_overlay(code: str) -> bool:
+    ensure_catalogs_loaded()
+    return _normalize_lang_code(code) in _overlay_codes
+
+
 def is_registered_language(code: str) -> bool:
+    ensure_catalogs_loaded()
     c = _normalize_lang_code(code)
-    return c in BUILTIN_LANGUAGES or c in _custom_languages
+    return c == LANG_EN or c in _TRANSLATIONS
+
+
+def hidden_language_codes() -> list[str]:
+    raw = read_settings().get("hidden_languages") or []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        c = _normalize_lang_code(str(item))
+        if not c or c == LANG_EN or c in seen:
+            continue
+        seen.add(c)
+        out.append(c)
+    return out
+
+
+def is_language_hidden(code: str) -> bool:
+    c = _normalize_lang_code(code)
+    return bool(c) and c != LANG_EN and c in set(hidden_language_codes())
+
+
+def hide_language(code: str) -> None:
+    c = _normalize_lang_code(code)
+    if not c or c == LANG_EN:
+        raise ValueError("cannot_hide")
+    if not is_registered_language(c):
+        raise ValueError("not_found")
+    hidden = hidden_language_codes()
+    if c not in hidden:
+        hidden.append(c)
+        update_settings(hidden_languages=hidden)
+    if get_language() == c:
+        save_language(DEFAULT_LANGUAGE)
+
+
+def unhide_language(code: str) -> None:
+    c = _normalize_lang_code(code)
+    if not c:
+        return
+    hidden = [x for x in hidden_language_codes() if x != c]
+    update_settings(hidden_languages=hidden)
 
 
 def effective_languages() -> dict[str, str]:
-    """Built-in languages plus registered custom languages (menu order)."""
-    out = dict(BUILTIN_LANGUAGES)
-    for code, label in sorted(_custom_languages.items(), key=lambda kv: kv[1].casefold()):
+    """Visible languages for the Language menu (English first, then others)."""
+    ensure_catalogs_loaded()
+    hidden = set(hidden_language_codes())
+    out: dict[str, str] = {LANG_EN: LANGUAGES.get(LANG_EN, "English")}
+    others = [
+        (code, label)
+        for code, label in LANGUAGES.items()
+        if code != LANG_EN and code not in hidden
+    ]
+    others.sort(key=lambda kv: kv[1].casefold())
+    for code, label in others:
         out[code] = label
     return out
 
 
+def manageable_language_codes() -> list[str]:
+    """Non-English languages currently visible in the Language menu."""
+    return [c for c in effective_languages() if c != LANG_EN]
+
+
 def custom_language_codes() -> list[str]:
-    return sorted(_custom_languages.keys())
+    """Compatibility: non-shipped overlay codes that are visible."""
+    ensure_catalogs_loaded()
+    hidden = set(hidden_language_codes())
+    return sorted(c for c in _custom_languages if c not in hidden)
 
 
 def msgid_hash(msgids: list[str] | None = None) -> str:
@@ -3605,13 +218,16 @@ def msgid_hash(msgids: list[str] | None = None) -> str:
 
 def bootstrap_msgids() -> list[str]:
     """Canonical English UI msgids for AI translation / coverage checks."""
+    ensure_catalogs_loaded()
     keys: set[str] = set()
-    # Prefer the richest built-in catalog (FR), then other shipped tables.
-    for code in (LANG_FR, *BUILTIN_LANGUAGES):
+    # Prefer the richest packaged catalog (FR), then other shipped tables.
+    for code in (LANG_FR, *sorted(_shipped_codes)):
         catalog = _TRANSLATIONS.get(code)
         if catalog:
             keys.update(catalog.keys())
-    # Plural forms used via ngettext (may lag catalogs).
+    for code, catalog in _TRANSLATIONS.items():
+        if code not in _shipped_codes:
+            keys.update(catalog.keys())
     keys.update(
         {
             "{n} fatal",
@@ -3629,7 +245,11 @@ def bootstrap_msgids() -> list[str]:
     return sorted(keys)
 
 
-def _catalog_dict_from_file(data: dict[str, Any]) -> dict[str, Any]:
+def _catalog_dict_from_file(
+    data: dict[str, Any],
+    *,
+    allow_shipped: bool = True,
+) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("invalid_catalog")
     if data.get("format") != CUSTOM_I18N_FORMAT:
@@ -3641,9 +261,9 @@ def _catalog_dict_from_file(data: dict[str, Any]) -> dict[str, Any]:
     if version < 1:
         raise ValueError("invalid_version")
     code = _normalize_lang_code(str(data.get("code", "")))
-    if not code:
+    if not code or code == LANG_EN:
         raise ValueError("invalid_code")
-    if is_builtin_language(code):
+    if not allow_shipped and is_shipped_language(code):
         raise ValueError("builtin_code")
     native = str(data.get("native_name") or "").strip()
     display = str(data.get("display_name") or "").strip()
@@ -3664,6 +284,7 @@ def _catalog_dict_from_file(data: dict[str, Any]) -> dict[str, Any]:
         "code": code,
         "native_name": native,
         "display_name": display,
+        "direction": _normalize_direction(data.get("direction")),
         "source_msgid_hash": str(data.get("source_msgid_hash") or ""),
         "strings": clean,
     }
@@ -3677,107 +298,183 @@ def _write_catalog(path: Path, catalog: dict[str, Any]) -> None:
         "code": catalog["code"],
         "native_name": catalog["native_name"],
         "display_name": catalog["display_name"],
+        "direction": _normalize_direction(catalog.get("direction")),
         "source_msgid_hash": catalog.get("source_msgid_hash") or "",
         "strings": catalog["strings"],
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
-def _register_catalog(catalog: dict[str, Any]) -> str:
+def _apply_catalog_to_runtime(catalog: dict[str, Any], *, overlay: bool) -> str:
     code = catalog["code"]
-    _custom_languages[code] = catalog["native_name"]
-    _custom_display_names[code] = catalog["display_name"]
+    LANGUAGES[code] = catalog["native_name"]
+    LANGUAGE_DISPLAY_NAMES[code] = catalog["display_name"]
+    BUILTIN_LANGUAGES[code] = catalog["native_name"]
+    BUILTIN_DISPLAY_NAMES[code] = catalog["display_name"]
     _TRANSLATIONS[code] = dict(catalog["strings"])
-    codes = list(read_settings().get("custom_languages") or [])
-    if code not in codes:
-        codes.append(code)
-        update_settings(custom_languages=codes)
+    _catalog_directions[code] = _normalize_direction(catalog.get("direction"))
+    if overlay:
+        _overlay_codes.add(code)
+        if code not in _shipped_codes:
+            _custom_languages[code] = catalog["native_name"]
+            _custom_display_names[code] = catalog["display_name"]
+    else:
+        _shipped_codes.add(code)
     return code
 
 
-def _unregister_custom(code: str) -> None:
-    c = _normalize_lang_code(code)
-    _custom_languages.pop(c, None)
-    _custom_display_names.pop(c, None)
-    # Do not delete built-in translation tables.
-    if c not in BUILTIN_LANGUAGES:
-        _TRANSLATIONS.pop(c, None)
-    codes = [x for x in (read_settings().get("custom_languages") or []) if x != c]
-    update_settings(custom_languages=codes)
+def _sync_custom_languages_setting() -> None:
+    update_settings(custom_languages=sorted(_custom_languages.keys()))
 
 
-def load_custom_languages() -> None:
-    """Load AppData custom catalogs into the runtime overlay."""
-    global _custom_languages, _custom_display_names
-    # Remove previously registered custom catalogs from translation tables.
-    for code in list(_custom_languages.keys()):
-        _TRANSLATIONS.pop(code, None)
-    _custom_languages = {}
-    _custom_display_names = {}
-
-    root = custom_i18n_dir()
-    if not root.is_dir():
-        update_settings(custom_languages=[])
-        return
-    loaded: list[str] = []
-    for path in sorted(root.glob("*.json")):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            catalog = _catalog_dict_from_file(data)
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            continue
-        code = catalog["code"]
-        _custom_languages[code] = catalog["native_name"]
-        _custom_display_names[code] = catalog["display_name"]
-        _TRANSLATIONS[code] = dict(catalog["strings"])
-        loaded.append(code)
-    update_settings(custom_languages=loaded)
-
-
-def install_custom_catalog(catalog: dict[str, Any], *, overwrite: bool = False) -> str:
-    """Validate, write AppData catalog, and register. Returns language code."""
-    catalog = _catalog_dict_from_file(catalog)
-    code = catalog["code"]
-    if is_builtin_language(code):
-        raise ValueError("builtin_code")
-    path = custom_catalog_path(code)
-    if path.is_file() and not overwrite:
-        raise ValueError("exists")
-    _write_catalog(path, catalog)
-    return _register_catalog(catalog)
-
-
-def remove_custom_language(code: str) -> None:
-    c = _normalize_lang_code(code)
-    if not c or is_builtin_language(c):
-        raise ValueError("builtin_code")
-    path = custom_catalog_path(c)
-    try:
-        if path.is_file():
-            path.unlink()
-    except OSError:
-        pass
-    _unregister_custom(c)
-    if get_language() == c:
-        save_language(DEFAULT_LANGUAGE)
-
-
-def read_custom_catalog(code: str) -> dict[str, Any] | None:
-    path = custom_catalog_path(code)
-    if not path.is_file():
-        return None
+def _read_json_catalog(path: Path) -> dict[str, Any] | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return _catalog_dict_from_file(data)
+        return _catalog_dict_from_file(data, allow_shipped=True)
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
         return None
 
 
-def export_custom_language(code: str, path: Path | str) -> None:
-    catalog = read_custom_catalog(code)
+def ensure_catalogs_loaded() -> None:
+    global _catalogs_loaded
+    if _catalogs_loaded:
+        return
+    load_all_catalogs()
+
+
+def load_all_catalogs() -> None:
+    """Load packaged locales, then AppData overlays (overlays win)."""
+    global _catalogs_loaded, _custom_languages, _custom_display_names
+    global _shipped_codes, _overlay_codes
+
+    keep_en_label = LANGUAGES.get(LANG_EN, "English")
+    keep_en_display = LANGUAGE_DISPLAY_NAMES.get(LANG_EN, "English")
+
+    LANGUAGES.clear()
+    LANGUAGE_DISPLAY_NAMES.clear()
+    BUILTIN_LANGUAGES.clear()
+    BUILTIN_DISPLAY_NAMES.clear()
+    LANGUAGES[LANG_EN] = keep_en_label
+    LANGUAGE_DISPLAY_NAMES[LANG_EN] = keep_en_display
+    BUILTIN_LANGUAGES[LANG_EN] = keep_en_label
+    BUILTIN_DISPLAY_NAMES[LANG_EN] = keep_en_display
+
+    _TRANSLATIONS.clear()
+    _catalog_directions.clear()
+    _shipped_codes = set()
+    _overlay_codes = set()
+    _custom_languages = {}
+    _custom_display_names = {}
+
+    root = packaged_locales_dir()
+    if root.is_dir():
+        for path in sorted(root.glob("*.json")):
+            catalog = _read_json_catalog(path)
+            if catalog is None:
+                continue
+            _apply_catalog_to_runtime(catalog, overlay=False)
+
+    overlay_root = custom_i18n_dir()
+    if overlay_root.is_dir():
+        for path in sorted(overlay_root.glob("*.json")):
+            catalog = _read_json_catalog(path)
+            if catalog is None:
+                continue
+            _apply_catalog_to_runtime(catalog, overlay=True)
+
+    _sync_custom_languages_setting()
+    _catalogs_loaded = True
+
+
+def load_custom_languages() -> None:
+    """Compatibility wrapper: reload packaged + overlay catalogs."""
+    load_all_catalogs()
+
+
+def install_custom_catalog(catalog: dict[str, Any], *, overwrite: bool = False) -> str:
+    """Validate, write AppData overlay catalog, and register. Returns language code."""
+    ensure_catalogs_loaded()
+    catalog = _catalog_dict_from_file(catalog, allow_shipped=True)
+    code = catalog["code"]
+    path = overlay_catalog_path(code)
+    if path.is_file() and not overwrite:
+        raise ValueError("exists")
+    _write_catalog(path, catalog)
+    _apply_catalog_to_runtime(catalog, overlay=True)
+    _sync_custom_languages_setting()
+    unhide_language(code)
+    return code
+
+
+def write_overlay_catalog(catalog: dict[str, Any]) -> str:
+    """Write (or overwrite) an AppData overlay and register it."""
+    return install_custom_catalog(catalog, overwrite=True)
+
+
+def remove_custom_language(code: str) -> None:
+    """Compatibility: hide the language (files are kept)."""
+    hide_language(code)
+
+
+def read_packaged_catalog(code: str) -> dict[str, Any] | None:
+    path = packaged_catalog_path(code)
+    if not path.is_file():
+        return None
+    return _read_json_catalog(path)
+
+
+def read_overlay_catalog(code: str) -> dict[str, Any] | None:
+    path = overlay_catalog_path(code)
+    if not path.is_file():
+        return None
+    return _read_json_catalog(path)
+
+
+def read_custom_catalog(code: str) -> dict[str, Any] | None:
+    """Effective catalog: AppData overlay if present, else packaged."""
+    return read_catalog(code)
+
+
+def read_catalog(code: str) -> dict[str, Any] | None:
+    """Effective catalog for ``code`` (overlay wins over packaged)."""
+    ensure_catalogs_loaded()
+    c = _normalize_lang_code(code)
+    if not c or c == LANG_EN:
+        return None
+    overlay = read_overlay_catalog(c)
+    if overlay is not None:
+        return overlay
+    packaged = read_packaged_catalog(c)
+    if packaged is not None:
+        return packaged
+    # Runtime-only fallback (tests / partial loads).
+    strings = _TRANSLATIONS.get(c)
+    if not strings:
+        return None
+    return {
+        "format": CUSTOM_I18N_FORMAT,
+        "version": CUSTOM_I18N_VERSION,
+        "code": c,
+        "native_name": LANGUAGES.get(c, c),
+        "display_name": LANGUAGE_DISPLAY_NAMES.get(c, c),
+        "direction": get_text_direction(c),
+        "source_msgid_hash": "",
+        "strings": dict(strings),
+    }
+
+
+def export_language(code: str, path: Path | str) -> None:
+    catalog = read_catalog(code)
     if catalog is None:
         raise ValueError("not_found")
     _write_catalog(Path(path), catalog)
+
+
+def export_custom_language(code: str, path: Path | str) -> None:
+    export_language(code, path)
 
 
 def import_custom_language(path: Path | str, *, overwrite: bool = False) -> str:
@@ -3787,7 +484,7 @@ def import_custom_language(path: Path | str, *, overwrite: bool = False) -> str:
 
 
 def custom_language_needs_update(code: str) -> bool:
-    catalog = read_custom_catalog(code)
+    catalog = read_catalog(code)
     if catalog is None:
         return True
     current = msgid_hash()
@@ -3798,43 +495,52 @@ def custom_language_needs_update(code: str) -> bool:
     return any(m not in strings for m in bootstrap_msgids())
 
 
+def get_text_direction(lang: str | None = None) -> str:
+    ensure_catalogs_loaded()
+    code = _normalize_lang_code(lang if lang is not None else _current_language)
+    if code == LANG_EN or not code:
+        return TEXT_DIRECTION_LTR
+    return _catalog_directions.get(code, TEXT_DIRECTION_LTR)
+
+
 def detect_os_language() -> str:
     """Map the OS UI / locale language to a supported app language."""
     import locale
     import os
-    import sys
 
+    ensure_catalogs_loaded()
     candidates: list[str] = []
 
     if sys.platform == "win32":
         try:
             import ctypes
 
-            # Primary language IDs: https://learn.microsoft.com/windows/win32/intl/language-identifier-constants-and-strings
             lang_id = ctypes.windll.kernel32.GetUserDefaultUILanguage()
             primary = lang_id & 0x3FF
             win_map = {
-                0x09: LANG_EN,  # English
-                0x0C: LANG_FR,  # French
-                0x0A: LANG_ES,  # Spanish
-                0x07: LANG_DE,  # German
-                0x16: LANG_PT,  # Portuguese
-                0x06: LANG_DA,  # Danish
-                0x13: LANG_NL,  # Dutch
-                0x0B: LANG_FI,  # Finnish
-                0x39: LANG_HI,  # Hindi
-                0x14: LANG_NB,  # Norwegian → Bokmål
-                0x19: LANG_RU,  # Russian
-                0x1D: LANG_SV,  # Swedish
+                0x09: LANG_EN,
+                0x0C: LANG_FR,
+                0x0A: LANG_ES,
+                0x07: LANG_DE,
+                0x16: LANG_PT,
+                0x06: LANG_DA,
+                0x13: LANG_NL,
+                0x0B: LANG_FI,
+                0x39: LANG_HI,
+                0x14: LANG_NB,
+                0x19: LANG_RU,
+                0x1D: LANG_SV,
             }
-            if primary in win_map:
-                return win_map[primary]
+            mapped = win_map.get(primary)
+            if mapped and (
+                mapped == LANG_EN or is_registered_language(mapped)
+            ) and not is_language_hidden(mapped):
+                return mapped
         except (AttributeError, OSError, ValueError):
             pass
 
     if sys.platform == "darwin":
         try:
-            # AppleLanguages preference, e.g. ("fr-FR", "en-GB", …)
             import subprocess
 
             out = subprocess.run(
@@ -3860,7 +566,6 @@ def detect_os_language() -> str:
         pass
 
     try:
-        # Deprecated but still useful on some platforms
         loc = locale.getdefaultlocale()  # type: ignore[attr-defined]
         if loc and loc[0]:
             candidates.append(loc[0])
@@ -3870,7 +575,6 @@ def detect_os_language() -> str:
     for key in ("LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"):
         value = os.environ.get(key)
         if value:
-            # LANGUAGE can be a colon-separated list
             for part in value.replace(";", ":").split(":"):
                 part = part.strip()
                 if part:
@@ -3878,31 +582,35 @@ def detect_os_language() -> str:
 
     for raw in candidates:
         code = raw.replace("_", "-").lower()
+        mapped = ""
         if code.startswith("fr"):
-            return LANG_FR
-        if code.startswith("es"):
-            return LANG_ES
-        if code.startswith("de"):
-            return LANG_DE
-        if code.startswith("pt"):
-            return LANG_PT
-        if code.startswith("da"):
-            return LANG_DA
-        if code.startswith("nl"):
-            return LANG_NL
-        if code.startswith("fi"):
-            return LANG_FI
-        if code.startswith("hi"):
-            return LANG_HI
-        # Norwegian: nb (Bokmål), nn (Nynorsk), no (macrolanguage) → nb catalog
-        if code.startswith("nb") or code.startswith("nn") or code.startswith("no"):
-            return LANG_NB
-        if code.startswith("ru"):
-            return LANG_RU
-        if code.startswith("sv"):
-            return LANG_SV
-        if code.startswith("en"):
-            return LANG_EN
+            mapped = LANG_FR
+        elif code.startswith("es"):
+            mapped = LANG_ES
+        elif code.startswith("de"):
+            mapped = LANG_DE
+        elif code.startswith("pt"):
+            mapped = LANG_PT
+        elif code.startswith("da"):
+            mapped = LANG_DA
+        elif code.startswith("nl"):
+            mapped = LANG_NL
+        elif code.startswith("fi"):
+            mapped = LANG_FI
+        elif code.startswith("hi"):
+            mapped = LANG_HI
+        elif code.startswith("nb") or code.startswith("nn") or code.startswith("no"):
+            mapped = LANG_NB
+        elif code.startswith("ru"):
+            mapped = LANG_RU
+        elif code.startswith("sv"):
+            mapped = LANG_SV
+        elif code.startswith("en"):
+            mapped = LANG_EN
+        if mapped and (
+            mapped == LANG_EN or is_registered_language(mapped)
+        ) and not is_language_hidden(mapped):
+            return mapped
 
     return DEFAULT_LANGUAGE
 
@@ -3910,10 +618,14 @@ def detect_os_language() -> str:
 def load_language() -> str:
     """Load saved language, or detect from the OS UI language on first run."""
     global _current_language
-    load_custom_languages()
+    load_all_catalogs()
     data = read_settings()
     lang = _normalize_lang_code(str(data.get("language", "")))
-    if lang and is_registered_language(lang):
+    if (
+        lang
+        and is_registered_language(lang)
+        and not is_language_hidden(lang)
+    ):
         _current_language = lang
         return lang
     detected = detect_os_language()
@@ -3924,7 +636,11 @@ def load_language() -> str:
 def save_language(lang: str) -> None:
     global _current_language
     code = _normalize_lang_code(lang)
-    if not code or not is_registered_language(code):
+    if (
+        not code
+        or not is_registered_language(code)
+        or is_language_hidden(code)
+    ):
         code = DEFAULT_LANGUAGE
     _current_language = code
     update_settings(language=code)
@@ -3940,14 +656,22 @@ def set_language(lang: str) -> None:
 
 def language_display_name(lang: str | None = None) -> str:
     """English language name for AI prompts (based on UI language)."""
+    ensure_catalogs_loaded()
     code = _normalize_lang_code(lang if lang is not None else _current_language)
     if code in _custom_display_names:
         return _custom_display_names[code]
-    return BUILTIN_DISPLAY_NAMES.get(code, LANGUAGE_DISPLAY_NAMES.get(code, "English"))
+    return LANGUAGE_DISPLAY_NAMES.get(code, "English")
+
+
+def language_native_name(lang: str | None = None) -> str:
+    ensure_catalogs_loaded()
+    code = _normalize_lang_code(lang if lang is not None else _current_language)
+    return LANGUAGES.get(code, code or "English")
 
 
 def _(message: str, **kwargs: object) -> str:
     """Translate message; optional format kwargs applied after lookup."""
+    ensure_catalogs_loaded()
     catalog = _TRANSLATIONS.get(_current_language, {})
     text = catalog.get(message, message)
     if kwargs:

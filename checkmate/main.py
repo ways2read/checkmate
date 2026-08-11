@@ -23,20 +23,27 @@ from .checker import (
 )
 from .fido_settings import fido_settings_present
 from .i18n import (
+    CUSTOM_I18N_FORMAT,
+    CUSTOM_I18N_VERSION,
+    TEXT_DIRECTION_LTR,
+    TEXT_DIRECTION_RTL,
     _,
     _normalize_lang_code,
-    custom_language_codes,
     effective_languages,
-    export_custom_language,
+    export_language,
     get_language,
+    get_text_direction,
+    hide_language,
     import_custom_language,
-    is_builtin_language,
-    is_custom_language,
+    is_language_hidden,
+    is_registered_language,
     language_display_name,
+    language_native_name,
     load_language,
-    read_custom_catalog,
-    remove_custom_language,
+    read_catalog,
     set_language,
+    unhide_language,
+    write_overlay_catalog,
 )
 from .java_util import detect_java
 from .models import CheckResult, Issue, Severity, Verdict
@@ -88,6 +95,7 @@ ExplainAiEvent, EVT_EXPLAIN_AI = wx.lib.newevent.NewEvent()
 FixAiEvent, EVT_FIX_AI = wx.lib.newevent.NewEvent()
 ApplyFixEvent, EVT_APPLY_FIX = wx.lib.newevent.NewEvent()
 OverviewAiEvent, EVT_OVERVIEW_AI = wx.lib.newevent.NewEvent()
+AltAssessAiEvent, EVT_ALT_ASSESS_AI = wx.lib.newevent.NewEvent()
 
 # ListCtrl is native on Windows but generic (and VoiceOver/Orca-invisible) on
 # macOS/Linux. DataViewListCtrl is the reverse — use the native control per OS.
@@ -4357,7 +4365,7 @@ class AiOverviewDialog(wx.Dialog):
 
 
 class AddLanguageDialog(wx.Dialog):
-    """Choose a preset or custom UI language to AI-translate."""
+    """Choose a preset or custom UI language to AI-translate or restore."""
 
     def __init__(self, parent: wx.Window) -> None:
         from .i18n_ai import UI_LANGUAGE_PRESETS
@@ -4373,8 +4381,8 @@ class AddLanguageDialog(wx.Dialog):
         intro = wx.StaticText(
             self,
             label=_(
-                "Choose a language CheckMate does not ship. AI will translate "
-                "the UI strings and save them on this computer."
+                "Add a UI language. AI can translate the strings, or you can "
+                "restore a language you previously removed."
             ),
         )
         intro.Wrap(420)
@@ -4387,7 +4395,9 @@ class AddLanguageDialog(wx.Dialog):
             wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
             8,
         )
-        labels = [f"{native} ({display})" for _c, native, display in self._presets]
+        labels = [
+            f"{native} ({display})" for _c, native, display, _d in self._presets
+        ]
         labels.append(_("Custom…"))
         self._custom_index = len(labels) - 1
         self.lang_choice = wx.Choice(self, choices=labels)
@@ -4398,7 +4408,7 @@ class AddLanguageDialog(wx.Dialog):
         root.Add(choice_row, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, 12)
 
         self.custom_panel = wx.Panel(self)
-        custom_sizer = wx.FlexGridSizer(3, 2, 8, 8)
+        custom_sizer = wx.FlexGridSizer(4, 2, 8, 8)
         custom_sizer.AddGrowableCol(1, 1)
         custom_sizer.Add(
             wx.StaticText(self.custom_panel, label=_("Code:")),
@@ -4427,8 +4437,37 @@ class AddLanguageDialog(wx.Dialog):
         self.display_ctrl.SetHint(_("English name for AI prompts"))
         self.display_ctrl.SetName(_("English name"))
         custom_sizer.Add(self.display_ctrl, 1, wx.EXPAND)
+        custom_sizer.Add(
+            wx.StaticText(self.custom_panel, label=_("Text direction:")),
+            0,
+            wx.ALIGN_CENTER_VERTICAL,
+        )
+        self.direction_choice = wx.Choice(
+            self.custom_panel,
+            choices=[_("Left to right (LTR)"), _("Right to left (RTL)")],
+        )
+        self.direction_choice.SetSelection(0)
+        self.direction_choice.SetName(_("Text direction"))
+        custom_sizer.Add(self.direction_choice, 1, wx.EXPAND)
         self.custom_panel.SetSizer(custom_sizer)
         root.Add(self.custom_panel, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, 12)
+
+        # Direction for presets (shown always so RTL presets are clear).
+        dir_row = wx.BoxSizer(wx.HORIZONTAL)
+        dir_row.Add(
+            wx.StaticText(self, label=_("Text direction:")),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            8,
+        )
+        self.preset_direction = wx.Choice(
+            self, choices=[_("Left to right (LTR)"), _("Right to left (RTL)")]
+        )
+        self.preset_direction.SetSelection(0)
+        self.preset_direction.SetName(_("Text direction"))
+        dir_row.Add(self.preset_direction, 1, wx.EXPAND)
+        root.Add(dir_row, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, 12)
+        self._dir_row = dir_row
 
         btns = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
         if btns:
@@ -4442,11 +4481,20 @@ class AddLanguageDialog(wx.Dialog):
         custom = self.lang_choice.GetSelection() == self._custom_index
         self.custom_panel.Enable(custom)
         self.custom_panel.Show(custom)
+        self.preset_direction.Enable(not custom)
+        self.preset_direction.Show(not custom)
+        if not custom:
+            sel = self.lang_choice.GetSelection()
+            if 0 <= sel < len(self._presets):
+                _c, _n, _d, direction = self._presets[sel]
+                self.preset_direction.SetSelection(
+                    1 if direction == TEXT_DIRECTION_RTL else 0
+                )
         self.Layout()
         self.Fit()
 
-    def selection(self) -> tuple[str, str, str] | None:
-        """Return (code, native_name, display_name) or None if invalid."""
+    def selection(self) -> tuple[str, str, str, str] | None:
+        """Return (code, native_name, display_name, direction) or None."""
         sel = self.lang_choice.GetSelection()
         if sel < 0:
             return None
@@ -4454,11 +4502,141 @@ class AddLanguageDialog(wx.Dialog):
             code = _normalize_lang_code(self.code_ctrl.GetValue())
             native = self.native_ctrl.GetValue().strip()
             display = self.display_ctrl.GetValue().strip()
+            direction = (
+                TEXT_DIRECTION_RTL
+                if self.direction_choice.GetSelection() == 1
+                else TEXT_DIRECTION_LTR
+            )
             if not code or not native or not display:
                 return None
-            return code, native, display
-        code, native, display = self._presets[sel]
-        return code, native, display
+            return code, native, display, direction
+        code, native, display, _preset_dir = self._presets[sel]
+        direction = (
+            TEXT_DIRECTION_RTL
+            if self.preset_direction.GetSelection() == 1
+            else TEXT_DIRECTION_LTR
+        )
+        return code, native, display, direction
+
+
+class EditLanguageStringsDialog(wx.Dialog):
+    """Browse and edit translated UI strings for one language catalog."""
+
+    def __init__(self, parent: wx.Window, catalog: dict) -> None:
+        self._catalog = {
+            "format": catalog.get("format") or CUSTOM_I18N_FORMAT,
+            "version": catalog.get("version") or CUSTOM_I18N_VERSION,
+            "code": catalog["code"],
+            "native_name": catalog["native_name"],
+            "display_name": catalog["display_name"],
+            "direction": catalog.get("direction") or TEXT_DIRECTION_LTR,
+            "source_msgid_hash": catalog.get("source_msgid_hash") or "",
+            "strings": dict(catalog.get("strings") or {}),
+        }
+        title = _("Edit strings — {name}").format(
+            name=self._catalog["native_name"]
+        )
+        super().__init__(
+            parent,
+            title=title,
+            style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
+        )
+        self._keys = sorted(self._catalog["strings"].keys())
+        self._filtered = list(self._keys)
+
+        root = wx.BoxSizer(wx.VERTICAL)
+        filter_row = wx.BoxSizer(wx.HORIZONTAL)
+        filter_row.Add(
+            wx.StaticText(self, label=_("Filter:")),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            8,
+        )
+        self.filter_ctrl = wx.TextCtrl(self)
+        self.filter_ctrl.SetName(_("Filter strings"))
+        self.filter_ctrl.Bind(wx.EVT_TEXT, self._on_filter)
+        filter_row.Add(self.filter_ctrl, 1, wx.EXPAND)
+        root.Add(filter_row, 0, wx.ALL | wx.EXPAND, 12)
+
+        self.list = wx.ListCtrl(
+            self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL | wx.BORDER_SUNKEN
+        )
+        self.list.InsertColumn(0, _("English"))
+        self.list.InsertColumn(1, _("Translation"))
+        self.list.SetName(_("UI strings"))
+        self.list.Bind(wx.EVT_LIST_ITEM_SELECTED, self._on_select)
+        root.Add(self.list, 1, wx.LEFT | wx.RIGHT | wx.EXPAND, 12)
+
+        edit_row = wx.BoxSizer(wx.VERTICAL)
+        edit_row.Add(
+            wx.StaticText(self, label=_("Selected English string:")),
+            0,
+            wx.BOTTOM,
+            4,
+        )
+        self.msgid_ctrl = wx.TextCtrl(self, style=wx.TE_READONLY | wx.TE_MULTILINE)
+        self.msgid_ctrl.SetMinSize((-1, 48))
+        self.msgid_ctrl.SetName(_("English string"))
+        edit_row.Add(self.msgid_ctrl, 0, wx.EXPAND | wx.BOTTOM, 8)
+        edit_row.Add(
+            wx.StaticText(self, label=_("Translation:")),
+            0,
+            wx.BOTTOM,
+            4,
+        )
+        self.translation_ctrl = wx.TextCtrl(self, style=wx.TE_MULTILINE)
+        self.translation_ctrl.SetMinSize((-1, 72))
+        self.translation_ctrl.SetName(_("Translation"))
+        self.translation_ctrl.Bind(wx.EVT_TEXT, self._on_translation_edit)
+        edit_row.Add(self.translation_ctrl, 0, wx.EXPAND)
+        root.Add(edit_row, 0, wx.ALL | wx.EXPAND, 12)
+
+        btns = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
+        if btns:
+            root.Add(btns, 0, wx.ALL | wx.EXPAND, 12)
+        self.SetSizer(root)
+        self.SetMinSize((640, 480))
+        self._refill_list()
+        self.list.SetColumnWidth(0, 280)
+        self.list.SetColumnWidth(1, 280)
+        self.CentreOnParent()
+
+    def _refill_list(self) -> None:
+        needle = self.filter_ctrl.GetValue().casefold().strip()
+        self._filtered = [
+            k
+            for k in self._keys
+            if not needle
+            or needle in k.casefold()
+            or needle in str(self._catalog["strings"].get(k, "")).casefold()
+        ]
+        self.list.DeleteAllItems()
+        for key in self._filtered:
+            idx = self.list.InsertItem(self.list.GetItemCount(), key)
+            self.list.SetItem(idx, 1, self._catalog["strings"].get(key, ""))
+
+    def _on_filter(self, _event: wx.CommandEvent) -> None:
+        self._refill_list()
+
+    def _on_select(self, _event: wx.ListEvent) -> None:
+        idx = self.list.GetFirstSelected()
+        if idx < 0 or idx >= len(self._filtered):
+            return
+        key = self._filtered[idx]
+        self.msgid_ctrl.ChangeValue(key)
+        self.translation_ctrl.ChangeValue(self._catalog["strings"].get(key, ""))
+
+    def _on_translation_edit(self, _event: wx.CommandEvent) -> None:
+        idx = self.list.GetFirstSelected()
+        if idx < 0 or idx >= len(self._filtered):
+            return
+        key = self._filtered[idx]
+        value = self.translation_ctrl.GetValue()
+        self._catalog["strings"][key] = value
+        self.list.SetItem(idx, 1, value)
+
+    def catalog(self) -> dict:
+        return self._catalog
 
 
 class AboutDialog(wx.Dialog):
@@ -4650,7 +4828,11 @@ class MainFrame(wx.Frame):
         self._overview_cancel: threading.Event | None = None
         self._overview_progress: wx.ProgressDialog | None = None
         self._overview_progress_timer: wx.Timer | None = None
+        self._alt_assess_cancel: threading.Event | None = None
+        self._alt_assess_progress: wx.ProgressDialog | None = None
+        self._alt_assess_progress_timer: wx.Timer | None = None
         self.menu_ai_overview: wx.MenuItem | None = None
+        self.menu_alt_assess: wx.MenuItem | None = None
         self.menu_settings: wx.MenuItem | None = None
         self._lang_menu_items: dict[str, wx.MenuItem] = {}
         self._issues_visible = True
@@ -4662,6 +4844,7 @@ class MainFrame(wx.Frame):
         self._pending_open_paths = list(initial_paths or [])
         self._apply_window_icon()
         self._build_ui()
+        self._apply_layout_direction()
         self._bind()
         self._enable_drag_drop()
         # Lightweight status only — detect_java() is too slow for the UI thread.
@@ -5275,6 +5458,17 @@ class MainFrame(wx.Frame):
         self.menu_check = tools_menu.Append(
             wx.ID_ANY, _("&Re-check publication\tF5")
         )
+        self.menu_alt_assess = None
+        if ai_features_enabled():
+            tools_menu.AppendSeparator()
+            self.menu_alt_assess = tools_menu.Append(
+                wx.ID_ANY, _("Assess &alt text export…")
+            )
+            self.menu_alt_assess.SetHelp(
+                _(
+                    "Open a Fido alt-text export folder and assess alt quality with AI"
+                )
+            )
         tools_menu.AppendSeparator()
         self.menu_settings = tools_menu.Append(
             wx.ID_PREFERENCES, _("&Settings…")
@@ -5298,43 +5492,56 @@ class MainFrame(wx.Frame):
         current = get_language()
         languages = effective_languages()
         for code, label in languages.items():
-            item = lang_menu.AppendRadioItem(wx.ID_ANY, label)
-            self._lang_menu_items[code] = item
+            submenu = wx.Menu()
+            select_item = submenu.AppendCheckItem(wx.ID_ANY, _("&Select"))
+            self._lang_menu_items[code] = select_item
             if code == current:
-                item.Check(True)
+                select_item.Check(True)
             self.Bind(
                 wx.EVT_MENU,
                 lambda _e, lang=code: self.on_language_selected(lang),
-                item,
+                select_item,
             )
-        customs = custom_language_codes()
-        if customs:
-            lang_menu.AppendSeparator()
-            for code in customs:
-                native = languages.get(code, code)
-                manage = wx.Menu()
-                update_item = manage.Append(wx.ID_ANY, _("Update translations…"))
-                export_item = manage.Append(wx.ID_ANY, _("Export…"))
-                remove_item = manage.Append(wx.ID_ANY, _("Remove…"))
+            if code != "en":
+                submenu.AppendSeparator()
+                edit_item = submenu.Append(wx.ID_ANY, _("&Edit strings…"))
+                update_item = submenu.Append(
+                    wx.ID_ANY, _("&Update translations…")
+                )
+                regenerate_item = submenu.Append(
+                    wx.ID_ANY, _("&Regenerate all…")
+                )
+                export_item = submenu.Append(wx.ID_ANY, _("E&xport…"))
+                remove_item = submenu.Append(wx.ID_ANY, _("&Remove…"))
                 self.Bind(
                     wx.EVT_MENU,
-                    lambda _e, lang=code: self.on_update_custom_language(lang),
+                    lambda _e, lang=code: self.on_edit_language_strings(lang),
+                    edit_item,
+                )
+                self.Bind(
+                    wx.EVT_MENU,
+                    lambda _e, lang=code: self.on_update_language(lang),
                     update_item,
                 )
                 self.Bind(
                     wx.EVT_MENU,
-                    lambda _e, lang=code: self.on_export_custom_language(lang),
+                    lambda _e, lang=code: self.on_regenerate_language(lang),
+                    regenerate_item,
+                )
+                self.Bind(
+                    wx.EVT_MENU,
+                    lambda _e, lang=code: self.on_export_language(lang),
                     export_item,
                 )
                 self.Bind(
                     wx.EVT_MENU,
-                    lambda _e, lang=code: self.on_remove_custom_language(lang),
+                    lambda _e, lang=code: self.on_remove_language(lang),
                     remove_item,
                 )
-                lang_menu.AppendSubMenu(
-                    manage,
-                    _("Manage {name}…").format(name=native),
-                )
+            # Submenu titles cannot be radio items; mark the active language
+            # with a filled blob so it remains visible in the Language list.
+            menu_label = f"● {label}" if code == current else label
+            lang_menu.AppendSubMenu(submenu, menu_label)
         lang_menu.AppendSeparator()
         self.menu_add_language = lang_menu.Append(wx.ID_ANY, _("&Add language…"))
         self.menu_import_language = lang_menu.Append(
@@ -5429,6 +5636,8 @@ class MainFrame(wx.Frame):
             item.Enable(enabled)
         if self.menu_ai_overview is not None:
             self.menu_ai_overview.Enable(enabled)
+        if self.menu_alt_assess is not None:
+            self.menu_alt_assess.Enable(ai_features_enabled() and not self._busy)
         self.menu_view_changelog.Enable(changelog_ok)
         # AI overview is hidden when features are off; only enable when shown.
         if self.ai_overview_btn is not None and ai_features_enabled():
@@ -5464,6 +5673,7 @@ class MainFrame(wx.Frame):
         self.Bind(EVT_INSTALL_DONE, self.on_install_done_event)
         self.Bind(EVT_JAVA_MISSING, self.on_java_missing_event)
         self.Bind(EVT_OVERVIEW_AI, self._on_overview_ai_event)
+        self.Bind(EVT_ALT_ASSESS_AI, self._on_alt_assess_ai_event)
 
     def _bind_menus(self) -> None:
         self.Bind(wx.EVT_MENU, self.on_browse_file, self.menu_open_file)
@@ -5474,6 +5684,8 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_save_html_report, self.menu_save_html)
         if self.menu_ai_overview is not None:
             self.Bind(wx.EVT_MENU, self.on_ai_overview, self.menu_ai_overview)
+        if self.menu_alt_assess is not None:
+            self.Bind(wx.EVT_MENU, self.on_alt_assess_export, self.menu_alt_assess)
         self.Bind(wx.EVT_MENU, self.on_copy_summary, self.menu_copy)
         self.Bind(wx.EVT_MENU, self.on_clear_results, self.menu_clear)
         self.Bind(wx.EVT_MENU, self.on_check, self.menu_check)
@@ -5551,6 +5763,7 @@ class MainFrame(wx.Frame):
         code: str,
         native_name: str,
         display_name: str,
+        direction: str = TEXT_DIRECTION_LTR,
         force: bool,
         title: str,
     ) -> bool:
@@ -5578,6 +5791,7 @@ class MainFrame(wx.Frame):
                     code=code,
                     native_name=native_name,
                     display_name=display_name,
+                    direction=direction,
                     force=force,
                     progress=progress,
                     cancel_event=cancel_event,
@@ -5619,8 +5833,6 @@ class MainFrame(wx.Frame):
         return True
 
     def on_add_language(self, _event: wx.CommandEvent | None = None) -> None:
-        if not self._ai_required_for_language_tools():
-            return
         dlg = AddLanguageDialog(self)
         try:
             if dlg.ShowModal() != wx.ID_OK:
@@ -5636,36 +5848,63 @@ class MainFrame(wx.Frame):
                 self,
             )
             return
-        code, native, display = sel
-        if is_builtin_language(code):
-            wx.MessageBox(
-                _("“{code}” is already included with CheckMate.").format(
-                    code=code
-                ),
+        code, native, display, direction = sel
+        existing = read_catalog(code)
+
+        if is_language_hidden(code) and existing is not None:
+            unhide_language(code)
+            self._build_menubar()
+            switch = wx.MessageBox(
+                _(
+                    "Restored “{name}”. Switch CheckMate to this language now?"
+                ).format(name=existing.get("native_name") or native),
                 _("Add language"),
-                wx.OK | wx.ICON_INFORMATION,
+                wx.YES_NO | wx.ICON_QUESTION,
                 self,
             )
+            if switch == wx.YES:
+                set_language(code)
+                self._apply_ui_language()
+                self._maybe_show_ai_translation_warning(code)
             return
-        force = False
-        if is_custom_language(code):
+
+        if existing is not None and is_registered_language(code):
             answer = wx.MessageBox(
                 _(
-                    "A custom catalog for “{code}” already exists. "
-                    "Update its translations?"
-                ).format(code=code),
+                    "“{name}” is already available. Update its translations "
+                    "with AI?"
+                ).format(name=existing.get("native_name") or native),
                 _("Add language"),
                 wx.YES_NO | wx.ICON_QUESTION,
                 self,
             )
             if answer != wx.YES:
                 return
-            force = False
+            if not self._ai_required_for_language_tools():
+                return
+            if not self._run_ui_translation(
+                code=code,
+                native_name=str(existing.get("native_name") or native),
+                display_name=str(existing.get("display_name") or display),
+                direction=str(existing.get("direction") or direction),
+                force=False,
+                title=_("Updating translations"),
+            ):
+                return
+            if get_language() == code:
+                self._apply_ui_language()
+            else:
+                self._build_menubar()
+            return
+
+        if not self._ai_required_for_language_tools():
+            return
         if not self._run_ui_translation(
             code=code,
             native_name=native,
             display_name=display,
-            force=force,
+            direction=direction,
+            force=False,
             title=_("Adding language"),
         ):
             return
@@ -5673,13 +5912,55 @@ class MainFrame(wx.Frame):
         self._apply_ui_language()
         self._maybe_show_ai_translation_warning(code)
 
-    def on_update_custom_language(self, lang: str) -> None:
-        if not self._ai_required_for_language_tools():
-            return
-        catalog = read_custom_catalog(lang)
+    def on_edit_language_strings(self, lang: str) -> None:
+        catalog = read_catalog(lang)
         if catalog is None:
             wx.MessageBox(
-                _("No custom catalog found for “{code}”.").format(code=lang),
+                _("No language catalog found for “{code}”.").format(code=lang),
+                _("Edit strings"),
+                wx.OK | wx.ICON_WARNING,
+                self,
+            )
+            return
+        dlg = EditLanguageStringsDialog(self, catalog)
+        try:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            updated = dlg.catalog()
+        finally:
+            dlg.Destroy()
+        try:
+            write_overlay_catalog(updated)
+        except ValueError as exc:
+            wx.MessageBox(
+                _("Could not save the language catalog:\n{detail}").format(
+                    detail=exc
+                ),
+                _("Edit strings"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+        if get_language() == lang:
+            self._apply_ui_language()
+        else:
+            self._build_menubar()
+        wx.MessageBox(
+            _("Saved string edits for {name}.").format(
+                name=updated.get("native_name") or lang
+            ),
+            _("Edit strings"),
+            wx.OK | wx.ICON_INFORMATION,
+            self,
+        )
+
+    def on_update_language(self, lang: str) -> None:
+        if not self._ai_required_for_language_tools():
+            return
+        catalog = read_catalog(lang)
+        if catalog is None:
+            wx.MessageBox(
+                _("No language catalog found for “{code}”.").format(code=lang),
                 _("Update translations"),
                 wx.OK | wx.ICON_WARNING,
                 self,
@@ -5691,6 +5972,7 @@ class MainFrame(wx.Frame):
             display_name=str(
                 catalog.get("display_name") or language_display_name(lang)
             ),
+            direction=str(catalog.get("direction") or TEXT_DIRECTION_LTR),
             force=False,
             title=_("Updating translations"),
         ):
@@ -5708,11 +5990,58 @@ class MainFrame(wx.Frame):
             self,
         )
 
-    def on_export_custom_language(self, lang: str) -> None:
-        catalog = read_custom_catalog(lang)
+    def on_regenerate_language(self, lang: str) -> None:
+        if not self._ai_required_for_language_tools():
+            return
+        catalog = read_catalog(lang)
         if catalog is None:
             wx.MessageBox(
-                _("No custom catalog found for “{code}”.").format(code=lang),
+                _("No language catalog found for “{code}”.").format(code=lang),
+                _("Regenerate translations"),
+                wx.OK | wx.ICON_WARNING,
+                self,
+            )
+            return
+        name = catalog.get("native_name") or lang
+        answer = wx.MessageBox(
+            _(
+                "Regenerate all UI strings for “{name}” with AI? "
+                "This overwrites existing translations for this language "
+                "on this computer."
+            ).format(name=name),
+            _("Regenerate translations"),
+            wx.YES_NO | wx.ICON_WARNING,
+            self,
+        )
+        if answer != wx.YES:
+            return
+        if not self._run_ui_translation(
+            code=lang,
+            native_name=str(catalog.get("native_name") or lang),
+            display_name=str(
+                catalog.get("display_name") or language_display_name(lang)
+            ),
+            direction=str(catalog.get("direction") or TEXT_DIRECTION_LTR),
+            force=True,
+            title=_("Regenerating translations"),
+        ):
+            return
+        if get_language() == lang:
+            self._apply_ui_language()
+        else:
+            self._build_menubar()
+        wx.MessageBox(
+            _("Translations for {name} were regenerated.").format(name=name),
+            _("Regenerate translations"),
+            wx.OK | wx.ICON_INFORMATION,
+            self,
+        )
+
+    def on_export_language(self, lang: str) -> None:
+        catalog = read_catalog(lang)
+        if catalog is None:
+            wx.MessageBox(
+                _("No language catalog found for “{code}”.").format(code=lang),
                 _("Export language"),
                 wx.OK | wx.ICON_WARNING,
                 self,
@@ -5730,7 +6059,7 @@ class MainFrame(wx.Frame):
                 return
             path = Path(dlg.GetPath())
         try:
-            export_custom_language(lang, path)
+            export_language(lang, path)
         except (OSError, ValueError) as exc:
             wx.MessageBox(
                 _("Could not export the language catalog:\n{detail}").format(
@@ -5750,13 +6079,14 @@ class MainFrame(wx.Frame):
             self,
         )
 
-    def on_remove_custom_language(self, lang: str) -> None:
-        catalog = read_custom_catalog(lang)
-        name = (catalog or {}).get("native_name") or lang
+    def on_remove_language(self, lang: str) -> None:
+        catalog = read_catalog(lang)
+        name = (catalog or {}).get("native_name") or language_native_name(lang)
         answer = wx.MessageBox(
-            _("Remove the custom language “{name}” from this computer?").format(
-                name=name
-            ),
+            _(
+                "Remove “{name}” from the Language menu? "
+                "You can add it again later without losing the catalog files."
+            ).format(name=name),
             _("Remove language"),
             wx.YES_NO | wx.ICON_QUESTION,
             self,
@@ -5764,7 +6094,7 @@ class MainFrame(wx.Frame):
         if answer != wx.YES:
             return
         try:
-            remove_custom_language(lang)
+            hide_language(lang)
         except ValueError as exc:
             wx.MessageBox(
                 _("Could not remove the language:\n{detail}").format(detail=exc),
@@ -5774,6 +6104,16 @@ class MainFrame(wx.Frame):
             )
             return
         self._apply_ui_language()
+
+    # Compatibility aliases for older bind names / tests.
+    def on_update_custom_language(self, lang: str) -> None:
+        self.on_update_language(lang)
+
+    def on_export_custom_language(self, lang: str) -> None:
+        self.on_export_language(lang)
+
+    def on_remove_custom_language(self, lang: str) -> None:
+        self.on_remove_language(lang)
 
     def on_import_language(self, _event: wx.CommandEvent | None = None) -> None:
         with wx.FileDialog(
@@ -5798,10 +6138,11 @@ class MainFrame(wx.Frame):
             )
             return
         overwrite = False
-        if code and is_custom_language(code):
+        if code and read_catalog(code) is not None:
             answer = wx.MessageBox(
                 _(
-                    "A custom catalog for “{code}” already exists. Overwrite it?"
+                    "A catalog for “{code}” already exists on this computer. "
+                    "Overwrite the editable copy?"
                 ).format(code=code),
                 _("Import language"),
                 wx.YES_NO | wx.ICON_QUESTION,
@@ -5814,11 +6155,7 @@ class MainFrame(wx.Frame):
             installed = import_custom_language(path, overwrite=overwrite)
         except ValueError as exc:
             key = str(exc)
-            if key == "builtin_code":
-                msg = _(
-                    "Cannot import over a built-in CheckMate language."
-                )
-            elif key == "exists":
+            if key == "exists":
                 msg = _("A catalog for this language already exists.")
             elif key in (
                 "invalid_format",
@@ -5848,8 +6185,9 @@ class MainFrame(wx.Frame):
             )
             return
 
+        unhide_language(installed)
         name = language_display_name(installed)
-        catalog = read_custom_catalog(installed)
+        catalog = read_catalog(installed)
         if catalog:
             name = str(catalog.get("native_name") or name)
         switch = wx.MessageBox(
@@ -5867,8 +6205,29 @@ class MainFrame(wx.Frame):
         else:
             self._build_menubar()
 
+    def _apply_layout_direction(self) -> None:
+        """Apply LTR/RTL layout from the active language catalog."""
+        rtl = get_text_direction() == TEXT_DIRECTION_RTL
+        direction = wx.Layout_RightToLeft if rtl else wx.Layout_LeftToRight
+        try:
+            self.SetLayoutDirection(direction)
+        except Exception:
+            pass
+        try:
+            app = wx.GetApp()
+            if app is not None:
+                app.SetLayoutDirection(direction)
+        except Exception:
+            pass
+        try:
+            if hasattr(self, "panel") and self.panel is not None:
+                self.panel.SetLayoutDirection(direction)
+        except Exception:
+            pass
+
     def _apply_ui_language(self) -> None:
         """Refresh visible UI strings after a language change."""
+        self._apply_layout_direction()
         filter_sel = self.filter_choice.GetSelection()
         self.publication_box.SetLabel(_("Publication"))
         self.path_label.SetLabel(_("Path:"))
@@ -7260,6 +7619,260 @@ class MainFrame(wx.Frame):
                 _win_force_foreground(self)
             except RuntimeError:
                 pass
+
+    def _close_alt_assess_progress(self) -> None:
+        if self._alt_assess_progress_timer is not None:
+            try:
+                self._alt_assess_progress_timer.Stop()
+            except RuntimeError:
+                pass
+            self._alt_assess_progress_timer = None
+        if self._alt_assess_progress is not None:
+            try:
+                self._alt_assess_progress.Destroy()
+            except RuntimeError:
+                pass
+            self._alt_assess_progress = None
+        self._alt_assess_cancel = None
+
+    def _alt_assess_status_callback(self, message: str) -> None:
+        def update() -> None:
+            if self._alt_assess_progress is not None:
+                cont = _pulse_progress(self._alt_assess_progress, message)
+                if not cont and self._alt_assess_cancel is not None:
+                    self._alt_assess_cancel.set()
+
+        wx.CallAfter(update)
+
+    def _on_alt_assess_progress_timer(self, _event: wx.TimerEvent) -> None:
+        dlg = self._alt_assess_progress
+        cancel = self._alt_assess_cancel
+        if dlg is None or cancel is None:
+            return
+        cont = _pulse_progress(dlg)
+        if not cont:
+            cancel.set()
+            _pulse_progress(dlg, _("Cancelling…"))
+            self._close_alt_assess_progress()
+
+    def on_alt_assess_export(self, _event: wx.CommandEvent) -> None:
+        if not ai_features_enabled():
+            return
+        if self._busy:
+            wx.MessageBox(
+                _("A check is already running. Wait for it to finish, then try again."),
+                _("Busy"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        if self._alt_assess_progress is not None:
+            return
+
+        with wx.DirDialog(
+            self,
+            _("Select a Fido alt-text export folder"),
+            style=wx.DD_DIR_MUST_EXIST,
+        ) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            folder = Path(dlg.GetPath())
+
+        # Preflight: load CSV + confirm sample size
+        try:
+            from .ai.alt_export import load_alt_export
+            from .ai.alt_sample import DEFAULT_SAMPLE_PERCENT, sample_choice_labels
+
+            export = load_alt_export(folder)
+        except FileNotFoundError as exc:
+            from .ai.explain import error_message_for_key
+
+            wx.MessageBox(
+                error_message_for_key("bad_export", detail=str(exc)),
+                _("Alt text assessment"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+        except ValueError as exc:
+            from .ai.explain import error_message_for_key
+
+            wx.MessageBox(
+                error_message_for_key("bad_export", detail=str(exc)),
+                _("Alt text assessment"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+        except Exception as exc:
+            wx.MessageBox(
+                _("Could not read the export folder:\n{error}").format(error=exc),
+                _("Alt text assessment"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+
+        counts = export.counts()
+        choice_rows = sample_choice_labels(counts["total"])
+        choices = [label for label, _mode, _pct in choice_rows]
+        # Prefer 25% as the default selection when available.
+        default_sel = 0
+        for i, (_label, _mode, pct) in enumerate(choice_rows):
+            if pct == DEFAULT_SAMPLE_PERCENT:
+                default_sel = i
+                break
+        choice_dlg = wx.SingleChoiceDialog(
+            self,
+            _(
+                "Document: {name}\n"
+                "Images: {total} — with alt: {with_alt} — decorative: {decorative} — "
+                "missing: {missing}\n\n"
+                "Choose how many images to send to the vision model "
+                "(samples are spread through the publication):"
+            ).format(
+                name=export.document_name,
+                total=counts["total"],
+                with_alt=counts["with_alt"],
+                decorative=counts["decorative"],
+                missing=counts["missing"],
+            ),
+            _("Alt text assessment"),
+            choices,
+        )
+        try:
+            choice_dlg.SetSelection(default_sel)
+            if choice_dlg.ShowModal() != wx.ID_OK:
+                return
+            sel = choice_dlg.GetSelection()
+            _label, mode, percent = choice_rows[sel]
+            percent = percent if percent is not None else 100
+        finally:
+            choice_dlg.Destroy()
+
+        self._start_alt_assess(folder, mode=mode, percent=percent, prior=None)
+
+    def _start_alt_assess(
+        self,
+        folder: Path,
+        *,
+        mode: str,
+        percent: int,
+        prior,
+        parent: wx.Window | None = None,
+    ) -> None:
+        """Run alt assessment on a worker thread and show/update the dialog."""
+        if self._alt_assess_progress is not None:
+            return
+        cancel = threading.Event()
+        self._alt_assess_cancel = cancel
+        self._alt_assess_progress = wx.ProgressDialog(
+            _("Alt text assessment"),
+            _("Loading AI libraries…"),
+            maximum=100,
+            parent=parent or self,
+            style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
+        )
+        _present_progress_dialog(
+            self._alt_assess_progress, _("Loading AI libraries…")
+        )
+        self._alt_assess_progress_timer = wx.Timer(self)
+        self.Bind(
+            wx.EVT_TIMER,
+            self._on_alt_assess_progress_timer,
+            self._alt_assess_progress_timer,
+        )
+        self._alt_assess_progress_timer.Start(200)
+        status_cb = self._alt_assess_status_callback
+
+        def work() -> None:
+            from .ai.alt_assess import AltAssessResult, assess_alt_export
+            from .ai.explain import error_message_for_key
+            from .ai.litellm_client import preload_litellm
+
+            ok, detail = preload_litellm()
+            if not ok:
+                def fail() -> None:
+                    self._close_alt_assess_progress()
+                    wx.MessageBox(
+                        error_message_for_key("no_litellm", detail=detail),
+                        _("Alt text assessment"),
+                        wx.OK | wx.ICON_ERROR,
+                        parent or self,
+                    )
+
+                wx.CallAfter(fail)
+                return
+            if cancel.is_set():
+                return
+            try:
+                out = assess_alt_export(
+                    folder,
+                    mode=mode,
+                    percent=percent,
+                    prior=prior,
+                    cancel_event=cancel,
+                    status_callback=status_cb,
+                )
+            except Exception as exc:
+                out = AltAssessResult(
+                    ok=False, error_key="provider_error", detail=str(exc)
+                )
+            if cancel.is_set():
+                wx.CallAfter(self._close_alt_assess_progress)
+                return
+            try:
+                wx.PostEvent(
+                    self,
+                    AltAssessAiEvent(result=out),
+                )
+            except RuntimeError:
+                return
+
+        threading.Thread(target=work, daemon=True).start()
+
+
+    def _on_alt_assess_ai_event(self, event: AltAssessAiEvent) -> None:
+        self._close_alt_assess_progress()
+        out = getattr(event, "result", None)
+        if out is None:
+            return
+        if not out.ok:
+            from .ai.explain import error_message_for_key
+
+            if out.error_key == "cancelled":
+                self.SetStatusText(_("Cancelled."))
+                wx.CallLater(4000, self._update_status_bar)
+                return
+            msg = error_message_for_key(
+                out.error_key, detail=out.detail or out.text or ""
+            )
+            wx.MessageBox(msg, _("Alt text assessment"), wx.OK | wx.ICON_ERROR, self)
+            return
+
+        try:
+            from .telemetry import log_ai_alt_assess
+
+            log_ai_alt_assess()
+        except Exception:
+            pass
+
+        from .ai.alt_dialog import AltAssessDialog
+
+        dlg = AltAssessDialog(self, result=out)
+        self._alt_assess_dialog = dlg
+        dlg.ShowModal()
+        self._alt_assess_dialog = None
+        try:
+            dlg.Destroy()
+        except RuntimeError:
+            pass
+        try:
+            self.Enable(True)
+            self.Raise()
+            _win_force_foreground(self)
+        except RuntimeError:
+            pass
 
     def on_save_text_report(self, _event: wx.CommandEvent) -> None:
         result = self._require_result(_("Nothing to save"))

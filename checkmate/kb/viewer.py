@@ -10,7 +10,7 @@ from pathlib import Path
 
 import wx
 
-from ..i18n import _, get_language, language_display_name, LANGUAGES
+from ..i18n import _, get_language, get_text_direction, language_display_name, LANGUAGES
 from .fetch import ensure_article_cached, html_document_for_display, html_to_plain_text
 from .store import (
     KbArticleRef,
@@ -23,6 +23,17 @@ from .update import update_knowledge_base
 
 # Session preference: show English when a non-English variant exists.
 _prefer_english_session = False
+
+
+def _simple_message_html(message: str) -> str:
+    body = message.replace("\n", "<br/>")
+    lang = get_language()
+    direction = get_text_direction()
+    return (
+        f'<html lang="{lang}" dir="{direction}"><body><p>'
+        f"{body}</p></body></html>"
+    )
+
 
 # Forward Ctrl+PgUp/PgDn out of Edge when the panel is embedded in a notebook.
 _KB_PAGE_NAV_SCRIPT = """
@@ -170,11 +181,7 @@ class KnowledgeBaseArticlePanel(wx.Panel):
                 "This Knowledge Base article is not available offline yet.\n"
                 "Use Update… to download articles, or Go online to open it in your browser."
             )
-            html = (
-                "<html><body><p>"
-                + msg.replace("\n", "<br/>")
-                + "</p></body></html>"
-            )
+            html = _simple_message_html(msg)
             self._show_html(html)
             self._content_ready = True
             self._notify_ready()
@@ -525,9 +532,7 @@ class KnowledgeBaseArticlePanel(wx.Panel):
             html = html_document_for_display(path)
         except OSError:
             self._show_html(
-                "<html><body><p>"
-                + _("Could not read the local article.")
-                + "</p></body></html>"
+                _simple_message_html(_("Could not read the local article."))
             )
             return
         self._show_html(html)
@@ -543,11 +548,7 @@ class KnowledgeBaseArticlePanel(wx.Panel):
                 "This Knowledge Base article is not available offline yet.\n"
                 "Use Update… to download articles, or Go online to open it in your browser."
             )
-            html = (
-                "<html><body><p>"
-                + msg.replace("\n", "<br/>")
-                + "</p></body></html>"
-            )
+            html = _simple_message_html(msg)
             self._show_html(html)
             return
         # One more defer so the freshly created WebView finishes realizing.

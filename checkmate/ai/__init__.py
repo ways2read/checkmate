@@ -29,3 +29,19 @@ __all__ = [
     "propose_batch_fix",
     "propose_fix",
 ]
+
+# Optional alt-text assessment API (lazy-compatible if symbols are incomplete).
+try:
+    from .alt_assess import (  # noqa: F401
+        AltAssessResult,
+        ask_alt_assess_followup,
+        assess_alt_export,
+    )
+
+    __all__ += [
+        "AltAssessResult",
+        "ask_alt_assess_followup",
+        "assess_alt_export",
+    ]
+except ImportError:
+    pass

@@ -78,10 +78,13 @@ support on Windows, macOS, and Linux.
   sounds, AI features) and the veraPDF PDF/UA profile (UA-1 or UA-2).
   eBraille always uses the `ebraille` EPUBCheck profile
 - Status bar shows installed checker versions, and Ace / Pipeline when detected
-- UI languages: English, Français, Español, Deutsch, Português, Dansk,
-  Nederlands, Suomi, हिन्दी, Norsk, Русский, Svenska (remembered;
-  first run follows the OS language when supported; AI replies follow
-  the selected language)
+- UI languages: English plus shipped catalogs (Français, Español, Deutsch,
+  Português, Dansk, Nederlands, Suomi, हिन्दी, Norsk, Русский, Svenska) and
+  user-added languages (remembered; first run follows the OS language when
+  supported; AI replies follow the selected language). Non-English languages
+  can be managed from the Language menu (edit strings, AI update/regenerate,
+  export, or hide until re-added). Catalogs use the `checkmate-ui-i18n` JSON
+  format (including LTR/RTL direction).
 - Downloads eBraille Checker and EPUBCheck on first run when not bundled;
   downloads veraPDF on first PDF check when not bundled
 - In-app update check for all tools; updates install to application data and
@@ -214,7 +217,8 @@ Under that folder:
 - `checker/` — downloaded or updated eBraille Checker releases
 - `epubcheck/` — downloaded or updated EPUBCheck releases
 - `verapdf/` — downloaded or updated veraPDF CLI installs
-- `settings.json` — remembered UI language and preferences (e.g. Show issues always, Play completion sounds, veraPDF profile)
+- `settings.json` — remembered UI language and preferences (e.g. Show issues always, Play completion sounds, veraPDF profile, hidden languages)
+- `i18n/` — editable UI language catalogs (`checkmate-ui-i18n` JSON overlays)
 
 Packaged builds also include `checker/`, `epubcheck/`, and `verapdf/` beside the
 executable (or inside the `.app` bundle on macOS).
@@ -246,8 +250,9 @@ executable (or inside the `.app` bundle on macOS).
   leaves the WebView for the next dialog control. **Escape** closes the dialog
   from the WebView host or from inside the page (`checkmate://close`).
 - Accessible name includes the verdict text; the window title also appends it
-- **Language** menu: English, Français, Español, Deutsch, Português, Dansk,
-  Nederlands, Suomi, हिन्दी, Norsk, Русский, Svenska
+- **Language** menu: each installed language is a submenu with **Select** (and,
+  for non-English, edit / update / regenerate / export / remove). **Add
+  language…** / **Import language…** add catalogs.
 - Severity and pass/fail are always in text; result colour is only a visual cue
 
 Designed for use with NVDA, JAWS, Narrator, and VoiceOver. Feedback on
@@ -366,8 +371,9 @@ checkmate/
     models.py          # Verdict and issue models
     report_export.py   # Text / HTML report export
     telemetry.py       # FIDO-consent usage telemetry (shared secrets/sender)
-    i18n.py            # UI language registry + core translations
-    i18n_extra.py      # Additional language catalogs (da/nl/fi/hi/nb/ru/sv)
+    i18n.py            # UI language registry + catalog load/merge
+    i18n_ai.py         # AI translation of UI language catalogs
+    locales/           # Shipped checkmate-ui-i18n JSON catalogs (*.json)
     settings.py        # Persisted preferences
     settings_dialog.py # Tools → Settings… (prefs + validation profiles)
     paths.py           # App data and bundle locations
