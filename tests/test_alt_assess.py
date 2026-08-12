@@ -12,10 +12,13 @@ from checkmate.ai.alt_export import AltExportImage, load_alt_export
 from checkmate.ai.alt_heuristics import (
     FLAG_CLASS_DECORATIVE_MISMATCH,
     FLAG_FILENAME_AS_ALT,
+    FLAG_LOW_RESOLUTION,
     FLAG_MISSING_ALT,
     FLAG_PLACEHOLDER_ALT,
     FLAG_VERY_SHORT_ALT,
     analyze_image,
+    looks_low_resolution,
+    parse_dimensions,
     run_heuristics,
 )
 from checkmate.ai.alt_sample import (
@@ -187,6 +190,54 @@ def test_heuristics_placeholder_and_mismatch() -> None:
     assert FLAG_CLASS_DECORATIVE_MISMATCH in analyze_image(dec)
 
 
+def test_low_resolution_heuristic() -> None:
+    assert parse_dimensions("320×240") == (320, 240)
+    assert parse_dimensions("1000x800") == (1000, 800)
+    assert parse_dimensions("") is None
+
+    low = AltExportImage(
+        index=1,
+        filename="photo.jpg",
+        classification="Photograph",
+        alt_text="A landscape with mountains in the distance.",
+        status="Has Alt Text",
+        dimensions="320x240",
+    )
+    assert looks_low_resolution(low)
+    assert FLAG_LOW_RESOLUTION in analyze_image(low)
+
+    ok = AltExportImage(
+        index=2,
+        filename="photo.jpg",
+        classification="Photograph",
+        alt_text="A landscape with mountains in the distance.",
+        status="Has Alt Text",
+        dimensions="1200x800",
+    )
+    assert not looks_low_resolution(ok)
+    assert FLAG_LOW_RESOLUTION not in analyze_image(ok)
+
+    svg = AltExportImage(
+        index=3,
+        filename="icon.svg",
+        classification="Unclassified",
+        alt_text="Publisher logo.",
+        status="Has Alt Text",
+        dimensions="64x64",
+    )
+    assert not looks_low_resolution(svg)
+
+    spacer = AltExportImage(
+        index=4,
+        filename="dot.png",
+        classification="Unclassified",
+        alt_text="",
+        status="Decorative",
+        dimensions="10x10",
+    )
+    assert FLAG_LOW_RESOLUTION not in analyze_image(spacer)
+
+
 def test_small_export_assesses_all(tmp_path: Path) -> None:
     n = AUTO_ALL_MAX
     folder = _write_export(tmp_path, _rows(n))
@@ -266,6 +317,93 @@ def test_parse_vision_assessment_json() -> None:
     assert parsed.issues == ["likely_content_marked_decorative"]
     assert parsed.suggested_alt is None
     assert parsed.filename == "image_0058.jpg"
+
+
+def test_parse_vision_format_and_orientation_issues() -> None:
+    image = AltExportImage(
+        index=12,
+        filename="eq_12.png",
+        classification="Unclassified",
+        alt_text="Equation for the area of a circle.",
+        status="Has Alt Text",
+    )
+    raw = """
+    {
+      "verdict": "needs_attention",
+      "confidence": "high",
+      "status_ok": true,
+      "recommended_status": "has_alt",
+      "descriptiveness": "good",
+      "accuracy": "good",
+      "usefulness": "weak",
+      "issues": [
+        "image_of_math",
+        "image_of_table",
+        "likely_wrong_orientation",
+        "not_a_real_issue"
+      ],
+      "reason": "Equation image, also looks rotated; nearby table is a screenshot.",
+      "teaching_note": "Encode as digital math or tag the PDF image with MathML.",
+      "suggested_alt": null
+    }
+    """
+    parsed = parse_vision_assessment(raw, image=image)
+    assert parsed is not None
+    assert parsed.issues == [
+        "image_of_math",
+        "image_of_table",
+        "likely_wrong_orientation",
+    ]
+
+
+def test_vision_prompt_math_remediation_guidance() -> None:
+    from checkmate.ai.alt_assess import build_vision_system_prompt
+
+    prompt = build_vision_system_prompt()
+    assert "image_of_math" in prompt
+    assert "LaTeX" in prompt
+    assert "MathML" in prompt
+    assert "OMML" in prompt
+    assert "tagged/associated with MathML" in prompt
+    assert "do NOT recommend MathJax" in prompt
+    assert "Do NOT recommend MathML alttext" in prompt
+    assert "machine-readable" in prompt
+    assert "low_resolution" in prompt
+    assert "magnify" in prompt
+
+
+def test_format_issues_filter_bucket() -> None:
+    from checkmate.ai.alt_assess import AltImageAssessment
+    from checkmate.ai.alt_report import _filter_bucket
+
+    a = AltImageAssessment(
+        index=1,
+        filename="t.png",
+        verdict="needs_attention",
+        issues=["image_of_table"],
+    )
+    assert _filter_bucket(a) == "format"
+    b = AltImageAssessment(
+        index=2,
+        filename="o.png",
+        verdict="needs_attention",
+        issues=["likely_wrong_orientation"],
+    )
+    assert _filter_bucket(b) == "format"
+    r = AltImageAssessment(
+        index=4,
+        filename="small.png",
+        verdict="needs_attention",
+        issues=["low_resolution"],
+    )
+    assert _filter_bucket(r) == "format"
+    c = AltImageAssessment(
+        index=3,
+        filename="d.png",
+        verdict="needs_attention",
+        issues=["likely_content_marked_decorative"],
+    )
+    assert _filter_bucket(c) == "decorative"
 
 
 def test_parse_vision_assessment_rejects_garbage() -> None:

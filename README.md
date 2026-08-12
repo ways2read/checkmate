@@ -58,7 +58,11 @@ support on Windows, macOS, and Linux.
   button after AI overview opens an in-app inventory of images and alt text
   (CheckMate-branded export, cached per publication). From that report, optional
   **Run AI health check…** samples images with vision and synthesizes findings
-  (same FIDO AI credentials). Progress is cancellable and spoken to screen
+  (same FIDO AI credentials) — including alt quality, decorative vs content,
+  images of tables (prefer real table markup), images of math (prefer digital
+  math such as LaTeX/MathML/OMML, or PDF equation images tagged with MathML),
+  low-resolution rasters that fail under magnification, and likely wrong
+  orientation. Progress is cancellable and spoken to screen
   readers.
 - **Suggest fix with AI** (EPUB and eBraille only, when FIDO AI settings are present):
   from the same issue details dialog, ask for a minimal suggested markup patch,

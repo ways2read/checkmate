@@ -152,9 +152,42 @@ def _verdict_class(verdict: str) -> str:
     }.get(verdict, "uncertain")
 
 
+_FORMAT_ISSUES = frozenset(
+    {
+        "image_of_table",
+        "image_of_math",
+        "likely_wrong_orientation",
+        "low_resolution",
+    }
+)
+
+
+def _issue_label(code: str) -> str:
+    return {
+        "placeholder_alt": _("Placeholder alt"),
+        "filename_as_alt": _("Filename used as alt"),
+        "inaccurate_alt": _("Inaccurate alt"),
+        "too_vague": _("Too vague"),
+        "too_verbose": _("Too verbose"),
+        "missing_text_in_image": _("Text in image missing from alt"),
+        "likely_content_marked_decorative": _("Likely content marked decorative"),
+        "likely_decorative_with_alt": _("Likely decorative with alt"),
+        "duplicate_alt": _("Duplicate alt"),
+        "missing_alt": _("Missing alt"),
+        "empty_has_alt": _("Empty alt with has-alt status"),
+        "image_of_table": _("Image of a table"),
+        "image_of_math": _("Image of math / equation"),
+        "likely_wrong_orientation": _("Likely wrong orientation"),
+        "low_resolution": _("Low resolution"),
+        "ok": _("OK"),
+    }.get(code, code)
+
+
 def _filter_bucket(a: AltImageAssessment) -> str:
     if a.pass_name == "heuristic":
         return "heuristics"
+    if any(i in _FORMAT_ISSUES for i in a.issues):
+        return "format"
     if a.verdict == "needs_attention":
         if "likely_content_marked_decorative" in a.issues:
             return "decorative"
@@ -224,6 +257,7 @@ def _priority_cards_html(
         _filter_checkbox("all", _("All"), checked=True),
         _filter_checkbox("needs", _("Needs attention"), checked=True),
         _filter_checkbox("decorative", _("Decorative review"), checked=True),
+        _filter_checkbox("format", _("Format & presentation"), checked=True),
         _filter_checkbox("ok", _("Likely OK"), checked=True),
         _filter_checkbox("uncertain", _("Uncertain"), checked=True),
         "</div>",
@@ -256,6 +290,14 @@ def _priority_cards_html(
             if a.teaching_note
             else ""
         )
+        visible_issues = [c for c in a.issues if c != "ok"]
+        issues_html = ""
+        if visible_issues:
+            chips = ", ".join(_issue_label(c) for c in visible_issues)
+            issues_html = (
+                f'<p class="flags"><strong>{html.escape(_("AI flags:"))}</strong> '
+                f"{html.escape(chips)}</p>"
+            )
         heur_label = _("Heuristics:")
         flags_html = (
             f'<p class="flags"><strong>{html.escape(heur_label)}</strong> '
@@ -273,6 +315,7 @@ def _priority_cards_html(
             f'<p class="reason">{html.escape(a.reason or "—")}</p>'
             f"{teaching_html}"
             f"{alt_preview}"
+            f"{issues_html}"
             f"{flags_html}"
             f"</div></article>"
         )
@@ -575,6 +618,10 @@ def assessment_markdown_export(result: AltAssessResult) -> str:
             f"- **#{a.index}** `{a.filename}` — {_verdict_label(a.verdict)}: "
             f"{a.reason or '—'}"
         )
+        visible = [c for c in a.issues if c != "ok"]
+        if visible:
+            labels = ", ".join(_issue_label(c) for c in visible)
+            lines.append(f"  - {_('AI flags:')} {labels}")
         if a.teaching_note:
             lines.append(f"  - _{a.teaching_note}_")
     return "\n".join(lines) + "\n"

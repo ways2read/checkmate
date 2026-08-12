@@ -131,6 +131,11 @@ _ISSUE_VOCAB = frozenset(
         "duplicate_alt",
         "missing_alt",
         "empty_has_alt",
+        # Accessible format / presentation review (not just alt wording)
+        "image_of_table",
+        "image_of_math",
+        "likely_wrong_orientation",
+        "low_resolution",
         "ok",
     }
 )
@@ -333,7 +338,8 @@ these keys:
 - issues: array of zero or more of:
   placeholder_alt, filename_as_alt, inaccurate_alt, too_vague, too_verbose,
   missing_text_in_image, likely_content_marked_decorative,
-  likely_decorative_with_alt, duplicate_alt, missing_alt, empty_has_alt, ok
+  likely_decorative_with_alt, duplicate_alt, missing_alt, empty_has_alt,
+  image_of_table, image_of_math, likely_wrong_orientation, low_resolution, ok
 - reason: one short sentence explaining the verdict
 - teaching_note: one short coaching sentence for a non-expert reviewer
 - suggested_alt: always null in this version
@@ -350,6 +356,31 @@ Rules:
 - Content photographs, step composites, and labeled product packaging usually
   need descriptive alt, not decorative.
 - Purely decorative borders/spacers/flourishes may correctly be decorative.
+- Accessible format (flag even when alt wording is otherwise fine):
+  - image_of_table: the picture is primarily a data table (rows/columns of
+    text or numbers). Accessible publications should use real table markup,
+    not a screenshot of a table. Prefer needs_attention; say so in
+    teaching_note.
+  - image_of_math: the picture is primarily a mathematical equation or
+    formula. Prefer encoding as digital math appropriate to the format
+    (LaTeX, MathML, or OMML as fits the publication type). For PDF, the
+    equation image may remain if it is tagged/associated with MathML.
+    Prefer needs_attention; say so in teaching_note.
+  - For image_of_math coaching: do NOT recommend MathJax (that is a
+    rendering library, not an encoding). Do NOT recommend MathML alttext /
+    alt-text attributes as the accessibility solution — that is not best
+    practice; the math itself should be machine-readable.
+  - Do not use image_of_table / image_of_math for ordinary photos, logos,
+    charts that are genuinely graphical (bar/pie/line art), or decorative
+    ornaments — only when the image is essentially a table or equation.
+  - likely_wrong_orientation: text or scene content looks rotated, sideways,
+    or upside-down relative to normal reading. Prefer needs_attention (or
+    uncertain if unsure) so a human can re-check; do not invent a corrected
+    alt that assumes a fixed rotation.
+  - low_resolution: the raster looks too small / soft / pixelated for people
+    who magnify the page (use Dimensions when provided; also visual softness).
+    Prefer needs_attention for content images. Do not flag intentional tiny
+    decorative icons, spacers, or vector art.
 - Keep reason and teaching_note concise.
 """
 
@@ -480,9 +511,19 @@ top-level headings):
 
 Rules:
 - Use only the provided assessment data; do not invent images or findings.
-- Lead with themes a non-expert can act on (especially decorative vs content).
+- Lead with themes a non-expert can act on (especially decorative vs content,
+  images of tables, images of math that need digital math, low-resolution
+  images that fail under magnification, and wrong orientation).
+- If any assessed image has issues image_of_table, image_of_math,
+  likely_wrong_orientation, or low_resolution, call those out explicitly in
+  "{h2}" and "{h3}" — they matter even when alt text itself looks fine.
 - In "{h3}", list the worst items first and cite Index and Filename.
-- In "{h4}", give short coaching tied to what was found in this document.
+- In "{h4}", give short coaching tied to what was found in this document
+  (including remediating table images, encoding math as digital math —
+  LaTeX/MathML/OMML as appropriate, or PDF equation images tagged with
+  MathML — replacing low-resolution rasters with sharper assets, and fixing
+  rotation when relevant). Do not recommend MathJax or MathML alttext as the
+  fix for math images.
 - In "{h5}", note sample vs full review, that AI can be wrong, and that this is
   assisted review — not a conformance certificate.
 - Keep each section concise (short paragraphs or a few bullets).

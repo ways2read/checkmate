@@ -18,6 +18,7 @@ FLAG_DECORATIVE_WITH_ALT = "decorative_with_alt"
 FLAG_DUPLICATE_ALT = "duplicate_alt"
 FLAG_VERY_SHORT_ALT = "very_short_alt"
 FLAG_CLASS_DECORATIVE_MISMATCH = "class_decorative_mismatch"
+FLAG_LOW_RESOLUTION = "low_resolution"
 
 HARD_FLAGS = frozenset(
     {
@@ -52,8 +53,16 @@ _FILENAME_RE = re.compile(
     r"(?:image|img|photo|picture|dsc|img_)[\s_-]*\d+$",
     re.IGNORECASE,
 )
+_DIM_RE = re.compile(
+    r"(\d+)\s*[x×]\s*(\d+)",
+    re.IGNORECASE,
+)
 
 _SHORT_ALT_LEN = 12
+# Longest edge below this (px) is risky for magnification of content images.
+_LOW_RES_LONG_EDGE = 400
+# Ignore sub-icon spacers / bullets even when marked as content.
+_LOW_RES_MIN_EDGE_TO_CONSIDER = 48
 
 
 @dataclass
@@ -77,6 +86,49 @@ class HeuristicReport:
 
     def hard_indices(self) -> set[int]:
         return {f.index for f in self.findings if f.has_hard}
+
+
+def parse_dimensions(dimensions: str) -> tuple[int, int] | None:
+    """Parse ``WIDTHxHEIGHT`` (or ×) from an export dimensions string."""
+    text = (dimensions or "").strip()
+    if not text:
+        return None
+    m = _DIM_RE.search(text)
+    if not m:
+        return None
+    w, h = int(m.group(1)), int(m.group(2))
+    if w <= 0 or h <= 0:
+        return None
+    return w, h
+
+
+def _is_vector_filename(filename: str) -> bool:
+    return (filename or "").strip().lower().endswith(".svg")
+
+
+def looks_low_resolution(image: AltExportImage) -> bool:
+    """True when raster pixel size is likely too small for magnification."""
+    if _is_vector_filename(image.filename):
+        return False
+    dims = parse_dimensions(image.dimensions)
+    if dims is None:
+        return False
+    w, h = dims
+    long_edge = max(w, h)
+    short_edge = min(w, h)
+    if (
+        long_edge < _LOW_RES_MIN_EDGE_TO_CONSIDER
+        and short_edge < _LOW_RES_MIN_EDGE_TO_CONSIDER
+    ):
+        return False
+    return long_edge < _LOW_RES_LONG_EDGE
+
+
+def _should_check_resolution(image: AltExportImage) -> bool:
+    if image.is_decorative:
+        # Tiny decorative chrome is fine; content-like “decorative” photos are not.
+        return _content_like_classification(image.classification)
+    return True
 
 
 def _content_like_classification(classification: str) -> bool:
@@ -113,6 +165,8 @@ def analyze_image(image: AltExportImage, *, duplicate: bool = False) -> list[str
             flags.append(FLAG_DECORATIVE_WITH_ALT)
         if _content_like_classification(image.classification):
             flags.append(FLAG_CLASS_DECORATIVE_MISMATCH)
+        if _should_check_resolution(image) and looks_low_resolution(image):
+            flags.append(FLAG_LOW_RESOLUTION)
         return flags
 
     # Content (or unclassified / other non-decorative)
@@ -121,6 +175,8 @@ def analyze_image(image: AltExportImage, *, duplicate: bool = False) -> list[str
             flags.append(FLAG_EMPTY_HAS_ALT)
         else:
             flags.append(FLAG_MISSING_ALT)
+        if _should_check_resolution(image) and looks_low_resolution(image):
+            flags.append(FLAG_LOW_RESOLUTION)
         return flags
 
     flags.extend(_placeholder_or_filename(alt, image.filename))
@@ -128,6 +184,8 @@ def analyze_image(image: AltExportImage, *, duplicate: bool = False) -> list[str
         flags.append(FLAG_VERY_SHORT_ALT)
     if duplicate:
         flags.append(FLAG_DUPLICATE_ALT)
+    if _should_check_resolution(image) and looks_low_resolution(image):
+        flags.append(FLAG_LOW_RESOLUTION)
     return flags
 
 
