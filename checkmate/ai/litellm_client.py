@@ -25,6 +25,8 @@ StatusCallback = Callable[[str], None]
 _CONFIGURED = False
 _litellm: Any = None
 _litellm_import_error: BaseException | None = None
+_import_lock = threading.Lock()
+_preload_started = False
 
 
 def _ensure_local_model_cost_map() -> None:
@@ -90,23 +92,28 @@ def _get_litellm() -> Any:
         return _litellm
     if _litellm_import_error is not None:
         raise _litellm_import_error
-    _ensure_local_model_cost_map()
-    t0 = time.perf_counter()
-    logger.info("Importing litellm…")
-    try:
-        _ensure_tiktoken_ready()
-        import litellm as _mod
-    except Exception as exc:
-        _litellm_import_error = exc
-        logger.exception("Failed to import litellm")
-        raise
-    _litellm = _mod
-    logger.info(
-        "Imported litellm in %.1fs from %s",
-        time.perf_counter() - t0,
-        getattr(_mod, "__file__", "?"),
-    )
-    return _litellm
+    with _import_lock:
+        if _litellm is not None:
+            return _litellm
+        if _litellm_import_error is not None:
+            raise _litellm_import_error
+        _ensure_local_model_cost_map()
+        t0 = time.perf_counter()
+        logger.info("Importing litellm…")
+        try:
+            _ensure_tiktoken_ready()
+            import litellm as _mod
+        except Exception as exc:
+            _litellm_import_error = exc
+            logger.exception("Failed to import litellm")
+            raise
+        _litellm = _mod
+        logger.info(
+            "Imported litellm in %.1fs from %s",
+            time.perf_counter() - t0,
+            getattr(_mod, "__file__", "?"),
+        )
+        return _litellm
 
 
 def litellm_available() -> bool:
@@ -114,6 +121,11 @@ def litellm_available() -> bool:
         return _get_litellm() is not None
     except Exception:
         return False
+
+
+def litellm_ready() -> bool:
+    """True when litellm has already been imported (no I/O)."""
+    return _litellm is not None
 
 
 def preload_litellm() -> tuple[bool, str]:
@@ -130,6 +142,41 @@ def preload_litellm() -> tuple[bool, str]:
         return True, ""
     except Exception as exc:
         return False, str(exc) or type(exc).__name__
+
+
+def schedule_background_preload() -> None:
+    """Start a one-shot daemon import so the first AI action is not cold.
+
+    Safe to call repeatedly; no-ops if already loaded or a preload is running.
+    Failures are logged only — the next user AI action still retries.
+    """
+    global _preload_started
+    if litellm_ready():
+        return
+    with _import_lock:
+        if litellm_ready() or _preload_started:
+            return
+        _preload_started = True
+
+    def work() -> None:
+        ok, detail = preload_litellm()
+        if ok:
+            logger.info("Background LiteLLM preload finished")
+        else:
+            logger.warning("Background LiteLLM preload failed: %s", detail)
+
+    threading.Thread(
+        target=work, daemon=True, name="checkmate-litellm-preload"
+    ).start()
+
+
+def ai_libraries_status_message() -> str:
+    """Progress text: skip cold-load wording when LiteLLM is already imported."""
+    from ..i18n import _
+
+    if litellm_ready():
+        return _("Starting AI…")
+    return _("Loading AI libraries…")
 
 
 def configure_litellm_defaults() -> None:

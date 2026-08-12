@@ -560,13 +560,13 @@ def check_for_update(
     return latest, installed, is_update_available(latest.tag, installed)
 
 
-def check_for_updates() -> list[ToolUpdateInfo]:
+def check_for_updates(timeout: float = 30.0) -> list[ToolUpdateInfo]:
     """Probe all validation tools for newer GitHub releases."""
     results: list[ToolUpdateInfo] = []
     for tool in ALL_TOOLS:
         installed = read_effective_version(tool)
         try:
-            latest = fetch_latest_release(tool)
+            latest = fetch_latest_release(tool, timeout=timeout)
             results.append(
                 ToolUpdateInfo(
                     tool=tool,

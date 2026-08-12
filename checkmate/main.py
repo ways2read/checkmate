@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -96,6 +97,8 @@ FixAiEvent, EVT_FIX_AI = wx.lib.newevent.NewEvent()
 ApplyFixEvent, EVT_APPLY_FIX = wx.lib.newevent.NewEvent()
 OverviewAiEvent, EVT_OVERVIEW_AI = wx.lib.newevent.NewEvent()
 AltAssessAiEvent, EVT_ALT_ASSESS_AI = wx.lib.newevent.NewEvent()
+
+logger = logging.getLogger(__name__)
 
 # ListCtrl is native on Windows but generic (and VoiceOver/Orca-invisible) on
 # macOS/Linux. DataViewListCtrl is the reverse — use the native control per OS.
@@ -488,6 +491,13 @@ def _announce_progress_status(dlg: wx.Window | None, message: str) -> None:
         speak(msg, interrupt=True)
     except Exception:
         pass
+
+
+def _ai_libraries_status_message() -> str:
+    """Progress text: skip cold-load wording when LiteLLM is already imported."""
+    from .ai.litellm_client import ai_libraries_status_message
+
+    return ai_libraries_status_message()
 
 
 def _pulse_progress(
@@ -3142,9 +3152,9 @@ class IssueDetailDialog(wx.Dialog):
             return
         self._select_page(self._PAGE_EXPLAIN)
         cancel = self._open_ai_progress(
-            _("Explain this issue"), _("Loading AI libraries…")
+            _("Explain this issue"), _ai_libraries_status_message()
         )
-        self._set_busy(True, _("Loading AI libraries…"))
+        self._set_busy(True, _ai_libraries_status_message())
         issue = self._issue
         result = self._check_result
         status_cb = self._ai_status_callback
@@ -3188,9 +3198,9 @@ class IssueDetailDialog(wx.Dialog):
         self._batch_proposal = None
         self._set_apply_fix_enabled(False)
         cancel = self._open_ai_progress(
-            _("Suggest fix with AI"), _("Loading AI libraries…")
+            _("Suggest fix with AI"), _ai_libraries_status_message()
         )
-        self._set_busy(True, _("Loading AI libraries…"))
+        self._set_busy(True, _ai_libraries_status_message())
         issue = self._issue
         result = self._check_result
         status_cb = self._ai_status_callback
@@ -3233,9 +3243,9 @@ class IssueDetailDialog(wx.Dialog):
         self._batch_proposal = None
         self._set_apply_fix_enabled(False)
         cancel = self._open_ai_progress(
-            _("Suggest fix for many"), _("Loading AI libraries…")
+            _("Suggest fix for many"), _ai_libraries_status_message()
         )
-        self._set_busy(True, _("Loading AI libraries…"))
+        self._set_busy(True, _ai_libraries_status_message())
         issue = self._issue
         result = self._check_result
         status_cb = self._ai_status_callback
@@ -3284,8 +3294,8 @@ class IssueDetailDialog(wx.Dialog):
         if not question:
             return
         self._select_page(page)
-        cancel = self._open_ai_progress(_("Follow-up"), _("Loading AI libraries…"))
-        self._set_busy(True, _("Loading AI libraries…"))
+        cancel = self._open_ai_progress(_("Follow-up"), _ai_libraries_status_message())
+        self._set_busy(True, _ai_libraries_status_message())
         status_cb = self._ai_status_callback
         issue = self._issue
         check_result = self._check_result
@@ -4131,7 +4141,7 @@ class AiOverviewDialog(wx.Dialog):
         question = self.followup_ctrl.GetValue().strip()
         if not question:
             return
-        cancel = self._open_ai_progress(_("Follow-up"), _("Loading AI libraries…"))
+        cancel = self._open_ai_progress(_("Follow-up"), _ai_libraries_status_message())
         self._set_busy(True)
         session = self._session
         status_cb = self._ai_status_callback
@@ -6479,6 +6489,14 @@ class MainFrame(wx.Frame):
         self.Layout()
         self.Refresh()
 
+        # COM probes for JAWS/etc. are slow on the UI thread; warm them early.
+        try:
+            from .accessibility import schedule_screen_reader_init
+
+            schedule_screen_reader_init()
+        except Exception:
+            logger.debug("Could not schedule screen-reader init", exc_info=True)
+
         def worker() -> None:
             try:
                 if detect_java() is None:
@@ -6494,21 +6512,6 @@ class MainFrame(wx.Frame):
                 # scans (Defender) happen now, not during the first check.
                 run_startup_warmup(progress=progress)
                 wx.PostEvent(self, ProgressEvent(message=_("Ready")))
-                try:
-                    updates = check_for_updates()
-                    available = any(u.available for u in updates)
-                    wx.PostEvent(
-                        self,
-                        UpdateInfoEvent(
-                            updates=updates,
-                            available=available,
-                            silent=True,
-                            error=None,
-                            force=False,
-                        ),
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
             except Exception as exc:  # noqa: BLE001
                 wx.PostEvent(
                     self,
@@ -6516,6 +6519,42 @@ class MainFrame(wx.Frame):
                 )
 
         threading.Thread(target=worker, daemon=True).start()
+
+        # Defer heavy GIL work (LiteLLM import) and network update probes until
+        # after the shell is interactive — overlapping them with first paint
+        # makes the UI feel frozen for several seconds.
+        wx.CallLater(1500, self._deferred_startup_background)
+
+    def _deferred_startup_background(self) -> None:
+        if ai_features_enabled():
+            try:
+                from .ai.litellm_client import schedule_background_preload
+
+                schedule_background_preload()
+            except Exception:
+                logger.debug("Could not schedule LiteLLM preload", exc_info=True)
+
+        def update_worker() -> None:
+            try:
+                # Short timeouts: silent probe must not linger on bad networks.
+                updates = check_for_updates(timeout=8.0)
+                available = any(u.available for u in updates)
+                wx.PostEvent(
+                    self,
+                    UpdateInfoEvent(
+                        updates=updates,
+                        available=available,
+                        silent=True,
+                        error=None,
+                        force=False,
+                    ),
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+        threading.Thread(
+            target=update_worker, daemon=True, name="checkmate-startup-updates"
+        ).start()
 
     def on_java_missing_event(self, _event: JavaMissingEvent) -> None:
         from .java_util import has_bundled_java
@@ -7316,6 +7355,16 @@ class MainFrame(wx.Frame):
             dlg.apply()
         if ai_features_enabled() != prev_ai:
             self._apply_ai_features_visibility()
+            if ai_features_enabled():
+                try:
+                    from .ai.litellm_client import schedule_background_preload
+
+                    schedule_background_preload()
+                except Exception:
+                    logger.debug(
+                        "Could not schedule LiteLLM preload after enabling AI",
+                        exc_info=True,
+                    )
         else:
             self._update_show_issues_button()
 
@@ -7554,13 +7603,13 @@ class MainFrame(wx.Frame):
         self._overview_cancel = cancel
         self._overview_progress = wx.ProgressDialog(
             _("AI overview"),
-            _("Loading AI libraries…"),
+            _ai_libraries_status_message(),
             maximum=100,
             parent=self,
             style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
         )
         _present_progress_dialog(
-            self._overview_progress, _("Loading AI libraries…")
+            self._overview_progress, _ai_libraries_status_message()
         )
         self._overview_progress_timer = wx.Timer(self)
         self.Bind(
@@ -7959,13 +8008,13 @@ class MainFrame(wx.Frame):
         self._alt_assess_cancel = cancel
         self._alt_assess_progress = wx.ProgressDialog(
             _("Alt text health check"),
-            _("Loading AI libraries…"),
+            _ai_libraries_status_message(),
             maximum=100,
             parent=parent or self,
             style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
         )
         _present_progress_dialog(
-            self._alt_assess_progress, _("Loading AI libraries…")
+            self._alt_assess_progress, _ai_libraries_status_message()
         )
         self._alt_assess_progress_timer = wx.Timer(self)
         self.Bind(

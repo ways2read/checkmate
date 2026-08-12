@@ -12,19 +12,13 @@ from typing import Any
 from .paths import app_data_dir, is_frozen
 from .settings import read_settings, update_settings
 
-# BCP 47-ish codes used in settings and menus
+# BCP 47-ish codes used in settings and menus (shipped non-English: fr, es, ar, ru, ja)
 LANG_EN = "en"
 LANG_FR = "fr"
 LANG_ES = "es"
-LANG_DE = "de"
-LANG_PT = "pt"
-LANG_DA = "da"
-LANG_NL = "nl"
-LANG_FI = "fi"
-LANG_HI = "hi"
-LANG_NB = "nb"  # Norwegian Bokmål (OS "no" locales map here)
+LANG_AR = "ar"
 LANG_RU = "ru"
-LANG_SV = "sv"
+LANG_JA = "ja"
 
 DEFAULT_LANGUAGE = LANG_EN
 
@@ -182,18 +176,32 @@ def unhide_language(code: str) -> None:
     update_settings(hidden_languages=hidden)
 
 
+def language_menu_label(code: str) -> str:
+    """Native name for menus, with Latin/English display when it differs."""
+    ensure_catalogs_loaded()
+    c = _normalize_lang_code(code)
+    if not c or c == LANG_EN:
+        return LANGUAGES.get(LANG_EN, "English")
+    native = language_native_name(c)
+    display = language_display_name(c)
+    if display and display.casefold() != native.casefold():
+        return f"{native} ({display})"
+    return native
+
+
 def effective_languages() -> dict[str, str]:
     """Visible languages for the Language menu (English first, then others)."""
     ensure_catalogs_loaded()
     hidden = set(hidden_language_codes())
-    out: dict[str, str] = {LANG_EN: LANGUAGES.get(LANG_EN, "English")}
+    out: dict[str, str] = {LANG_EN: language_menu_label(LANG_EN)}
     others = [
-        (code, label)
-        for code, label in LANGUAGES.items()
+        (code, language_menu_label(code), language_display_name(code))
+        for code in LANGUAGES
         if code != LANG_EN and code not in hidden
     ]
-    others.sort(key=lambda kv: kv[1].casefold())
-    for code, label in others:
+    # Sort by Latin/English display so script-only natives stay findable.
+    others.sort(key=lambda item: item[2].casefold())
+    for code, label, _display in others:
         out[code] = label
     return out
 
@@ -521,15 +529,9 @@ def detect_os_language() -> str:
                 0x09: LANG_EN,
                 0x0C: LANG_FR,
                 0x0A: LANG_ES,
-                0x07: LANG_DE,
-                0x16: LANG_PT,
-                0x06: LANG_DA,
-                0x13: LANG_NL,
-                0x0B: LANG_FI,
-                0x39: LANG_HI,
-                0x14: LANG_NB,
+                0x01: LANG_AR,
                 0x19: LANG_RU,
-                0x1D: LANG_SV,
+                0x11: LANG_JA,
             }
             mapped = win_map.get(primary)
             if mapped and (
@@ -587,24 +589,12 @@ def detect_os_language() -> str:
             mapped = LANG_FR
         elif code.startswith("es"):
             mapped = LANG_ES
-        elif code.startswith("de"):
-            mapped = LANG_DE
-        elif code.startswith("pt"):
-            mapped = LANG_PT
-        elif code.startswith("da"):
-            mapped = LANG_DA
-        elif code.startswith("nl"):
-            mapped = LANG_NL
-        elif code.startswith("fi"):
-            mapped = LANG_FI
-        elif code.startswith("hi"):
-            mapped = LANG_HI
-        elif code.startswith("nb") or code.startswith("nn") or code.startswith("no"):
-            mapped = LANG_NB
+        elif code.startswith("ar"):
+            mapped = LANG_AR
         elif code.startswith("ru"):
             mapped = LANG_RU
-        elif code.startswith("sv"):
-            mapped = LANG_SV
+        elif code.startswith("ja"):
+            mapped = LANG_JA
         elif code.startswith("en"):
             mapped = LANG_EN
         if mapped and (

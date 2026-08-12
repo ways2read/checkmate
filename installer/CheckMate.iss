@@ -17,7 +17,7 @@
 
 #define MyAppName "CheckMate"
 #define MyAppFullName "CheckMate"
-#define MyAppVersion "0.7.27"
+#define MyAppVersion "0.7.28"
 #define MyAppPublisher "ways2read"
 #define MyAppURL "https://github.com/ways2read/checkmate"
 #define MyAppExeName "CheckMate.exe"
@@ -133,6 +133,9 @@ Root: HKA; Subkey: "Software\Classes\.ebrl\OpenWithProgids"; \
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ebrl\shell\CheckMateValidate"; \
   ValueType: string; ValueName: ""; ValueData: "Validate with CheckMate"; \
   Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ebrl\shell\CheckMateValidate"; \
+  ValueType: string; ValueName: "Icon"; ValueData: "{app}\CheckMate.ico,0"; \
+  Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ebrl\shell\CheckMateValidate\command"; \
   ValueType: string; ValueName: ""; \
   ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc
@@ -159,6 +162,9 @@ Root: HKA; Subkey: "Software\Classes\.epub\OpenWithProgids"; \
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.epub\shell\CheckMateValidate"; \
   ValueType: string; ValueName: ""; ValueData: "Validate with CheckMate"; \
   Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.epub\shell\CheckMateValidate"; \
+  ValueType: string; ValueName: "Icon"; ValueData: "{app}\CheckMate.ico,0"; \
+  Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.epub\shell\CheckMateValidate\command"; \
   ValueType: string; ValueName: ""; \
   ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc
@@ -185,6 +191,9 @@ Root: HKA; Subkey: "Software\Classes\.pdf\OpenWithProgids"; \
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\CheckMateValidate"; \
   ValueType: string; ValueName: ""; ValueData: "Validate with CheckMate"; \
   Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\CheckMateValidate"; \
+  ValueType: string; ValueName: "Icon"; ValueData: "{app}\CheckMate.ico,0"; \
+  Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\CheckMateValidate\command"; \
   ValueType: string; ValueName: ""; \
   ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc

@@ -18,6 +18,7 @@ from .alt_assess import AltAssessResult, ask_alt_assess_followup
 from .alt_report import assessment_markdown_export, build_assessment_html
 from .alt_sample import assess_more_choice_labels
 from .explain import ExplainResult, error_message_for_key
+from .litellm_client import ai_libraries_status_message
 from .markdown_html import append_followup_markdown
 
 logger = logging.getLogger(__name__)
@@ -449,12 +450,12 @@ class AltAssessDialog(wx.Dialog):
         self._ai_cancel = cancel
         self._ai_progress = wx.ProgressDialog(
             _("Alt text health check"),
-            _("Loading AI libraries…"),
+            ai_libraries_status_message(),
             maximum=100,
             parent=self,
             style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
         )
-        _present_progress(self._ai_progress, _("Loading AI libraries…"))
+        _present_progress(self._ai_progress, ai_libraries_status_message())
         self._ai_progress_timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self._on_progress_timer, self._ai_progress_timer)
         self._ai_progress_timer.Start(200)

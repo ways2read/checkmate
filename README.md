@@ -85,13 +85,14 @@ support on Windows, macOS, and Linux.
   sounds, AI features) and the veraPDF PDF/UA profile (UA-1 or UA-2).
   eBraille always uses the `ebraille` EPUBCheck profile
 - Status bar shows installed checker versions, and Ace / Pipeline when detected
-- UI languages: English plus shipped catalogs (Français, Español, Deutsch,
-  Português, Dansk, Nederlands, Suomi, हिन्दी, Norsk, Русский, Svenska) and
-  user-added languages (remembered; first run follows the OS language when
-  supported; AI replies follow the selected language). Non-English languages
-  can be managed from the Language menu (edit strings, AI update/regenerate,
-  export, or hide until re-added). Catalogs use the `checkmate-ui-i18n` JSON
-  format (including LTR/RTL direction).
+- UI languages: English plus shipped catalogs (Français, Español, العربية,
+  Русский, 日本語) and user-added languages (remembered; first run follows the
+  OS language when supported; AI replies follow the selected language). Users
+  can generate additional catalogs in-app; validated ones may be added to the
+  installer later. Non-English languages can be managed from the Language menu
+  (edit strings, AI update/regenerate, export, or hide until re-added).
+  Catalogs use the `checkmate-ui-i18n` JSON format (including LTR/RTL
+  direction).
 - Downloads eBraille Checker and EPUBCheck on first run when not bundled;
   downloads veraPDF on first PDF check when not bundled
 - In-app update check for all tools; updates install to application data and

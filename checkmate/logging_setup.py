@@ -94,6 +94,17 @@ def configure_logging(*, level: int = logging.DEBUG) -> None:
         "Logging started → %s (CheckMate %s)", path, __version__
     )
 
-    # LiteLLM / HTTP stacks are extremely noisy at DEBUG.
-    for noisy in ("LiteLLM", "litellm", "httpx", "httpcore", "openai"):
+    # LiteLLM / HTTP stacks are extremely noisy at DEBUG. COM probes from
+    # accessible_output2 also spam "Failed to load" when JAWS/etc. are absent.
+    for noisy in (
+        "LiteLLM",
+        "litellm",
+        "httpx",
+        "httpcore",
+        "openai",
+        "urllib3",
+        "urllib3.connectionpool",
+        "libloader",
+        "libloader.com",
+    ):
         logging.getLogger(noisy).setLevel(logging.WARNING)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import platform
+import threading
 import time
 
 logger = logging.getLogger("checkmate.accessibility")
@@ -82,13 +83,37 @@ class ScreenReaderProvider:
 
 
 _instance: ScreenReaderProvider | None = None
+_init_lock = threading.Lock()
+_init_started = False
 
 
 def _provider() -> ScreenReaderProvider:
     global _instance
-    if _instance is None:
-        _instance = ScreenReaderProvider()
-    return _instance
+    with _init_lock:
+        if _instance is None:
+            _instance = ScreenReaderProvider()
+        return _instance
+
+
+def schedule_screen_reader_init() -> None:
+    """Probe NVDA/JAWS/SAPI on a worker so the first announce does not stall wx."""
+    global _init_started
+    if platform.system() != "Windows":
+        return
+    with _init_lock:
+        if _instance is not None or _init_started:
+            return
+        _init_started = True
+
+    def work() -> None:
+        try:
+            _provider()
+        except Exception:
+            logger.debug("Background screen-reader init failed", exc_info=True)
+
+    threading.Thread(
+        target=work, daemon=True, name="checkmate-screen-reader-init"
+    ).start()
 
 
 def speak(text: str, interrupt: bool = False) -> None:

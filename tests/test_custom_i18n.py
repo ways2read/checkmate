@@ -48,9 +48,12 @@ def _sample_catalog(
 
 
 def test_packaged_locales_load(tmp_i18n: Path) -> None:
-    assert i18n.is_shipped_language("fr")
-    assert "fr" in i18n.effective_languages()
+    for code in ("fr", "es", "ar", "ru", "ja"):
+        assert i18n.is_shipped_language(code)
+        assert code in i18n.effective_languages()
     assert i18n.get_text_direction("fr") == "ltr"
+    assert i18n.get_text_direction("ja") == "ltr"
+    assert i18n.get_text_direction("ar") == "rtl"
     catalog = i18n.read_catalog("fr")
     assert catalog is not None
     assert catalog["direction"] == "ltr"
@@ -62,8 +65,10 @@ def test_install_and_effective_languages(tmp_i18n: Path) -> None:
     assert code == "it"
     assert i18n.is_custom_language("it")
     assert "it" in i18n.effective_languages()
-    assert i18n.effective_languages()["it"] == "Italiano"
+    assert i18n.effective_languages()["it"] == "Italiano (Italian)"
     assert i18n.language_display_name("it") == "Italian"
+    assert i18n.language_menu_label("it") == "Italiano (Italian)"
+    assert i18n.language_menu_label("en") == "English"
     assert i18n._TRANSLATIONS["it"]["Close"] == "Chiudi"
     assert i18n.get_text_direction("it") == "ltr"
 

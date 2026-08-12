@@ -34,7 +34,8 @@ UI_LANGUAGE_PRESETS: list[tuple[str, str, str, str]] = [
     ("cs", "Čeština", "Czech", "ltr"),
     ("tr", "Türkçe", "Turkish", "ltr"),
     ("zh-hans", "简体中文", "Chinese (Simplified)", "ltr"),
-    ("ar", "العربية", "Arabic", "rtl"),
+    ("de", "Deutsch", "German", "ltr"),
+    ("pt", "Português", "Portuguese", "ltr"),
     ("he", "עברית", "Hebrew", "rtl"),
 ]
 
