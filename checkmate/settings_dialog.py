@@ -8,9 +8,12 @@ from .fido_settings import fido_settings_present
 from .i18n import _
 from .settings import (
     DEFAULT_EPUB_CHECKERS,
+    DEFAULT_SOUND_SCHEME,
     DEFAULT_VERAPDF_FLAVOUR,
     EPUB_CHECKERS,
     EPUB_CHECKERS_LABELS,
+    SOUND_SCHEME_LABELS,
+    SOUND_SCHEMES,
     VERAPDF_FLAVOUR_LABELS,
     VERAPDF_FLAVOURS,
     ai_features_enabled,
@@ -18,7 +21,7 @@ from .settings import (
     epub_checkers,
     show_issues_always,
     single_instance_enabled,
-    sounds_enabled,
+    sound_scheme,
     update_settings,
     verapdf_flavour,
 )
@@ -46,15 +49,28 @@ class SettingsDialog(wx.Dialog):
         )
         general.Add(self.show_issues_cb, 0, wx.ALL, 6)
 
-        self.sounds_cb = wx.CheckBox(self, label=_("Play completion sounds"))
-        self.sounds_cb.SetValue(sounds_enabled())
-        self.sounds_cb.SetToolTip(
+        sounds_hint = wx.StaticText(self, label=_("Sounds:"))
+        general.Add(sounds_hint, 0, wx.LEFT | wx.RIGHT | wx.TOP, 6)
+        self.sound_choice = wx.Choice(self)
+        self._sound_values: list[str] = []
+        current_sound = sound_scheme()
+        select_sound = 0
+        for i, code in enumerate(SOUND_SCHEMES):
+            label = _(SOUND_SCHEME_LABELS.get(code, code))
+            self.sound_choice.Append(label)
+            self._sound_values.append(code)
+            if code == current_sound:
+                select_sound = i
+        self.sound_choice.SetSelection(select_sound)
+        self.sound_choice.SetName(_("Sounds"))
+        self.sound_choice.SetToolTip(
             _(
-                "Play a short sound when a check finishes "
-                "(different tones for passed and failed)"
+                "Play short sounds when a check starts and when it finishes "
+                "(different tones for passed and failed). "
+                "Choose a scheme or turn sounds off."
             )
         )
-        general.Add(self.sounds_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+        general.Add(self.sound_choice, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
 
         self.single_instance_cb = wx.CheckBox(
             self, label=_("Allow only one window")
@@ -168,6 +184,12 @@ class SettingsDialog(wx.Dialog):
         ai_on = bool(self.ai_cb.IsEnabled() and self.ai_cb.GetValue())
         self.kb_body_cb.Enable(ai_on)
 
+    def selected_sound_scheme(self) -> str:
+        idx = self.sound_choice.GetSelection()
+        if 0 <= idx < len(self._sound_values):
+            return self._sound_values[idx]
+        return DEFAULT_SOUND_SCHEME
+
     def selected_epub_checkers(self) -> str:
         idx = self.epub_choice.GetSelection()
         if 0 <= idx < len(self._epub_values):
@@ -184,7 +206,7 @@ class SettingsDialog(wx.Dialog):
         """Persist dialog values to settings.json."""
         kwargs: dict = {
             "show_issues_always": bool(self.show_issues_cb.GetValue()),
-            "sounds_enabled": bool(self.sounds_cb.GetValue()),
+            "sound_scheme": self.selected_sound_scheme(),
             "single_instance": bool(self.single_instance_cb.GetValue()),
             "epub_checkers": self.selected_epub_checkers(),
             "verapdf_flavour": self.selected_verapdf_flavour(),

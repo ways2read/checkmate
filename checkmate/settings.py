@@ -25,6 +25,15 @@ EPUB_CHECKERS_LABELS: dict[str, str] = {
 }
 DEFAULT_EPUB_CHECKERS = "both"
 
+# Check completion chimes (files: check-started/passed/failed-{n}.wav).
+SOUND_SCHEMES: tuple[str, ...] = ("1", "2", "off")
+SOUND_SCHEME_LABELS: dict[str, str] = {
+    "1": "Sound scheme 1",
+    "2": "Sound scheme 2",
+    "off": "Sounds off",
+}
+DEFAULT_SOUND_SCHEME = "1"
+
 
 def settings_path() -> Path:
     return app_data_dir() / "settings.json"
@@ -44,10 +53,23 @@ def read_settings() -> dict[str, Any]:
 def update_settings(**kwargs: Any) -> None:
     path = settings_path()
     data = read_settings()
+    # Persist legacy sounds_enabled as sound_scheme before dropping the old key.
+    if (
+        "sound_scheme" not in kwargs
+        and "sound_scheme" not in data
+        and "sounds_enabled" in data
+    ):
+        kwargs = {
+            **kwargs,
+            "sound_scheme": (
+                DEFAULT_SOUND_SCHEME if data.get("sounds_enabled", True) else "off"
+            ),
+        }
     data.update(kwargs)
     # Drop obsolete keys from earlier builds.
     data.pop("select_result_on_focus", None)
     data.pop("epubcheck_profile", None)
+    data.pop("sounds_enabled", None)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
@@ -89,9 +111,30 @@ def show_issues_always() -> bool:
     return bool(read_settings().get("show_issues_always", False))
 
 
+def sound_scheme() -> str:
+    """Selected UI sound scheme (``1``, ``2``, or ``off``).
+
+    Defaults to scheme 1. Migrates the legacy ``sounds_enabled`` boolean:
+    False → ``off``, True/missing → ``1``.
+    """
+    data = read_settings()
+    value = str(data.get("sound_scheme", "")).strip()
+    if value in SOUND_SCHEMES:
+        return value
+    if "sounds_enabled" in data:
+        return DEFAULT_SOUND_SCHEME if data.get("sounds_enabled", True) else "off"
+    return DEFAULT_SOUND_SCHEME
+
+
+def sound_scheme_label(scheme: str | None = None) -> str:
+    """Human label for a sound scheme (e.g. ``Sound scheme 1``)."""
+    key = scheme if scheme is not None else sound_scheme()
+    return SOUND_SCHEME_LABELS.get(key, key)
+
+
 def sounds_enabled() -> bool:
-    """True when check completion sound effects should play (default on)."""
-    return bool(read_settings().get("sounds_enabled", True))
+    """True when a sound scheme other than ``off`` is selected."""
+    return sound_scheme() != "off"
 
 
 def single_instance_enabled() -> bool:

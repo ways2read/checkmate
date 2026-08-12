@@ -6985,6 +6985,12 @@ class MainFrame(wx.Frame):
             return
 
         self._set_busy(True)
+        try:
+            from .sounds import play_started_sound
+
+            play_started_sound()
+        except Exception:
+            pass
         # Quiet focus so screen readers announce "Checking…".
         self._show_result_text(
             _("Checking…"), title=_("Checking…"), focus=True

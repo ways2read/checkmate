@@ -81,8 +81,8 @@ support on Windows, macOS, and Linux.
   of a PDF; reports and the result pane name the validation profile / ruleset
   that ran (PDF/UA, ebraille, Ace axe-core); **Clear results**
   returns to the launch state
-- **Tools → Settings…**: general preferences (show issues always, completion
-  sounds, AI features) and the veraPDF PDF/UA profile (UA-1 or UA-2).
+- **Tools → Settings…**: general preferences (show issues always, sound
+  scheme, AI features) and the veraPDF PDF/UA profile (UA-1 or UA-2).
   eBraille always uses the `ebraille` EPUBCheck profile
 - Status bar shows installed checker versions, and Ace / Pipeline when detected
 - UI languages: English plus shipped catalogs (Français, Español, العربية,
@@ -169,8 +169,9 @@ uv run checkmate
    to the summary; expand **Show issues** to review the list (filterable), or enable
    **Show issues always** under **Tools → Settings…** to open the list automatically
    after checks that find issues.
-   A short completion sound plays when the check finishes (passed vs failed);
-   turn that off under **Tools → Settings…**.
+   Short sounds play when a check starts and when it finishes (passed vs
+   failed); choose **Sound scheme 1**, **Sound scheme 2**, or **Sounds off**
+   under **Tools → Settings…**.
 3. Use **Report → View full log** (`Ctrl+L`) only when you need the raw
    checker output.
 4. **Tools → Re-check publication** (`F5`) re-runs the current path after you
@@ -225,7 +226,7 @@ Under that folder:
 - `checker/` — downloaded or updated eBraille Checker releases
 - `epubcheck/` — downloaded or updated EPUBCheck releases
 - `verapdf/` — downloaded or updated veraPDF CLI installs
-- `settings.json` — remembered UI language and preferences (e.g. Show issues always, Play completion sounds, veraPDF profile, hidden languages)
+- `settings.json` — remembered UI language and preferences (e.g. Show issues always, sound scheme, veraPDF profile, hidden languages)
 - `i18n/` — editable UI language catalogs (`checkmate-ui-i18n` JSON overlays)
 
 Packaged builds also include `checker/`, `epubcheck/`, and `verapdf/` beside the
