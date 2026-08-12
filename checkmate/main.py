@@ -7897,6 +7897,15 @@ class MainFrame(wx.Frame):
 
         counts = export.counts()
         choice_rows = sample_choice_labels(counts["total"])
+        if not choice_rows:
+            return
+        # Small exports only offer "assess all" — skip the redundant picker.
+        if len(choice_rows) == 1:
+            _label, mode, percent = choice_rows[0]
+            percent = percent if percent is not None else 100
+            self._start_alt_assess(folder, mode=mode, percent=percent, prior=None)
+            return
+
         choices = [label for label, _mode, _pct in choice_rows]
         # Prefer 25% as the default selection when available.
         default_sel = 0
@@ -8043,12 +8052,21 @@ class MainFrame(wx.Frame):
 
         dlg = AltAssessDialog(self, result=out)
         self._alt_assess_dialog = dlg
-        dlg.ShowModal()
-        self._alt_assess_dialog = None
         try:
-            dlg.Destroy()
-        except RuntimeError:
-            pass
+            dlg.ShowModal()
+        finally:
+            self._alt_assess_dialog = None
+            try:
+                dlg.Destroy()
+            except RuntimeError:
+                pass
+            # Defer re-enable: EndModal + WebView2 teardown can leave the frame
+            # disabled for a tick if Enable runs in the same stack frame.
+            wx.CallAfter(self._reenable_after_alt_assess)
+            # Second pass after Edge HWND teardown (follow-up → Save → Close).
+            wx.CallLater(150, self._reenable_after_alt_assess)
+
+    def _reenable_after_alt_assess(self) -> None:
         try:
             self.Enable(True)
             self.Raise()

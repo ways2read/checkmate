@@ -759,6 +759,12 @@ _WEBVIEW_TAB_EXIT_JS = """
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
+      // Prefer closing an in-page lightbox (alt report) before the host dialog.
+      var modal = document.getElementById('imageModal');
+      if (modal && modal.style.display === 'block') {
+        modal.style.display = 'none';
+        return;
+      }
       closeDialog();
       return;
     }

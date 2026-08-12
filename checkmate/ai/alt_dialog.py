@@ -29,7 +29,8 @@ _SCROLL_FOLLOWUP_JS = """
   var el = document.getElementById('cm-latest-followup');
   if (!el) return false;
   el.scrollIntoView({behavior: 'smooth', block: 'center'});
-  try { el.focus(); } catch (e) {}
+  // Do not el.focus() — moving keyboard focus into Edge WebView2 after
+  // SetPage can leave the host dialog/main frame unable to quit on Windows.
   return true;
 })();
 """
@@ -70,10 +71,12 @@ class AltAssessDialog(wx.Dialog):
         self._busy = False
         self._closing = False
         self._scroll_followup_after_load = False
+        self._paint_gen = 0
         self._ai_cancel: threading.Event | None = None
         self._ai_progress: wx.ProgressDialog | None = None
         self._ai_progress_timer: wx.Timer | None = None
         self._is_webview = False
+        self._close_btn: wx.Button | None = None
 
         root = wx.BoxSizer(wx.VERTICAL)
         heading = wx.StaticText(self, label=_("Alt text health check"))
@@ -98,7 +101,6 @@ class AltAssessDialog(wx.Dialog):
         self.followup_ctrl = wx.TextCtrl(self, style=wx.TE_PROCESS_ENTER)
         self.ask_btn = wx.Button(self, label=_("Ask"))
         self.ask_btn.Enable(self._session is not None)
-        self.ask_btn.SetDefault()
         row.Add(self.followup_ctrl, 1, wx.RIGHT, 6)
         row.Add(self.ask_btn, 0)
         follow.Add(row, 0, wx.EXPAND)
@@ -123,6 +125,7 @@ class AltAssessDialog(wx.Dialog):
         footer = wx.BoxSizer(wx.HORIZONTAL)
         footer.AddStretchSpacer(1)
         close_btn = wx.Button(self, id=wx.ID_CLOSE, label=_("Close"))
+        self._close_btn = close_btn
         close_btn.Bind(wx.EVT_BUTTON, self._on_close_dialog)
         footer.Add(close_btn, 0)
         root.Add(footer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
@@ -141,10 +144,16 @@ class AltAssessDialog(wx.Dialog):
         self.SetSizer(root)
         self.CentreOnParent()
         self.SetEscapeId(wx.ID_CLOSE)
+        self.SetAffirmativeId(wx.ID_CLOSE)
+        close_btn.SetDefault()
         self._sync_assess_more_enabled()
 
         self._view: wx.Window | None = None
         self._realize_view()
+        # Keep Enter-in-follow-up working without making Ask the dialog default
+        # (Ask-as-default + WebView focus after follow-up can strand the frame).
+        self.followup_ctrl.Bind(wx.EVT_SET_FOCUS, self._on_followup_focus)
+        self.followup_ctrl.Bind(wx.EVT_KILL_FOCUS, self._on_followup_kill_focus)
 
     def apply_result(self, result: AltAssessResult) -> None:
         """Replace the displayed assessment (used after Assess more…)."""
@@ -165,6 +174,23 @@ class AltAssessDialog(wx.Dialog):
         self.assess_more_btn.Enable(
             (not self._busy) and self._remaining_count() > 0
         )
+
+    def _on_followup_focus(self, event: wx.FocusEvent) -> None:
+        event.Skip()
+        try:
+            self.ask_btn.SetDefault()
+        except RuntimeError:
+            pass
+
+    def _on_followup_kill_focus(self, event: wx.FocusEvent) -> None:
+        event.Skip()
+        btn = self._close_btn
+        if btn is None:
+            return
+        try:
+            btn.SetDefault()
+        except RuntimeError:
+            pass
 
     def _on_char_hook(self, event: wx.KeyEvent) -> None:
         if event.GetKeyCode() == wx.WXK_ESCAPE:
@@ -211,6 +237,9 @@ class AltAssessDialog(wx.Dialog):
         self._paint()
 
     def _on_navigating(self, event) -> None:
+        if self._closing:
+            event.Veto()
+            return
         url = (event.GetURL() or "").strip()
         if url.startswith("checkmate://"):
             event.Veto()
@@ -228,16 +257,24 @@ class AltAssessDialog(wx.Dialog):
 
     def _on_webview_loaded(self, event) -> None:
         event.Skip()
+        if self._closing:
+            return
         if self._scroll_followup_after_load and self._is_webview and self._view:
             self._scroll_followup_after_load = False
             try:
                 self._view.RunScript(_SCROLL_FOLLOWUP_JS)
             except Exception:
                 logger.debug("Could not scroll to follow-up", exc_info=True)
+            # Return keyboard focus to the follow-up field (wx), not Edge.
+            try:
+                self.followup_ctrl.SetFocus()
+            except RuntimeError:
+                pass
 
     def _paint(self, *, scroll_followup: bool = False) -> None:
         if not self._alive() or self._view is None:
             return
+        self._paint_gen += 1
         self._scroll_followup_after_load = bool(scroll_followup and self._is_webview)
         html_doc = self._current_html()
         if self._is_webview:
@@ -333,6 +370,8 @@ class AltAssessDialog(wx.Dialog):
         threading.Thread(target=work, daemon=True).start()
 
     def _on_followup_event(self, event: AltFollowupEvent) -> None:
+        if self._closing:
+            return
         self._close_progress()
         out = event.result
         if not out.ok:
@@ -358,6 +397,10 @@ class AltAssessDialog(wx.Dialog):
         self.followup_ctrl.SetValue("")
         self._set_busy(False)
         try:
+            self.followup_ctrl.SetFocus()
+        except RuntimeError:
+            pass
+        try:
             from ..telemetry import log_ai_alt_assess
 
             log_ai_alt_assess(followup=True)
@@ -378,23 +421,27 @@ class AltAssessDialog(wx.Dialog):
                 self,
             )
             return
-        choices = [label for label, _mode, _pct in rows]
-        dlg = wx.SingleChoiceDialog(
-            self,
-            _(
-                "Already assessed: {already} of {total}.\n"
-                "Choose additional coverage (previous results are kept):"
-            ).format(already=already, total=total),
-            _("Assess more"),
-            choices,
-        )
-        try:
-            if dlg.ShowModal() != wx.ID_OK:
-                return
-            _label, mode, percent = rows[dlg.GetSelection()]
+        if len(rows) == 1:
+            _label, mode, percent = rows[0]
             percent = percent if percent is not None else 100
-        finally:
-            dlg.Destroy()
+        else:
+            choices = [label for label, _mode, _pct in rows]
+            dlg = wx.SingleChoiceDialog(
+                self,
+                _(
+                    "Already assessed: {already} of {total}.\n"
+                    "Choose additional coverage (previous results are kept):"
+                ).format(already=already, total=total),
+                _("Assess more"),
+                choices,
+            )
+            try:
+                if dlg.ShowModal() != wx.ID_OK:
+                    return
+                _label, mode, percent = rows[dlg.GetSelection()]
+                percent = percent if percent is not None else 100
+            finally:
+                dlg.Destroy()
 
         folder = self._result.export.folder
         prior = self._result
@@ -493,6 +540,9 @@ class AltAssessDialog(wx.Dialog):
             )
 
     def _on_save_html(self, _event: wx.Event) -> None:
+        # Nested FileDialog + Edge WebView can leave focus inside the browser
+        # HWND; reclaim wx chrome before/after so Close/EndModal stays responsive.
+        self._focus_dialog_chrome()
         with wx.FileDialog(
             self,
             _("Save as HTML"),
@@ -501,6 +551,7 @@ class AltAssessDialog(wx.Dialog):
             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
         ) as dlg:
             if dlg.ShowModal() != wx.ID_OK:
+                self._focus_dialog_chrome()
                 return
             path = Path(dlg.GetPath())
             if not path.suffix:
@@ -517,8 +568,10 @@ class AltAssessDialog(wx.Dialog):
                     wx.OK | wx.ICON_ERROR,
                     self,
                 )
+        self._focus_dialog_chrome()
 
     def _on_save_md(self, _event: wx.Event) -> None:
+        self._focus_dialog_chrome()
         with wx.FileDialog(
             self,
             _("Save as Markdown"),
@@ -527,6 +580,7 @@ class AltAssessDialog(wx.Dialog):
             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
         ) as dlg:
             if dlg.ShowModal() != wx.ID_OK:
+                self._focus_dialog_chrome()
                 return
             path = Path(dlg.GetPath())
             if not path.suffix:
@@ -542,6 +596,7 @@ class AltAssessDialog(wx.Dialog):
                     wx.OK | wx.ICON_ERROR,
                     self,
                 )
+        self._focus_dialog_chrome()
 
     def _on_copy(self, _event: wx.Event) -> None:
         text = assessment_markdown_export(self._result)
@@ -551,6 +606,16 @@ class AltAssessDialog(wx.Dialog):
             finally:
                 wx.TheClipboard.Close()
 
+    def _focus_dialog_chrome(self) -> None:
+        """Move keyboard focus onto a wx control (never Edge WebView2)."""
+        try:
+            if self._close_btn is not None:
+                self._close_btn.SetFocus()
+            else:
+                self.SetFocus()
+        except RuntimeError:
+            pass
+
     def _on_close_dialog(self, event: wx.Event | None = None) -> None:
         # Same pattern as IssueDetailDialog / AltTextReportDialog: do not tear
         # down WebView2 inside navigating/key handlers.
@@ -559,13 +624,53 @@ class AltAssessDialog(wx.Dialog):
                 event.Veto()
             return
         self._closing = True
+        self._paint_gen += 1
+        self._scroll_followup_after_load = False
+        if self._ai_cancel is not None:
+            self._ai_cancel.set()
         self._close_progress()
+        self._release_webview()
         if isinstance(event, wx.CloseEvent):
             event.Veto()
+        # One more idle after release so Edge can drop the HWND before EndModal.
         wx.CallAfter(self._finish_close_dialog)
 
     def _on_close(self, event: wx.Event | None = None) -> None:
         self._on_close_dialog(event)
+
+    def _release_webview(self) -> None:
+        """Drop Edge focus and destroy the control before EndModal/Destroy.
+
+        Avoid blanking a large ``SetPage`` document here — that can freeze the
+        UI on Windows after follow-up / Save HTML. Destroying the WebView HWND
+        is faster and leaves focus on dialog chrome.
+        """
+        view = self._view
+        self._view = None
+        if view is None or not self._is_webview:
+            return
+        self._focus_dialog_chrome()
+        try:
+            view.Stop()
+        except Exception:
+            pass
+        try:
+            view.Hide()
+        except RuntimeError:
+            pass
+        try:
+            # Detach from the sizer so Destroy does not race Layout.
+            host = self._host
+            sizer = host.GetSizer() if host is not None else None
+            if sizer is not None:
+                sizer.Detach(view)
+        except Exception:
+            pass
+        try:
+            view.Destroy()
+        except RuntimeError:
+            pass
+        self._is_webview = False
 
     def _finish_close_dialog(self) -> None:
         try:

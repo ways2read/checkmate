@@ -13,6 +13,8 @@ from .alt_export import AltExport, AltExportImage
 from .alt_heuristics import HeuristicReport
 from .markdown_html import (
     _WEBVIEW_TAB_EXIT_SCRIPT,
+    _ai_browser_css,
+    _structure_ai_browser_body,
     markdown_to_body_html,
     with_ai_disclaimer,
 )
@@ -21,13 +23,21 @@ logger = logging.getLogger(__name__)
 
 # WebView2 SetPage blocks file:// image loads; embed data URIs instead.
 # Cache avoids re-encoding on follow-up repaints of the same report.
-_THUMB_CACHE: dict[tuple[str, int, int], str] = {}
+_THUMB_CACHE: dict[tuple[str, int, int, int], str] = {}
 _THUMB_MAX_EDGE = 160
 _THUMB_JPEG_QUALITY = 55
+# Larger preview for click-to-enlarge (still embedded; file:// blocked in WebView).
+_PREVIEW_MAX_EDGE = 800
+_PREVIEW_JPEG_QUALITY = 72
 
 
-def _thumb_data_uri(path: Path | None, *, max_edge: int = _THUMB_MAX_EDGE) -> str:
-    """Small JPEG data-URI suitable for WebView ``SetPage`` (not file://)."""
+def _thumb_data_uri(
+    path: Path | None,
+    *,
+    max_edge: int = _THUMB_MAX_EDGE,
+    jpg_quality: int = _THUMB_JPEG_QUALITY,
+) -> str:
+    """JPEG data-URI suitable for WebView ``SetPage`` (not file://)."""
     if path is None or not path.is_file():
         return ""
     try:
@@ -35,7 +45,7 @@ def _thumb_data_uri(path: Path | None, *, max_edge: int = _THUMB_MAX_EDGE) -> st
         mtime_ns = resolved.stat().st_mtime_ns
     except OSError:
         return ""
-    cache_key = (str(resolved), max_edge, mtime_ns)
+    cache_key = (str(resolved), max_edge, jpg_quality, mtime_ns)
     cached = _THUMB_CACHE.get(cache_key)
     if cached is not None:
         return cached
@@ -57,14 +67,16 @@ def _thumb_data_uri(path: Path | None, *, max_edge: int = _THUMB_MAX_EDGE) -> st
                 max(1, int(round(pix.width * scale))),
                 max(1, int(round(pix.height * scale))),
             )
-        data = pix.tobytes("jpeg", jpg_quality=_THUMB_JPEG_QUALITY)
+        data = pix.tobytes("jpeg", jpg_quality=jpg_quality)
         b64 = base64.standard_b64encode(data).decode("ascii")
         uri = f"data:image/jpeg;base64,{b64}"
     except Exception:
         logger.debug("Fast thumb encode failed for %s", resolved, exc_info=True)
         try:
             raw = resolved.read_bytes()
-            if len(raw) <= 200_000:
+            # Full-size embed only when small enough (fallback path).
+            limit = 200_000 if max_edge <= _THUMB_MAX_EDGE else 1_500_000
+            if len(raw) <= limit:
                 suffix = resolved.suffix.lower()
                 mime = {
                     ".jpg": "image/jpeg",
@@ -89,6 +101,36 @@ def _thumb_data_uri(path: Path | None, *, max_edge: int = _THUMB_MAX_EDGE) -> st
 def _thumb_src(path: Path | None, **_unused: object) -> str:
     """Always return an embedded data-URI (Edge WebView blocks file:// from SetPage)."""
     return _thumb_data_uri(path)
+
+
+def _clickable_thumb_html(
+    path: Path | None, *, full_preview: bool = False
+) -> str:
+    """Card thumbnail that opens a lightbox preview on click.
+
+    In the in-app WebView (*full_preview* False), reuse the small thumb for the
+    lightbox so follow-up ``SetPage`` / close teardown stay lightweight. Saved
+    or browser HTML embeds a larger JPEG preview.
+    """
+    thumb = _thumb_data_uri(path)
+    if not thumb:
+        return '<div class="no-thumb"></div>'
+    if full_preview:
+        full = (
+            _thumb_data_uri(
+                path, max_edge=_PREVIEW_MAX_EDGE, jpg_quality=_PREVIEW_JPEG_QUALITY
+            )
+            or thumb
+        )
+    else:
+        full = thumb
+    return (
+        f'<img src="{html.escape(thumb, quote=True)}" '
+        f'data-full-src="{html.escape(full, quote=True)}" '
+        f'alt="" width="120" height="90" loading="lazy" '
+        f'title="{html.escape(_("Click to enlarge"))}" '
+        f'onclick="openModal(this)">'
+    )
 
 
 
@@ -122,7 +164,7 @@ def _filter_bucket(a: AltImageAssessment) -> str:
     return "uncertain"
 
 
-def _stats_html(export: AltExport, result: AltAssessResult) -> str:
+def _stats_html(export: AltExport, result: AltAssessResult, *, title: str) -> str:
     counts = export.counts()
     reviewed = len(result.assessments)
     needs = sum(1 for a in result.assessments if a.verdict == "needs_attention")
@@ -136,20 +178,24 @@ def _stats_html(export: AltExport, result: AltAssessResult) -> str:
         (str(needs), _("Needs attention"), "needs" if needs else "ok"),
     ]
     parts = [
-        '<div class="stats">',
+        '<header class="doc-header">',
+        f'<p class="doc-eyebrow">{html.escape(_("Alt text"))}</p>',
+        f"<h1>{html.escape(title)}</h1>",
         f'<p class="meta"><strong>{html.escape(_("Document:"))}</strong> '
         f"{html.escape(export.document_name)}</p>",
         f'<p class="meta"><strong>{html.escape(_("Mode:"))}</strong> '
         f"{html.escape(mode)} — {reviewed}/{counts['total']}</p>",
+        "</header>",
+        '<div class="stat-row" role="group" '
+        f'aria-label="{html.escape(_("Image counts"))}">',
     ]
-    parts.append('<div class="stat-row">')
     for number, label, klass in boxes:
-        cls = f' stat-box {klass}'.strip() if klass else "stat-box"
+        cls = f"stat-box {klass}".strip() if klass else "stat-box"
         parts.append(
             f'<div class="{cls}"><div class="number">{html.escape(number)}</div>'
             f'<div class="label">{html.escape(label)}</div></div>'
         )
-    parts.append("</div></div>")
+    parts.append("</div>")
     return "\n".join(parts)
 
 
@@ -157,6 +203,8 @@ def _priority_cards_html(
     export: AltExport,
     assessments: list[AltImageAssessment],
     heuristics: HeuristicReport | None,
+    *,
+    full_preview: bool = False,
 ) -> str:
     by_index = {im.index: im for im in export.images}
     # Worst first
@@ -184,16 +232,12 @@ def _priority_cards_html(
 
     for a in sorted_a:
         im = by_index.get(a.index)
-        thumb = _thumb_src(im.image_path if im else None)
         bucket = _filter_bucket(a)
         heur_flags = ""
         if a.index in heur_by:
             heur_flags = ", ".join(heur_by[a.index].flags)
-        img_html = (
-            f'<img src="{html.escape(thumb, quote=True)}" alt="" width="120" '
-            f'height="90" loading="lazy">'
-            if thumb
-            else '<div class="no-thumb"></div>'
+        img_html = _clickable_thumb_html(
+            im.image_path if im else None, full_preview=full_preview
         )
         alt_preview = ""
         if im and im.alt_stripped:
@@ -314,120 +358,156 @@ _FILTER_JS = """
     });
   });
 })();
+function openModal(img) {
+  var modal = document.getElementById('imageModal');
+  var modalImg = document.getElementById('modalImage');
+  if (!modal || !modalImg || !img) return;
+  modalImg.src = img.getAttribute('data-full-src') || img.src;
+  modal.style.display = 'block';
+}
+function closeModal() {
+  var modal = document.getElementById('imageModal');
+  if (modal) modal.style.display = 'none';
+}
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Escape') return;
+  var modal = document.getElementById('imageModal');
+  if (modal && modal.style.display === 'block') {
+    e.preventDefault();
+    closeModal();
+  }
+});
 </script>
 """
 
-_CSS = """
-:root {
-  color-scheme: light dark;
-  --bg: #f7f7f5;
-  --fg: #1a1a1a;
-  --card: #fff;
-  --border: #d0d0cc;
-  --needs: #b42318;
-  --ok: #067647;
-  --caveat: #b54708;
-  --uncertain: #475467;
-  --muted: #667085;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #161616;
-    --fg: #f2f2f2;
-    --card: #222;
-    --border: #444;
-    --muted: #98a2b3;
-  }
-}
-body {
-  font-family: "Segoe UI", system-ui, sans-serif;
-  margin: 0;
-  padding: 1.25rem 1.5rem 2.5rem;
-  background: var(--bg);
-  color: var(--fg);
-  line-height: 1.45;
-}
-h1 { font-size: 1.45rem; margin: 0 0 0.75rem; }
-h2 { font-size: 1.15rem; margin: 1.5rem 0 0.75rem; }
-.disclaimer {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.75rem 1rem;
-  margin: 0 0 1rem;
-  background: var(--card);
-  font-size: 0.95rem;
-}
-.stats .meta { margin: 0.25rem 0; }
-.stat-row {
-  display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 0.75rem 0 1rem;
-}
-.stat-box {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.55rem 0.85rem;
-  min-width: 5.5rem;
-}
-.stat-box .number { font-size: 1.35rem; font-weight: 700; }
-.stat-box .label { font-size: 0.8rem; color: var(--muted); }
-.stat-box.needs .number { color: var(--needs); }
-.stat-box.ok .number { color: var(--ok); }
-.filters {
-  display: flex; flex-wrap: wrap; gap: 0.5rem 0.85rem;
-  align-items: center; margin: 0.5rem 0 1rem; font-size: 0.92rem;
-}
-.cards { display: flex; flex-direction: column; gap: 0.75rem; }
-.card {
-  display: flex; gap: 0.85rem;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.75rem;
-}
-.thumb img, .no-thumb {
-  width: 120px; height: 90px; object-fit: cover;
-  border-radius: 4px; background: #ddd; display: block;
-}
-.no-thumb { background: var(--border); }
-.body { flex: 1; min-width: 0; }
-.title { margin: 0 0 0.35rem; font-weight: 600; }
-.reason, .teaching, .alt, .flags, .note { margin: 0.25rem 0; }
-.teaching { color: var(--muted); font-size: 0.92rem; }
-.muted { color: var(--muted); }
-.badge {
-  display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px;
-  font-size: 0.78rem; font-weight: 700; color: #fff;
-}
-.badge.needs { background: var(--needs); }
-.badge.ok { background: var(--ok); }
-.badge.caveat { background: var(--caveat); }
-.badge.uncertain { background: var(--uncertain); }
-.synthesis { margin-top: 0.5rem; }
-.synthesis h2:first-child { margin-top: 0; }
-.chat-bubble.chat-user {
-  background: #dbeafe;
-  color: #0f172a;
-  border: 1px solid #93c5fd;
-  border-radius: 0.75rem;
-  padding: 0.65rem 0.85rem;
-  margin: 0.75rem 0;
-  max-width: 40rem;
-}
-.chat-bubble.chat-user .chat-user-label {
-  display: block;
-  font-size: 0.75rem;
-  font-weight: 700;
-  margin-bottom: 0.25rem;
-  opacity: 0.8;
-}
-.chat-bubble.chat-user p { margin: 0; }
-@media (prefers-color-scheme: dark) {
-  .chat-bubble.chat-user {
-    background: #1e3a5f;
-    color: #e2e8f0;
-    border-color: #3b82f6;
-  }
-}
+_IMAGE_MODAL_HTML = """
+<div id="imageModal" class="modal" onclick="closeModal()" role="dialog" aria-modal="true">
+  <span class="modal-close" onclick="closeModal()" aria-label="Close">&times;</span>
+  <img class="modal-content" id="modalImage" alt="" onclick="event.stopPropagation()">
+</div>
+"""
+
+_ALT_ASSESS_EXTRA_CSS = """
+    /* Wider than overview/explain so thumbnail cards breathe. */
+    main.alt-assess {
+      max-width: 54rem;
+    }
+    .doc-header .meta {
+      margin: 0.35rem 0 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+      font-weight: 500;
+    }
+    .doc-header .meta strong {
+      color: var(--ink);
+      font-weight: 700;
+    }
+    .stat-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin: 0 0 1.25rem;
+    }
+    .stat-box {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 0.55rem 0.85rem;
+      min-width: 5.5rem;
+    }
+    .stat-box .number {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--ink);
+    }
+    .stat-box .label {
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+    .stat-box.needs .number { color: #b42318; }
+    .stat-box.ok .number { color: #067647; }
+    @media (prefers-color-scheme: dark) {
+      .stat-box.needs .number { color: #fca5a5; }
+      .stat-box.ok .number { color: #86efac; }
+    }
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 0.85rem;
+      align-items: center;
+      margin: 0.5rem 0 1rem;
+      font-size: 0.92rem;
+    }
+    .cards {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .card {
+      display: flex;
+      gap: 0.85rem;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 0.75rem;
+    }
+    .thumb img, .no-thumb {
+      width: 120px;
+      height: 90px;
+      object-fit: cover;
+      border-radius: 0.35rem;
+      background: var(--line);
+      display: block;
+    }
+    .thumb img { cursor: pointer; }
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 99;
+      inset: 0;
+      background: rgba(0,0,0,.85);
+    }
+    .modal-content {
+      max-width: 90%;
+      max-height: 90%;
+      margin: 5vh auto;
+      display: block;
+      object-fit: contain;
+    }
+    .modal-close {
+      position: absolute;
+      top: 16px;
+      right: 28px;
+      color: #fff;
+      font-size: 2em;
+      cursor: pointer;
+      line-height: 1;
+    }
+    .body { flex: 1; min-width: 0; }
+    .title { margin: 0 0 0.35rem; font-weight: 600; }
+    .reason, .teaching, .alt, .flags, .note { margin: 0.25rem 0; }
+    .teaching { color: var(--muted); font-size: 0.92rem; }
+    .muted { color: var(--muted); }
+    .badge {
+      display: inline-block;
+      padding: 0.1rem 0.45rem;
+      border-radius: 0.3rem;
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #fff;
+    }
+    .badge.needs { background: #b42318; }
+    .badge.ok { background: #067647; }
+    .badge.caveat { background: #b54708; }
+    .badge.uncertain { background: #475467; }
+    .synthesis { margin-top: 0.25rem; }
+    .synthesis > h2:first-child,
+    .synthesis > aside.ai-note + h2 {
+      margin-top: 0.75rem;
+    }
+    .priority { margin-top: 1.5rem; }
 """
 
 
@@ -439,10 +519,19 @@ def build_assessment_html(result: AltAssessResult, *, for_dialog: bool = True) -
 
     title = _("Alt text health check")
     synth_md = with_ai_disclaimer(result.text or "")
-    # Split disclaimer from body for layout: with_ai_disclaimer prepends a block
-    synth_body = markdown_to_body_html(synth_md, for_dialog=for_dialog)
+    # Same markdown → HTML path as overview/explain, including aside.ai-note.
+    synth_body = _structure_ai_browser_body(
+        markdown_to_body_html(synth_md, for_dialog=False)
+    )
     lang = html.escape(get_language())
     direction = html.escape(get_text_direction())
+    body_attrs = ' tabindex="-1"' if for_dialog else ""
+    footer = ""
+    if not for_dialog:
+        footer = (
+            f'<footer class="doc-footer">'
+            f'{html.escape(_("Generated by CheckMate"))}</footer>'
+        )
 
     parts = [
         "<!DOCTYPE html>",
@@ -450,16 +539,25 @@ def build_assessment_html(result: AltAssessResult, *, for_dialog: bool = True) -
         "<head>",
         '<meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        '<meta name="color-scheme" content="light dark">',
         f"<title>{html.escape(title)}</title>",
-        f"<style>{_CSS}</style>",
+        f"<style>{_ai_browser_css()}\n{_ALT_ASSESS_EXTRA_CSS}</style>",
         "</head>",
-        "<body>",
-        f"<h1>{html.escape(title)}</h1>",
-        _stats_html(export, result),
+        f"<body{body_attrs}>",
+        '<main class="alt-assess">',
+        _stats_html(export, result, title=title),
         f'<section class="synthesis" aria-label="{html.escape(_("Assessment summary"))}">',
         synth_body,
         "</section>",
-        _priority_cards_html(export, result.assessments, result.heuristics),
+        _priority_cards_html(
+            export,
+            result.assessments,
+            result.heuristics,
+            full_preview=not for_dialog,
+        ),
+        footer,
+        "</main>",
+        _IMAGE_MODAL_HTML,
         _FILTER_JS,
         _WEBVIEW_TAB_EXIT_SCRIPT if for_dialog else "",
         "</body></html>",

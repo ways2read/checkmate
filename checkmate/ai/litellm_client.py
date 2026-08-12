@@ -141,6 +141,28 @@ def configure_litellm_defaults() -> None:
     _CONFIGURED = True
 
 
+# LiteLLM 1.95+ picks Google AI Studio ``v1alpha`` for Gemini 3+; that returns
+# 403 for many consumer API keys. Google's public docs and Fido's native
+# Gemini client use ``v1beta``.
+_GEMINI_AI_STUDIO_V1BETA_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+
+def _force_native_gemini3_v1beta_api_base(out: dict[str, Any]) -> None:
+    """Override LiteLLM's Gemini 3 → v1alpha default when no custom api_base is set."""
+    if out.get("api_base"):
+        return
+    model = out.get("model")
+    if not isinstance(model, str):
+        return
+    m = model.lower().strip()
+    # Native Google AI Studio only (not openrouter/, vertex_ai/, …).
+    if not m.startswith("gemini/"):
+        return
+    if not re.search(r"gemini-3\b", m):
+        return
+    out["api_base"] = _GEMINI_AI_STUDIO_V1BETA_BASE
+
+
 def completion_output_kwargs(model: str | None, max_tokens: int) -> dict[str, Any]:
     """
     Build output-limit kwargs for ``litellm.completion``.
@@ -217,12 +239,15 @@ def litellm_completion(**kwargs: Any) -> Any:
             merged.update(extra["extra_body"])
             out["extra_body"] = merged
 
+    _force_native_gemini3_v1beta_api_base(out)
+
     logger.debug(
-        "litellm.completion model=%s timeout=%s max_tokens=%s max_completion_tokens=%s",
+        "litellm.completion model=%s timeout=%s max_tokens=%s max_completion_tokens=%s api_base=%s",
         out.get("model"),
         out.get("timeout"),
         out.get("max_tokens"),
         out.get("max_completion_tokens"),
+        out.get("api_base"),
     )
     return mod.completion(**out)
 
@@ -338,11 +363,46 @@ def log_completion_cost(
     return data
 
 
+def _sanitize_provider_error_detail(detail: str) -> str:
+    """Turn Google/LiteLLM HTML error pages into a short readable message."""
+    text = (detail or "").strip()
+    if not text:
+        return text
+    lower = text.lower()
+    # Google often returns a full HTML 403 page via LiteLLM.
+    if "<!doctype html" in lower or "<html" in lower:
+        m = re.search(
+            r"does not have permission to get URL\s*<code>([^<]+)</code>",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if m:
+            path = m.group(1).strip()
+            return (
+                f"Google AI returned HTTP 403 Forbidden for {path}. "
+                "Check the API key, billing/quota for this Google project, "
+                "and whether a VPN or network policy is blocking Gemini."
+            )
+        if "403" in text or "forbidden" in lower:
+            return (
+                "Google AI returned HTTP 403 Forbidden. "
+                "Check the API key, billing/quota for this Google project, "
+                "and whether a VPN or network policy is blocking Gemini."
+            )
+        # Avoid dumping huge HTML into MessageBox / logs consumers.
+        return "AI provider returned an HTML error page (request was rejected)."
+    # Truncate extreme noise while keeping useful API messages.
+    if len(text) > 800:
+        return text[:797] + "…"
+    return text
+
+
 def classify_provider_error(exc: BaseException) -> tuple[str, str]:
     """Map a provider/LiteLLM exception to (error_key, detail)."""
-    detail = str(exc) or type(exc).__name__
+    detail = _sanitize_provider_error_detail(str(exc) or type(exc).__name__)
     name = type(exc).__name__.lower()
     msg = detail.lower()
+    raw = (str(exc) or "").lower()
 
     timeout_type = False
     mod = _litellm
@@ -374,6 +434,8 @@ def classify_provider_error(exc: BaseException) -> tuple[str, str]:
         return "no_key", detail
     if "connection" in msg or "connect" in msg or "name or service not known" in msg:
         return "network", detail
+    if "403" in raw or "forbidden" in raw:
+        return "provider_error", detail
     return "provider_error", detail
 
 
