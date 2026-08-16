@@ -55,8 +55,10 @@ VOL_LABEL="CheckMate"
 MOUNT_PT=""
 
 APP_SZ="$(/usr/bin/du -sm "$APP_BUNDLE" | /usr/bin/awk '{print $1}')"
-SIZE_MB=$((APP_SZ + 64))
+# HFS+ slack: APFS-compressed trees (Ace/Node headers) expand, plus background/icons.
+SIZE_MB=$((APP_SZ + APP_SZ / 4 + 256))
 [[ "$SIZE_MB" -lt 256 ]] && SIZE_MB=256
+echo "DMG working size: ${SIZE_MB}m (app is ${APP_SZ}m)"
 
 rm -f "$DMG_RW" "$DMG_OUT"
 
@@ -91,7 +93,12 @@ else
   /usr/bin/sips --resampleHeightWidth 400 660 "$BG" --out "$MOUNT_PT/.background/background.png"
 fi
 
-/bin/cp -R "$APP_BUNDLE" "$MOUNT_PT/"
+/usr/bin/ditto "$APP_BUNDLE" "$MOUNT_PT/CheckMate.app"
+COPIED_SZ="$(/usr/bin/du -sm "$MOUNT_PT/CheckMate.app" | /usr/bin/awk '{print $1}')"
+if [[ "$COPIED_SZ" -lt $((APP_SZ * 9 / 10)) ]]; then
+  echo "ERROR: copied app is ${COPIED_SZ}m on the DMG (source ${APP_SZ}m). Increase SIZE_MB."
+  exit 1
+fi
 /bin/ln -sf /Applications "$MOUNT_PT/Applications"
 
 README_SRC="${EBC_DMG_README:-$REPO_ROOT/packaging/macos/dmg_README.txt}"

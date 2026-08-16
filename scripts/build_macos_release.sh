@@ -111,6 +111,35 @@ codesign_mach_o_under() {
   done <<< "$sorted"
 }
 
+# Sign nested .app / .framework / .xpc bundles deepest-first (Chrome for Testing
+# helpers live under Contents/ace). Mach-O insides should already be signed.
+codesign_nested_bundles_under() {
+  local dir="$1"
+  local id="$2"
+  local ent="$3"
+  [[ -d "$dir" ]] || return 0
+  local b
+  local sorted
+  sorted="$(
+    /usr/bin/find "$dir" \( -name '*.app' -o -name '*.framework' -o -name '*.xpc' -o -name '*.appex' \) -print \
+      | /usr/bin/awk '{ print gsub(/\//,"/",$0), $0 }' \
+      | /usr/bin/sort -nr \
+      | /usr/bin/awk '{ $1=""; sub(/^ /,""); print }'
+  )"
+  while IFS= read -r b; do
+    [[ -n "$b" ]] || continue
+    codesign --force --options runtime --timestamp \
+      --keychain "$SIGN_KEYCHAIN" \
+      --entitlements "$ent" \
+      --sign "$id" \
+      "$b" 2>/dev/null || \
+    codesign --force --options runtime --timestamp \
+      --keychain "$SIGN_KEYCHAIN" \
+      --sign "$id" \
+      "$b"
+  done <<< "$sorted"
+}
+
 finder_set_dmg_file_icon() {
   local dmg="$1"
   local app="${2:-$APP_BUNDLE}"
@@ -185,12 +214,26 @@ else
   if [[ -d "$APP_BUNDLE/Contents/Resources" ]]; then
     codesign_mach_o_under "$APP_BUNDLE/Contents/Resources" "$APP_ID" "$ENTITLEMENTS"
   fi
+  # Ace (Node + Chromium) and other tool trees were previously unsigned;
+  # Apple notary rejects ad-hoc Chrome helpers and unsigned .bare addons.
+  for extra in ace checker epubcheck verapdf; do
+    if [[ -d "$APP_BUNDLE/Contents/$extra" ]]; then
+      echo "Signing Mach-O under Contents/${extra}..."
+      codesign_mach_o_under "$APP_BUNDLE/Contents/$extra" "$APP_ID" "$ENTITLEMENTS"
+    fi
+  done
+  if [[ -d "$APP_BUNDLE/Contents/ace" ]]; then
+    echo "Signing nested Chrome/Ace bundles under Contents/ace…"
+    codesign_nested_bundles_under "$APP_BUNDLE/Contents/ace" "$APP_ID" "$ENTITLEMENTS"
+  fi
 
+  # Sign the bundle last, without --deep: nested Mach-O is already signed
+  # above, and --deep treats extensionless data (e.g. tiktoken BPE cache
+  # under Frameworks) as unsigned code and fails.
   codesign --force --options runtime --timestamp \
     --keychain "$SIGN_KEYCHAIN" \
     --entitlements "$ENTITLEMENTS" \
     --sign "$APP_ID" \
-    --deep \
     "$APP_BUNDLE"
 
   codesign --verify --verbose=2 "$APP_BUNDLE"

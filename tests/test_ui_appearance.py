@@ -289,6 +289,37 @@ def test_dark_mode_status_icons_exist() -> None:
         assert (images / name).is_file(), name
 
 
+def test_ui_appearance_imports_on_non_windows() -> None:
+    """Win32 callback types must not be built at import time."""
+    import sys
+
+    from checkmate import ui_appearance as ua
+
+    if sys.platform == "win32":
+        assert ua._SUBCLASSPROC is not None
+    else:
+        assert ua._SUBCLASSPROC is None
+
+
+def test_clear_forced_colours_is_safe() -> None:
+    """macOS cannot Set*Colour(NullColour); startup light theme must not assert."""
+    import wx
+
+    from checkmate.ui_appearance import _clear_forced_colours, _paint_dark_tree
+
+    _ensure_wx_app()
+    frame = wx.Frame(None)
+    try:
+        wx.TextCtrl(frame, value="x")
+        wx.StaticText(frame, label="hi")
+        wx.Notebook(frame)
+        frame.Show()
+        _paint_dark_tree(frame, only_explicit_light=False)
+        _clear_forced_colours(frame)
+    finally:
+        frame.Destroy()
+
+
 def test_menubar_dark_hook_is_safe() -> None:
     import sys
 
@@ -311,9 +342,8 @@ def test_menubar_dark_hook_is_safe() -> None:
         )
 
         hwnd = _windows_hwnd(frame)
-        if hwnd:
+        if sys.platform == "win32" and hwnd:
             _uah_repaint_menubar(hwnd)
-        if sys.platform == "win32":
             assert _menu_font_handle() != 0
         _windows_set_menubar_dark(frame, False)
     finally:

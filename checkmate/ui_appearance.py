@@ -763,6 +763,31 @@ def _paint_dark_tree(win: wx.Window, *, only_explicit_light: bool = False) -> No
         _paint_dark_tree(child, only_explicit_light=only_explicit_light)
 
 
+def _reset_window_colours(win: wx.Window) -> None:
+    """Undo owner-set colours so native chrome can paint again.
+
+    Windows/GTK treat ``wx.NullColour`` as unset. macOS asserts in
+    ``OSXGetNSColor`` because NullColour is not ``IsOk()``.
+    """
+    if sys.platform == "darwin":
+        try:
+            attrs = win.GetDefaultAttributes()
+        except Exception:
+            return
+        bg = getattr(attrs, "colBg", None)
+        fg = getattr(attrs, "colFg", None)
+        try:
+            if bg is not None and bg.IsOk():
+                win.SetBackgroundColour(bg)
+            if fg is not None and fg.IsOk():
+                win.SetForegroundColour(fg)
+        except (RuntimeError, wx.wxAssertionError):
+            return
+        return
+    win.SetBackgroundColour(wx.NullColour)
+    win.SetForegroundColour(wx.NullColour)
+
+
 def _clear_forced_colours(win: wx.Window) -> None:
     if _skip_dark_paint(win):
         return
@@ -783,11 +808,10 @@ def _clear_forced_colours(win: wx.Window) -> None:
             _notebook_hot.pop(hwnd, None)
             _ctlcolor_parent_hwnds.discard(hwnd)
             _windows_release_control_subclass(hwnd)
-        win.SetBackgroundColour(wx.NullColour)
-        win.SetForegroundColour(wx.NullColour)
+        _reset_window_colours(win)
         if sys.platform == "win32":
             _windows_clear_window_theme(win)
-    except RuntimeError:
+    except (RuntimeError, wx.wxAssertionError):
         return
     try:
         children = win.GetChildren()
@@ -1519,14 +1543,19 @@ _menubar_subclassed: set[int] = set()
 _menubar_tracking: set[int] = set()
 _menubar_brushes: dict[tuple[int, int, int], int] = {}
 _menubar_font = 0
-_SUBCLASSPROC = ctypes.WINFUNCTYPE(
-    ctypes.c_ssize_t,
-    ctypes.c_void_p,
-    ctypes.c_uint,
-    ctypes.c_size_t,
-    ctypes.c_ssize_t,
-    ctypes.c_size_t,
-    ctypes.c_size_t,
+# ctypes.WINFUNCTYPE is Windows-only; leave None so this module imports on macOS.
+_SUBCLASSPROC = (
+    ctypes.WINFUNCTYPE(
+        ctypes.c_ssize_t,
+        ctypes.c_void_p,
+        ctypes.c_uint,
+        ctypes.c_size_t,
+        ctypes.c_ssize_t,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+    )
+    if sys.platform == "win32"
+    else None
 )
 _menubar_subclass_proc = None
 _comctl32 = None

@@ -66,6 +66,7 @@ from .i18n import (
 from .java_util import detect_java
 from .models import CheckResult, Issue, Severity, Verdict
 from .paths import (
+    APP_NAME,
     CHECKER_REPO_PAGE,
     DAISY_WEBSITE,
     EBRAILLE_SPEC_URL,
@@ -4853,6 +4854,9 @@ class EBrailleApp(wx.App):
         init_app_telemetry(self)
         from .ui_appearance import apply_toplevel_appearance, enable_app_appearance
 
+        # Application menu title on macOS (otherwise "Python" when run from source).
+        self.SetAppName(APP_NAME)
+        self.SetAppDisplayName(APP_NAME)
         enable_app_appearance(self)
         self.frame = MainFrame(initial_paths=self._pending_paths)
         self._pending_paths.clear()
@@ -4930,6 +4934,7 @@ class MainFrame(wx.Frame):
         self._lang_menu_items: dict[str, wx.MenuItem] = {}
         self._issues_visible = True
         self._issues_height_delta = 0
+        self._ui_ready = False
         self._source_filter_wanted = False
         self._result_icon_cache: dict[tuple[str, int, bool], wx.Bitmap] = {}
         self._result_icon_key: tuple[str, int, bool] | None = None
@@ -4947,6 +4952,7 @@ class MainFrame(wx.Frame):
         self._update_result_status_icon()
         # Issues start collapsed; centre the compact window.
         self._set_issues_panel_visible(False, keep_center=False)
+        self._ui_ready = True
         self.Centre()
         # Min sizes are unreliable before the first Show; re-check after paint.
         wx.CallAfter(self._ensure_result_text_height, keep_center=False)
@@ -5559,6 +5565,17 @@ class MainFrame(wx.Frame):
         )
         file_menu.AppendSeparator()
         self.menu_exit = file_menu.Append(wx.ID_EXIT, _("E&xit\tEsc"))
+        if sys.platform == "darwin":
+            # Stock IDs are relocated to the application menu (CheckMate →
+            # Settings… / About / Quit). Keep them off Tools/Help.
+            self.menu_settings = file_menu.Append(
+                wx.ID_PREFERENCES, _("&Settings…")
+            )
+            self.menu_settings.SetHelp(
+                _(
+                    "General preferences, EPUB checkers, and PDF validation profile"
+                )
+            )
         menubar.Append(file_menu, _("&File"))
 
         report_menu = wx.Menu()
@@ -5608,15 +5625,16 @@ class MainFrame(wx.Frame):
         self.menu_check = tools_menu.Append(
             wx.ID_ANY, _("&Re-check publication\tF5")
         )
-        tools_menu.AppendSeparator()
-        self.menu_settings = tools_menu.Append(
-            wx.ID_PREFERENCES, _("&Settings…")
-        )
-        self.menu_settings.SetHelp(
-            _(
-                "General preferences, EPUB checkers, and PDF validation profile"
+        if sys.platform != "darwin":
+            tools_menu.AppendSeparator()
+            self.menu_settings = tools_menu.Append(
+                wx.ID_PREFERENCES, _("&Settings…")
             )
-        )
+            self.menu_settings.SetHelp(
+                _(
+                    "General preferences, EPUB checkers, and PDF validation profile"
+                )
+            )
         tools_menu.AppendSeparator()
         self.menu_update = tools_menu.Append(
             wx.ID_ANY, _("Check for &updates…")
@@ -5861,6 +5879,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_clear_results, self.menu_clear)
         self.Bind(wx.EVT_MENU, self.on_check, self.menu_check)
         self.Bind(wx.EVT_MENU, self.on_settings, self.menu_settings)
+        self.Bind(wx.EVT_MENU, self.on_settings, id=wx.ID_PREFERENCES)
         self.Bind(wx.EVT_MENU, self.on_view_full_log, self.menu_view_log)
         self.Bind(wx.EVT_MENU, self.on_view_changelog, self.menu_view_changelog)
         self.Bind(wx.EVT_MENU, self.on_check_updates, self.menu_update)
@@ -6541,12 +6560,15 @@ class MainFrame(wx.Frame):
         has_issues = (
             self._last_result is not None and bool(self._last_result.issues)
         )
-        if not has_issues and self._issues_visible:
-            self._set_issues_panel_visible(False)
-            return
-        if has_issues and show_issues_always() and not self._issues_visible:
-            self._set_issues_panel_visible(True)
-            return
+        # During construction the issues sizer is not yet realized; collapsing
+        # here would only subtract a 10px border and leave a tall empty window.
+        if getattr(self, "_ui_ready", False):
+            if not has_issues and self._issues_visible:
+                self._set_issues_panel_visible(False)
+                return
+            if has_issues and show_issues_always() and not self._issues_visible:
+                self._set_issues_panel_visible(True)
+                return
         self.show_issues_btn.Enable(has_issues)
         if self._issues_visible:
             self.show_issues_btn.SetLabel(_("Hide &issues"))
@@ -6565,9 +6587,13 @@ class MainFrame(wx.Frame):
         old_rect = self.GetRect()
         non_client_h = old_rect.height - self.GetClientSize().height
 
+        measured_h = 0
         if not visible:
             # Measure how much height the issues block contributes before hiding.
-            issues_h = self.issues_sizer.GetSize().height
+            measured_h = self.issues_sizer.GetSize().height
+            issues_h = measured_h
+            if issues_h <= 1:
+                issues_h = self.issues_sizer.GetMinSize().height
             item = self.root_sizer.GetItem(self.issues_sizer)
             border = item.GetBorder() if item is not None else 10
             # LEFT|RIGHT|BOTTOM → bottom margin only adds to height.
@@ -6587,8 +6613,15 @@ class MainFrame(wx.Frame):
         min_frame_h = non_client_h + max(self.root_sizer.GetMinSize().height, 1)
         if visible:
             new_h = max(old_rect.height + self._issues_height_delta, min_frame_h)
+        elif measured_h <= 1:
+            # Unrealized sizers report 0 height (typical before Show on macOS),
+            # so subtracting only a border leaves a tall empty client area.
+            new_h = min_frame_h
         else:
             new_h = max(old_rect.height - self._issues_height_delta, min_frame_h)
+        applied = abs(old_rect.height - new_h)
+        if applied > self._issues_height_delta:
+            self._issues_height_delta = applied
 
         if keep_center:
             new_y = old_rect.y + (old_rect.height - new_h) // 2

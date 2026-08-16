@@ -42,10 +42,15 @@ def _bundled_tiktoken_cache_dir() -> str | None:
     candidates: list[Path] = []
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
-        candidates.append(Path(meipass) / "tiktoken_cache")
+        meipass_path = Path(meipass)
+        candidates.append(meipass_path / "tiktoken_cache")
+        # macOS .app: _MEIPASS is Contents/Frameworks; cache is in Resources.
+        candidates.append(meipass_path.parent / "Resources" / "tiktoken_cache")
     if getattr(sys, "frozen", False):
-        candidates.append(Path(sys.executable).resolve().parent / "_internal" / "tiktoken_cache")
-        candidates.append(Path(sys.executable).resolve().parent / "tiktoken_cache")
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.append(exe_dir / "_internal" / "tiktoken_cache")
+        candidates.append(exe_dir / "tiktoken_cache")
+        candidates.append(exe_dir.parent / "Resources" / "tiktoken_cache")
     for path in candidates:
         if path.is_dir():
             return str(path)

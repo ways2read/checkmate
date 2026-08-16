@@ -30,6 +30,23 @@ APP_ICON_ICNS = ROOT / "installer" / "CheckMate.icns"
 BUILD_COUNTER_FILE = ROOT / "build_counter.txt"
 
 
+def _ensure_macos_icns() -> None:
+    """Rebuild CheckMate.icns from the CheckMate artwork so Dock / Finder match Windows."""
+    if sys.platform != "darwin":
+        return
+    script = ROOT / "scripts" / "make_icns.py"
+    if not script.is_file():
+        return
+    src_png = ROOT / "installer" / "icon.png"
+    extra = ["--from-png"] if src_png.is_file() else []
+    print("Rebuilding installer/CheckMate.icns from CheckMate artwork…")
+    subprocess.run(
+        [sys.executable, str(script), *extra],
+        check=True,
+        cwd=ROOT,
+    )
+
+
 def _app_icon() -> Path | None:
     if sys.platform == "darwin" and APP_ICON_ICNS.is_file():
         return APP_ICON_ICNS
@@ -92,6 +109,20 @@ def _internal_dir_for_output(output: Path) -> Path | None:
     return None
 
 
+def _datas_dir_for_output(output: Path) -> Path | None:
+    """Directory for non-Mach-O support files (tiktoken cache, plugins).
+
+    On macOS, anything under ``Contents/Frameworks`` is nested code.
+    Extra directories or extensionless files there make ``codesign`` fail.
+    """
+    output = output.resolve()
+    if sys.platform == "darwin" and output.suffix == ".app":
+        resources = output / "Contents" / "Resources"
+        if resources.is_dir():
+            return resources
+    return _internal_dir_for_output(output)
+
+
 def _ensure_webview2_loader(output: Path) -> None:
     """
     Copy WebView2Loader.dll into the frozen app.
@@ -149,9 +180,9 @@ def _bundle_tiktoken_support(output: Path) -> None:
     import hashlib
     import urllib.request
 
-    internal = _internal_dir_for_output(output)
+    internal = _datas_dir_for_output(output)
     if internal is None:
-        print("Warning: could not locate _internal for tiktoken cache", file=sys.stderr)
+        print("Warning: could not locate datas dir for tiktoken cache", file=sys.stderr)
         return
 
     # Encoding plugin module (namespace package) on the filesystem.
@@ -334,6 +365,7 @@ def build(
     build_number: int | None = None,
 ) -> Path:
     _ensure_pyinstaller()
+    _ensure_macos_icns()
 
     if not ENTRY.is_file():
         print(f"Entry point not found: {ENTRY}", file=sys.stderr)

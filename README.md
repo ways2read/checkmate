@@ -415,13 +415,13 @@ checkmate/
     build_macos.sh           # macOS: package .app + zip
     build_macos_dmg.sh       # macOS: drag-to-Applications .dmg
     build_macos_release.sh   # macOS: sign + .dmg + notarize
-    make_icns.py             # Build .icns (defaults to .ico master)
+    make_icns.py             # Build .icns (defaults to .ico; packaging uses --from-png)
     macos_release_arch_suffix.inc.sh
   installer/
     CheckMate.iss         # Inno Setup script (Windows installer)
-    CheckMate.ico         # App / setup icon (Windows; also Mac .icns master)
-    CheckMate.icns        # App / volume icon (macOS)
-    icon.png              # Alternate flat artwork (--from-png)
+    CheckMate.ico         # App / setup icon (Windows)
+    CheckMate.icns        # App / volume icon (macOS; rebuilt from icon.png)
+    icon.png              # CheckMate artwork (macOS .icns master)
     welcome.txt           # Setup wizard intro text
   packaging/macos/
     entitlements.plist    # Hardened runtime + JVM entitlements (required)
@@ -589,9 +589,10 @@ Step by step:
 ./scripts/build_macos_dmg.sh 0.2.2      # drag-install .dmg (unsigned)
 ```
 
-App icon: `scripts/make_icns.py` builds `installer/CheckMate.icns` from
-the Windows `.ico` by default (flatter master). Use `--from-png` for
-`installer/icon.png` instead.
+App icon: macOS packaging rebuilds `installer/CheckMate.icns` from
+`installer/icon.png` (same CheckMate artwork as the Windows `.ico`).
+`scripts/make_icns.py` defaults to the `.ico`; pass `--from-png` for
+the high-resolution PNG master.
 
 Useful environment variables:
 

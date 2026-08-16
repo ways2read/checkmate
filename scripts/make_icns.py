@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build installer/CheckMate.icns for macOS (iconutil).
 
-Defaults to the Windows .ico master so Dock / Finder match the flatter
-installer icon. Use --from-png for installer/icon.png instead.
+Packaging uses --from-png so Dock / Finder get the high-resolution
+CheckMate artwork (same design as the Windows .ico). The default is
+still the .ico for a quick rebuild when icon.png is unavailable.
 
     uv run python scripts/make_icns.py
     uv run python scripts/make_icns.py --from-png

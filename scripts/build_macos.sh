@@ -44,11 +44,6 @@ echo "  version: $VERSION"
 echo "  build:   $BUILD_NUMBER"
 echo "  arch suffix: '${EBC_MACOS_RELEASE_ARCH_SUFFIX}'"
 
-if [[ ! -f "installer/CheckMate.icns" ]]; then
-  echo "==> Creating installer/CheckMate.icns…"
-  uv run python scripts/make_icns.py
-fi
-
 echo "==> Packaging with PyInstaller (scripts/package.py)…"
 uv sync --extra dev
 uv run python scripts/package.py --clean --build-number "$BUILD_NUMBER"
