@@ -1,6 +1,6 @@
 # CheckMate AI features — briefing
 
-This note explains how CheckMate’s AI features work: credentials and model selection from FIDO, the connection check, then the main flows (overview, follow-up, explain, propose fix, apply and validate, alt-text inventory + AI Image Inspector).
+This note explains how CheckMate’s AI features work: credentials and model selection from FIDO, the connection check, then the main flows (overview, follow-up, explain, propose fix, apply and validate, alt-text inventory + AI Image Sniff Test).
 
 Implementation lives under `checkmate/ai/` (LiteLLM client, session, overview, explain, fix, context, resources, alt_*) plus `checkmate/doc_images/` for EPUB/PDF image export. CheckMate does **not** import the FIDO package; it reads FIDO’s on-disk app-data files and vendors a slim document-image export stack.
 
@@ -65,7 +65,7 @@ AI features are offered when FIDO settings/keys are present (or unlock supplies 
 
 ## Connection check
 
-Before overview, explain, fix, or AI Image Inspector (not before follow-ups on an existing session):
+Before overview, explain, fix, or AI Image Sniff Test (not before follow-ups on an existing session):
 
 1. Preload LiteLLM on a worker thread
 2. Resolve model + API key (`ensure_credentials_ready()`); refresh unlock if needed
@@ -293,11 +293,11 @@ Confirm / revert dialogs show the changelog path when present. Open the log anyt
 
 ---
 
-## 6. Alt-text inventory report + AI Image Inspector
+## 6. Alt-text inventory report + AI Image Sniff Test
 
-**Purpose:** After a check, browse all images and alt text for the publication, then optionally run the AI Image Inspector on decorative/content status, alt quality, and document-fit (orientation, language, spelling/grammar, surrounding-text repetition, joined panels).
+**Purpose:** After a check, browse all images and alt text for the publication, then optionally run the AI Image Sniff Test on decorative/content status, alt quality, and document-fit (orientation, language, spelling/grammar, surrounding-text repetition, joined panels).
 
-**Entry:** Result-row **Alt text** button (after **AI overview**), enabled when the checked path is a packaged `.epub` / `.ebrl` / `.pdf`. Click exports images via `checkmate.doc_images` and opens an in-app inventory WebView (`alt_text_report.html`). The HTML header shows **Exported by: CheckMate** (Fido exports use their own label; opening a cached Fido-branded report in CheckMate regenerates the HTML). The export folder (full preview PNGs in `images/`, card JPEGs in `thumbs/`) is **cached on disk** under CheckMate app-data `alt_exports/` (path + mtime + size + format). Reopening Alt text after a restart reuses that folder until the publication changes or the export format is bumped. Clicking a thumbnail opens the full preview. From that dialog, **Run AI Image Inspector…** (when AI features are on) starts the vision sample flow after the inventory WebView has closed (deferred so Edge teardown does not freeze the next modal). Progress dialogs use the title **AI Image Inspector**, are cancellable (`PD_CAN_ABORT`), and status changes are spoken to screen readers. PDF extraction uses on-page placement (CTM + page `/Rotate`) so vision sees cropped/rotated images as they appear, not raw XObject bitmaps.
+**Entry:** Result-row **Alt text** button (after **AI overview**), enabled when the checked path is a packaged `.epub` / `.ebrl` / `.pdf`. Click exports images via `checkmate.doc_images` and opens an in-app inventory WebView (`alt_text_report.html`). The HTML header shows **Exported by: CheckMate** (Fido exports use their own label; opening a cached Fido-branded report in CheckMate regenerates the HTML). The export folder (full preview PNGs in `images/`, card JPEGs in `thumbs/`) is **cached on disk** under CheckMate app-data `alt_exports/` (path + mtime + size + format). Reopening Alt text after a restart reuses that folder until the publication changes or the export format is bumped. Clicking a thumbnail opens the full preview. From that dialog, **Run AI Image Sniff Test…** (when AI features are on) starts the vision sample flow after the inventory WebView has closed (deferred so Edge teardown does not freeze the next modal). Progress dialogs use the title **AI Image Sniff Test**, are cancellable (`PD_CAN_ABORT`), and status changes are spoken to screen readers. PDF extraction uses on-page placement (CTM + page `/Rotate`) so vision sees cropped/rotated images as they appear, not raw XObject bitmaps.
 
 ### Inventory flow
 
@@ -305,7 +305,7 @@ Confirm / revert dialogs show the changelog path when present. Open the log anyt
 2. Show interactive filter/search report in CheckMate (`AltTextReportDialog`, `LoadURL` so `images/` resolve)  
 3. Optional: open in browser / open export folder  
 
-### AI Image Inspector flow (from inventory)
+### AI Image Sniff Test flow (from inventory)
 
 1. Load/validate the export (CSV column `Alt Text` with a space)
 2. **Pass A** — local heuristics (no AI): missing/placeholder/filename alt, empty “Has Alt Text”, decorative+content-like classification mismatch, duplicates, very short alt, low resolution, joined/multi-panel classification. Pass A flags are merged into the vision result when the model omits them.
@@ -313,7 +313,7 @@ Confirm / revert dialogs show the changelog path when present. Open the log anyt
 4. Connection check; reject clearly non-vision models (`no_vision`)
 5. **Pass B** — vision calls for sampled images, **in parallel** (default 8 workers; override with CheckMate `ai_alt_assess_workers` in `settings.json`, 1–16). A 429 / quota error retries the image and halves the worker count for later waves (with backoff). Each image is resized to FIDO `image_resize_pixels` and JPEG-compressed under FIDO `image_compression_mb` (PyMuPDF encode is locked so parallel workers stay safe on macOS and Windows); LiteLLM multimodal `image_url` data URI. Omit OpenAI `detail` for Gemini models (LiteLLM would map it to a rejected `mediaResolution`). The prompt includes author alt/status, classification, Pass A flags, **publication format** (PDF / EPUB / eBraille — remediation is format-specific), and **surrounding page text** from the export `Context` column when present — so quality is judged for document fit, not a generic caption style. Progress is a reserved-height multiline dialog (finished vs total, running Likely OK / Needs attention / OK with caveat / Uncertain counts on two short lines, in-flight filenames, ETA). A leading blank line is used only for native Windows Task Dialog sizing. Cancel stops queued images and closes the progress dialog. Fatal BadRequest-style provider errors abort the sample early instead of failing every image.
 6. Text-only **document synthesis** (fixed H2s) + write `alt_text_assessment.json` beside the export
-7. HTML **AI Image Inspector** dialog (shared CheckMate AI webview styling: `aside.ai-note` disclaimer that names CheckMate and the model, doc header, stats, priority cards with **file thumbnails** that lightbox the full `images/` preview, filters, search, and sort) + follow-up chat + Assess more
+7. HTML **AI Image Sniff Test** dialog (shared CheckMate AI webview styling: `aside.ai-note` disclaimer that names CheckMate and the model, doc header, stats, priority cards with **file thumbnails** that lightbox the full `images/` preview, filters, search, and sort) + follow-up chat + Assess more
 
 Export CSV columns: `Index`, `Filename`, `Classification`, `Alt Text`, `Status`, `Dimensions`, `File Size`, `Context` (optional surrounding text from `backend.get_context`). Older exports without `Context` still load; CheckMate’s export cache prefers folders that include the column so reopen after upgrade re-extracts once.
 
@@ -353,7 +353,7 @@ Enums include `verdict`, `confidence`, `recommended_status`, quality axes, close
 | Fix propose | Yes | 8192 (+ 1 repair) | Issue + raw excerpt + related OPF; optional Ace/EPUBCheck primary URL (approach only) |
 | Fix apply / validate | N/A (local) | — | Unique string replace → re-check → confirm or revert |
 | Alt-text inventory | N/A | — | Post-check **Alt text** button; `doc_images` export + in-app HTML |
-| AI Image Inspector | Yes | 2048/image + 8192 synth | From inventory dialog; Pass A heuristics; parallel format-aware vision sample/all |
+| AI Image Sniff Test | Yes | 2048/image + 8192 synth | From inventory dialog; Pass A heuristics; parallel format-aware vision sample/all |
 
 ---
 
@@ -371,7 +371,7 @@ Enums include `verdict`, `confidence`, `recommended_status`, quality axes, close
 | Alt-text Pass A heuristics | `checkmate/ai/alt_heuristics.py` |
 | Alt-text sampling | `checkmate/ai/alt_sample.py` |
 | Alt-text vision assess + synthesis | `checkmate/ai/alt_assess.py` |
-| Inspector feature title / save stem | `checkmate/ai/alt_labels.py` |
+| Sniff-test feature title / save stem | `checkmate/ai/alt_labels.py` |
 | Alt-text AI HTML report | `checkmate/ai/alt_report.py` |
 | Alt-text inventory dialog | `checkmate/ai/alt_inventory_dialog.py` |
 | Alt-text AI result dialog | `checkmate/ai/alt_dialog.py` |

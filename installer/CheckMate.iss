@@ -6,6 +6,8 @@
 ;        uv sync --extra dev
 ;        uv run python scripts/package.py --clean
 ;      Or one-shot: powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
+;        (packages, compiles, then Authenticode-signs like Fido unless
+;         CHECKMATE_SKIP_INSTALLER_SIGN=1 or -SkipSign)
 ;   3. Compile this script (ISCC or Inno Setup Compiler GUI):
 ;        iscc installer\CheckMate.iss
 ;
@@ -17,7 +19,7 @@
 
 #define MyAppName "CheckMate"
 #define MyAppFullName "CheckMate"
-#define MyAppVersion "0.7.31"
+#define MyAppVersion "0.7.32"
 #define MyAppPublisher "ways2read"
 #define MyAppURL "https://github.com/ways2read/checkmate"
 #define MyAppExeName "CheckMate.exe"

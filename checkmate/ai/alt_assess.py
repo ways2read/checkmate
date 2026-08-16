@@ -175,7 +175,7 @@ def vision_parallel_workers(
         if raw not in (None, ""):
             return max(1, min(int(raw), _MAX_VISION_WORKERS))
     except Exception:
-        logger.debug("Could not read AI Image Inspector worker setting", exc_info=True)
+        logger.debug("Could not read AI Image Sniff Test worker setting", exc_info=True)
     return _DEFAULT_VISION_WORKERS
 
 

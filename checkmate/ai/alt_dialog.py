@@ -15,7 +15,7 @@ import wx.lib.newevent
 
 from ..i18n import _
 from .alt_assess import AltAssessResult, ask_alt_assess_followup
-from .alt_labels import FEATURE_FILENAME_STEM, feature_title
+from .alt_labels import FEATURE_FILENAME_STEM, feature_html_basenames, feature_title
 from .alt_report import assessment_markdown_export, build_assessment_html
 from .alt_sample import assess_more_choice_labels
 from .explain import ExplainResult, error_message_for_key
@@ -352,8 +352,10 @@ class AltAssessDialog(wx.Dialog):
         try:
             if export is not None and export.folder:
                 folder = Path(export.folder)
-                canonical = folder / "ai_image_inspector.html"
+                canonical = folder / f"{FEATURE_FILENAME_STEM}.html"
                 canonical.write_text(html_doc, encoding="utf-8")
+                for leftover in feature_html_basenames() - {canonical.name}:
+                    _unlink_quietly(folder / leftover)
                 cleanup_view_html(folder)
                 path = write_unique_view_html(canonical)
             else:
@@ -855,7 +857,7 @@ class AltAssessDialog(wx.Dialog):
             _unlink_quietly(leftover)
         self._html_tmp_prev.clear()
         # Keep the copy written beside the export (relative images/ resolve).
-        if self._html_tmp is None or self._html_tmp.name != "ai_image_inspector.html":
+        if self._html_tmp is None or self._html_tmp.name not in feature_html_basenames():
             _unlink_quietly(self._html_tmp)
         self._html_tmp = None
 

@@ -1,15 +1,25 @@
-# Build the Windows installer (PyInstaller package + Inno Setup).
+# Build the Windows installer (PyInstaller package + Inno Setup + Authenticode).
 #
 # Usage (from project root):
 #   powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipPackage
+#   powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipSign
 #
 # Requires: uv, and Inno Setup 6 (ISCC.exe on PATH or in the default install dir).
+#
+# Authenticode (same technique as Fido): after Inno compile, one signtool
+# invocation so the GlobalSign USB-token PIN is asked once. Copies to
+# installer\Output stay signed.
+#   CHECKMATE_SKIP_INSTALLER_SIGN=1  — do not run signtool
+#   CHECKMATE_SIGNTOOL               — full path to signtool.exe
+#                                      (default: Windows Kits App Certification Kit)
+#   CHECKMATE_SIGN_TIMESTAMP_URL     — RFC 3161 TSA (default: GlobalSign r6 advanced)
 
 [CmdletBinding()]
 param(
     [switch]$SkipPackage,
-    [switch]$NoClean
+    [switch]$NoClean,
+    [switch]$SkipSign
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,6 +39,39 @@ function Find-Iscc {
         if (Test-Path $path) { return $path }
     }
     return $null
+}
+
+function Invoke-InstallerSign {
+    param([Parameter(Mandatory = $true)][string]$SetupPath)
+
+    if ($SkipSign -or $env:CHECKMATE_SKIP_INSTALLER_SIGN -eq "1") {
+        $reason = if ($SkipSign) { "-SkipSign" } else { "CHECKMATE_SKIP_INSTALLER_SIGN=1" }
+        Write-Host "Skipping installer sign ($reason): $SetupPath" -ForegroundColor Yellow
+        return
+    }
+
+    $signtool = $env:CHECKMATE_SIGNTOOL
+    if (-not $signtool) {
+        $signtool = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\App Certification Kit\signtool.exe"
+    }
+    $timestampUrl = $env:CHECKMATE_SIGN_TIMESTAMP_URL
+    if (-not $timestampUrl) {
+        $timestampUrl = "http://timestamp.globalsign.com/tsa/r6advanced1"
+    }
+
+    if (-not (Test-Path $signtool)) {
+        Write-Error @"
+signtool not found at "$signtool"
+Set CHECKMATE_SIGNTOOL to the full path, or set CHECKMATE_SKIP_INSTALLER_SIGN=1 / -SkipSign to skip signing.
+"@
+    }
+
+    Write-Host "==> Signing installer (Authenticode)…" -ForegroundColor Cyan
+    Write-Host "    $SetupPath"
+    & $signtool sign /a /tr $timestampUrl /td SHA256 /fd SHA256 $SetupPath
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "signtool failed (exit $LASTEXITCODE)"
+    }
 }
 
 $iscc = Find-Iscc
@@ -83,6 +126,16 @@ New-Item -ItemType Directory -Force -Path $tempOut | Out-Null
 try {
     & $iscc "/O$tempOut" $iss
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    $tempSetup = Get-ChildItem $tempOut -Filter "CheckMate-*-setup.exe" |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if (-not $tempSetup) {
+        Write-Error "Inno Setup did not produce CheckMate-*-setup.exe in $tempOut"
+    }
+
+    # Sign before copying so installer\Output stays signed (Fido pattern).
+    Invoke-InstallerSign -SetupPath $tempSetup.FullName
 
     New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
     Copy-Item (Join-Path $tempOut "*") $outputDir -Force

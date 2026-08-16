@@ -57,7 +57,7 @@ support on Windows, macOS, and Linux.
 - **Alt text** (packaged EPUB / eBraille / PDF after a check): **Alt text**
   button after AI overview opens an in-app inventory of images and alt text
   (CheckMate-branded export, cached on disk per publication). From that report, optional
-  **Run AI Image Inspector…** samples images with vision and synthesizes
+  **Run AI Image Sniff Test…** samples images with vision and synthesizes
   findings (same FIDO AI credentials) — including alt quality, decorative vs
   content, images of tables (prefer real table markup), images of math (prefer
   digital math such as LaTeX/MathML/OMML, or PDF equation images tagged with
@@ -411,7 +411,7 @@ checkmate/
     checker_bundle.py        # Download eBraille Checker into checker/
     epubcheck_bundle.py      # Download EPUBCheck into epubcheck/
     verapdf_bundle.py        # Download/install veraPDF into verapdf/
-    build_installer.ps1      # Windows: package + Inno Setup compile
+    build_installer.ps1      # Windows: package + Inno Setup compile + Authenticode
     build_macos.sh           # macOS: package .app + zip
     build_macos_dmg.sh       # macOS: drag-to-Applications .dmg
     build_macos_release.sh   # macOS: sign + .dmg + notarize
@@ -529,6 +529,13 @@ iscc installer\CheckMate.iss
 ```
 
 Output: `installer/Output/CheckMate-<version>-setup.exe`
+
+`build_installer.ps1` then Authenticode-signs that setup with the same
+`signtool` flow as Fido (`/a`, SHA-256, GlobalSign RFC 3161 timestamp) so
+SmartScreen sees a signed installer. That needs the Windows SDK App
+Certification Kit and the USB signing token (one PIN prompt). Skip with
+`-SkipSign` or `CHECKMATE_SKIP_INSTALLER_SIGN=1`. Override the tool or TSA
+with `CHECKMATE_SIGNTOOL` / `CHECKMATE_SIGN_TIMESTAMP_URL`.
 
 The installer:
 
