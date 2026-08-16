@@ -86,6 +86,12 @@ def _create_webview(parent: wx.Window) -> tuple[wx.Window, bool]:
                 view.EnableContextMenu(True)
             except Exception:
                 pass
+            try:
+                from ..ui_appearance import apply_webview_appearance
+
+                apply_webview_appearance(view)
+            except Exception:
+                pass
             return view, True
 
     text = wx.TextCtrl(

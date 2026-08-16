@@ -19,6 +19,7 @@ FLAG_DUPLICATE_ALT = "duplicate_alt"
 FLAG_VERY_SHORT_ALT = "very_short_alt"
 FLAG_CLASS_DECORATIVE_MISMATCH = "class_decorative_mismatch"
 FLAG_LOW_RESOLUTION = "low_resolution"
+FLAG_JOINED_IMAGES = "joined_images"
 
 HARD_FLAGS = frozenset(
     {
@@ -63,6 +64,30 @@ _SHORT_ALT_LEN = 12
 _LOW_RES_LONG_EDGE = 400
 # Ignore sub-icon spacers / bullets even when marked as content.
 _LOW_RES_MIN_EDGE_TO_CONSIDER = 48
+
+# Split-worthy composite classifications (breadcrumb leaf or "Composite image / …").
+_JOINED_LEAVES = frozenset(
+    {
+        "composite image",
+        "multi-panel figure",
+        "side-by-side comparison",
+        "before-and-after",
+        "photo grid or collage",
+        "sequential panels",
+        "slide-style composite",
+        "page or document layout",
+        "diagram with photograph",
+    }
+)
+# Composite-image children that are typically one figure, not several pictures.
+_JOINED_EXCLUDE_LEAVES = frozenset(
+    {
+        "figure with inset",
+        "annotated figure",
+        "image with overlaid chart",
+        "map with inset chart or photo",
+    }
+)
 
 
 @dataclass
@@ -138,6 +163,26 @@ def _content_like_classification(classification: str) -> bool:
     return any(c.startswith(p) for p in _CONTENT_CLASS_PREFIXES)
 
 
+def looks_joined_panel(classification: str) -> bool:
+    """True when classification is a split-worthy multi-panel / joined figure."""
+    c = (classification or "").strip().lower()
+    if not c or c == "unclassified":
+        return False
+    parts = [p.strip() for p in c.split("/") if p.strip()]
+    leaf = parts[-1] if parts else c
+    if leaf in _JOINED_EXCLUDE_LEAVES:
+        return False
+    if leaf in _JOINED_LEAVES:
+        return True
+    return bool(parts) and parts[0] == "composite image"
+
+
+def _with_joined(image: AltExportImage, flags: list[str]) -> list[str]:
+    if looks_joined_panel(image.classification) and FLAG_JOINED_IMAGES not in flags:
+        flags.append(FLAG_JOINED_IMAGES)
+    return flags
+
+
 def _placeholder_or_filename(alt: str, filename: str) -> list[str]:
     flags: list[str] = []
     text = alt.strip()
@@ -167,7 +212,7 @@ def analyze_image(image: AltExportImage, *, duplicate: bool = False) -> list[str
             flags.append(FLAG_CLASS_DECORATIVE_MISMATCH)
         if _should_check_resolution(image) and looks_low_resolution(image):
             flags.append(FLAG_LOW_RESOLUTION)
-        return flags
+        return _with_joined(image, flags)
 
     # Content (or unclassified / other non-decorative)
     if not alt:
@@ -177,7 +222,7 @@ def analyze_image(image: AltExportImage, *, duplicate: bool = False) -> list[str
             flags.append(FLAG_MISSING_ALT)
         if _should_check_resolution(image) and looks_low_resolution(image):
             flags.append(FLAG_LOW_RESOLUTION)
-        return flags
+        return _with_joined(image, flags)
 
     flags.extend(_placeholder_or_filename(alt, image.filename))
     if len(alt) < _SHORT_ALT_LEN:
@@ -186,7 +231,7 @@ def analyze_image(image: AltExportImage, *, duplicate: bool = False) -> list[str
         flags.append(FLAG_DUPLICATE_ALT)
     if _should_check_resolution(image) and looks_low_resolution(image):
         flags.append(FLAG_LOW_RESOLUTION)
-    return flags
+    return _with_joined(image, flags)
 
 
 def run_heuristics(export: AltExport) -> HeuristicReport:

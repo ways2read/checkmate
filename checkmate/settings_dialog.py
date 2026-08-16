@@ -7,6 +7,9 @@ import wx
 from .fido_settings import fido_settings_present
 from .i18n import _
 from .settings import (
+    COLOR_THEME_LABELS,
+    COLOR_THEMES,
+    DEFAULT_COLOR_THEME,
     DEFAULT_EPUB_CHECKERS,
     DEFAULT_SOUND_SCHEME,
     DEFAULT_VERAPDF_FLAVOUR,
@@ -18,6 +21,7 @@ from .settings import (
     VERAPDF_FLAVOURS,
     ai_features_enabled,
     ai_send_kb_article_body,
+    color_theme,
     epub_checkers,
     show_issues_always,
     single_instance_enabled,
@@ -71,6 +75,28 @@ class SettingsDialog(wx.Dialog):
             )
         )
         general.Add(self.sound_choice, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
+        theme_hint = wx.StaticText(self, label=_("Color theme:"))
+        general.Add(theme_hint, 0, wx.LEFT | wx.RIGHT | wx.TOP, 6)
+        self.theme_choice = wx.Choice(self)
+        self._theme_values: list[str] = []
+        current_theme = color_theme()
+        select_theme = 0
+        for i, code in enumerate(COLOR_THEMES):
+            label = _(COLOR_THEME_LABELS.get(code, code))
+            self.theme_choice.Append(label)
+            self._theme_values.append(code)
+            if code == current_theme:
+                select_theme = i
+        self.theme_choice.SetSelection(select_theme)
+        self.theme_choice.SetName(_("Color theme"))
+        self.theme_choice.SetToolTip(
+            _(
+                "System follows your computer's light or dark setting. "
+                "Light and Dark keep CheckMate on that theme."
+            )
+        )
+        general.Add(self.theme_choice, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
 
         self.single_instance_cb = wx.CheckBox(
             self, label=_("Allow only one window")
@@ -184,6 +210,12 @@ class SettingsDialog(wx.Dialog):
         ai_on = bool(self.ai_cb.IsEnabled() and self.ai_cb.GetValue())
         self.kb_body_cb.Enable(ai_on)
 
+    def selected_color_theme(self) -> str:
+        idx = self.theme_choice.GetSelection()
+        if 0 <= idx < len(self._theme_values):
+            return self._theme_values[idx]
+        return DEFAULT_COLOR_THEME
+
     def selected_sound_scheme(self) -> str:
         idx = self.sound_choice.GetSelection()
         if 0 <= idx < len(self._sound_values):
@@ -207,6 +239,7 @@ class SettingsDialog(wx.Dialog):
         kwargs: dict = {
             "show_issues_always": bool(self.show_issues_cb.GetValue()),
             "sound_scheme": self.selected_sound_scheme(),
+            "ui_color_theme": self.selected_color_theme(),
             "single_instance": bool(self.single_instance_cb.GetValue()),
             "epub_checkers": self.selected_epub_checkers(),
             "verapdf_flavour": self.selected_verapdf_flavour(),
@@ -215,3 +248,6 @@ class SettingsDialog(wx.Dialog):
             kwargs["ai_features_enabled"] = bool(self.ai_cb.GetValue())
             kwargs["ai_send_kb_article_body"] = bool(self.kb_body_cb.GetValue())
         update_settings(**kwargs)
+        from .ui_appearance import apply_color_theme
+
+        apply_color_theme(self.selected_color_theme())

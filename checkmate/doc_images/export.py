@@ -80,6 +80,36 @@ def _image_dimensions(path: str) -> str:
         return "Unknown"
 
 
+_THUMB_MAX_EDGE = 160
+_THUMB_JPEG_QUALITY = 55
+
+
+def _write_jpeg_thumb(src: str | Path, dest: Path) -> bool:
+    """Write a small JPEG card preview of *src*. Returns True on success."""
+    try:
+        import fitz  # type: ignore
+
+        pix = fitz.Pixmap(str(src))
+        if pix.n - pix.alpha >= 4:
+            pix = fitz.Pixmap(fitz.csRGB, pix)
+        if pix.alpha:
+            pix = fitz.Pixmap(pix, 0)
+        longest = max(pix.width, pix.height) or 1
+        if longest > _THUMB_MAX_EDGE:
+            scale = _THUMB_MAX_EDGE / float(longest)
+            pix = fitz.Pixmap(
+                pix,
+                max(1, int(round(pix.width * scale))),
+                max(1, int(round(pix.height * scale))),
+            )
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(pix.tobytes("jpeg", jpg_quality=_THUMB_JPEG_QUALITY))
+        return dest.is_file() and dest.stat().st_size > 0
+    except Exception:
+        logger.debug("Thumb encode failed for %s", src, exc_info=True)
+        return False
+
+
 def _image_classification(path: str, unclassified_label: str) -> str:
     try:
         from checkmate.doc_images._fido_xmp import display_for_ui, read_classification
@@ -103,8 +133,9 @@ def export_alt_text_report(
 ) -> AltTextExportResult:
     """Export all images from *backend* to an AltText_Export_* folder.
 
-    Writes ``alt_text_export.csv``, ``images/``, and optionally
-    ``alt_text_report.html``. Does not require wx.
+    Writes ``alt_text_export.csv``, ``images/`` (full previews), ``thumbs/``
+    (card-sized JPEGs), and optionally ``alt_text_report.html``. Does not
+    require wx.
 
     When *include_context* is True, each row gets a ``Context`` column from
     ``backend.get_context(index)`` (empty when unsupported).
@@ -126,8 +157,10 @@ def export_alt_text_report(
     safe = (safe or "document")[:50]
     export_path = Path(dest_parent) / f"AltText_Export_{safe}_{timestamp}"
     images_folder = export_path / "images"
+    thumbs_folder = export_path / "thumbs"
     export_path.mkdir(parents=True, exist_ok=True)
     images_folder.mkdir(parents=True, exist_ok=True)
+    thumbs_folder.mkdir(parents=True, exist_ok=True)
 
     stats = {
         "total": total,
@@ -189,6 +222,7 @@ def export_alt_text_report(
         )
 
         dest_filename = ""
+        thumb_filename = ""
         dimensions = "Unknown"
         file_size_str = "0 bytes"
         image_classification = labels["unclassified"]
@@ -206,6 +240,9 @@ def export_alt_text_report(
                     image_classification = _image_classification(
                         str(dest_path), labels["unclassified"]
                     )
+                thumb_name = f"image_{i + 1:04d}.jpg"
+                if _write_jpeg_thumb(dest_path, thumbs_folder / thumb_name):
+                    thumb_filename = thumb_name
             except Exception as e:
                 logger.debug("Export copy image %s: %s", i, e)
                 stats["errors"] += 1
@@ -214,6 +251,7 @@ def export_alt_text_report(
             {
                 "index": i + 1,
                 "filename": dest_filename,
+                "thumb_filename": thumb_filename,
                 "alt_text": alt,
                 "status": status,
                 "is_decorative": is_dec,
@@ -332,7 +370,7 @@ def export_document_alt_text(
 
 
 def write_alt_text_html_report(
-    html_path: str | Path,
+    html_path: str | Path | None,
     *,
     doc_name: str,
     export_data: list[dict[str, Any]],
@@ -340,8 +378,11 @@ def write_alt_text_html_report(
     timestamp: str,
     images_rel_dir: str = "images/",
     exported_by: str = "CheckMate",
-) -> None:
-    """Write the interactive HTML alt-text inventory report."""
+) -> str:
+    """Build the interactive HTML alt-text inventory report.
+
+    When *html_path* is set, also write that file (browser / folder view).
+    """
     import html as html_module
 
     try:
@@ -371,12 +412,38 @@ def write_alt_text_html_report(
             card_class = "no-alt"
             badge_class = "no-alt"
         fname = item.get("filename") or ""
-        img_tag = (
-            f'<img src="{html_module.escape(images_rel_dir + fname)}" '
-            f'alt="" loading="lazy" onclick="openModal(this)">'
-            if fname
-            else "<p>No image</p>"
+        thumb_name = (item.get("thumb_filename") or "").strip()
+        img_src = (item.get("img_src") or "").strip()
+        preview_href = (item.get("preview_href") or "").strip()
+        raw_full = (item.get("full_src") or "").strip()
+        full_src = raw_full or (
+            "" if preview_href else (images_rel_dir + fname if fname else "")
         )
+        thumb_src = img_src or (f"thumbs/{thumb_name}" if thumb_name else full_src)
+        if not fname:
+            img_tag = "<p>No image</p>"
+        elif preview_href and not raw_full:
+            # In-app SetPage: a real <a> so Edge fires NAVIGATING. Do not put a
+            # relative images/ path in data-full-src (no file:// base URL).
+            href = html_module.escape(preview_href, quote=True)
+            img_tag = (
+                f'<a class="thumb-link" href="{href}">'
+                f'<img src="{html_module.escape(thumb_src)}" alt="" '
+                f'loading="lazy" title="Click to enlarge"></a>'
+            )
+        else:
+            preview_attr = (
+                f' data-preview="{html_module.escape(preview_href, quote=True)}"'
+                if preview_href
+                else ""
+            )
+            img_tag = (
+                f'<img src="{html_module.escape(thumb_src)}" '
+                f'data-full-src="{html_module.escape(full_src)}" '
+                f'{preview_attr} '
+                f'alt="" loading="lazy" title="Click to enlarge" '
+                f'onclick="openModal(this)">'
+            )
         alt_display = (
             html_module.escape(alt)
             if alt
@@ -430,11 +497,37 @@ def write_alt_text_html_report(
         </div>"""
         )
 
+    try:
+        from checkmate.ui_appearance import (
+            html_color_scheme,
+            html_root_class,
+            wrap_os_dark_css,
+        )
+
+        color_scheme = html_color_scheme()
+        root_class = html_root_class()
+        extra_css = wrap_os_dark_css(
+            """
+        body { background: #0f172a; color: #e2e8f0; }
+        .stat-box, .filters, .image-card { background: #1e293b; }
+        .stat-box .label, .meta-info, .classification { color: #94a3b8; }
+        .alt-text { background: #0f172a; color: #e2e8f0; }
+        .context { background: #1e293b; color: #cbd5e1; }
+        .image-container { background: #0f172a; }
+        #search-box { background: #0f172a; color: #e2e8f0; border-color: #334155; }
+"""
+        )
+    except Exception:
+        color_scheme = "light dark"
+        root_class = "checkmate-theme-system"
+        extra_css = ""
+
     html_content = f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="{html_module.escape(root_class)}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="{html_module.escape(color_scheme)}">
     <title>Alt Text Report - {html_module.escape(doc_name)}</title>
     <style>
         body {{ font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; color: #333; }}
@@ -452,6 +545,7 @@ def write_alt_text_html_report(
         .image-card.has-alt {{ border-left: 4px solid #27ae60; }}
         .image-card.no-alt {{ border-left: 4px solid #e74c3c; }}
         .image-container {{ position: relative; background: #f0f0f0; min-height: 180px; display: flex; align-items: center; justify-content: center; padding: 10px; }}
+        .image-container a.thumb-link {{ display: flex; align-items: center; justify-content: center; width: 100%; text-decoration: none; color: inherit; }}
         .image-container img {{ max-width: 100%; max-height: 220px; object-fit: contain; cursor: pointer; }}
         .image-number, .status-badge {{ position: absolute; top: 10px; padding: 4px 8px; border-radius: 4px; font-size: .8em; color: #fff; }}
         .image-number {{ left: 10px; background: rgba(0,0,0,.7); }}
@@ -467,6 +561,8 @@ def write_alt_text_html_report(
         .modal {{ display: none; position: fixed; z-index: 99; inset: 0; background: rgba(0,0,0,.85); }}
         .modal-content {{ max-width: 90%; max-height: 90%; margin: 5vh auto; display: block; }}
         .modal-close {{ position: absolute; top: 16px; right: 28px; color: #fff; font-size: 2em; cursor: pointer; }}
+"""
+    html_content = html_content + extra_css + f"""
     </style>
 </head>
 <body>
@@ -501,6 +597,17 @@ def write_alt_text_html_report(
         function openModal(img) {{
             const modal = document.getElementById('imageModal');
             const modalImg = document.getElementById('modalImage');
+            const full = img.getAttribute('data-full-src') || '';
+            if (full) {{
+                modal.style.display = 'block';
+                modalImg.src = full;
+                return;
+            }}
+            const preview = img.getAttribute('data-preview');
+            if (preview) {{
+                window.location.href = preview;
+                return;
+            }}
             modal.style.display = 'block';
             modalImg.src = img.src;
         }}
@@ -536,4 +643,6 @@ def write_alt_text_html_report(
 </body>
 </html>
 """
-    Path(html_path).write_text(html_content, encoding="utf-8")
+    if html_path is not None:
+        Path(html_path).write_text(html_content, encoding="utf-8")
+    return html_content

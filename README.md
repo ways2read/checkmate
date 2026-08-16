@@ -56,14 +56,21 @@ support on Windows, macOS, and Linux.
   **Tools → Settings…** (hidden when FIDO AI is unavailable).
 - **Alt text** (packaged EPUB / eBraille / PDF after a check): **Alt text**
   button after AI overview opens an in-app inventory of images and alt text
-  (CheckMate-branded export, cached per publication). From that report, optional
-  **Run AI health check…** samples images with vision and synthesizes findings
-  (same FIDO AI credentials) — including alt quality, decorative vs content,
-  images of tables (prefer real table markup), images of math (prefer digital
-  math such as LaTeX/MathML/OMML, or PDF equation images tagged with MathML),
-  low-resolution rasters that fail under magnification, and likely wrong
-  orientation. Progress is cancellable and spoken to screen
-  readers.
+  (CheckMate-branded export, cached on disk per publication). From that report, optional
+  **Run AI Image Inspector…** samples images with vision and synthesizes
+  findings (same FIDO AI credentials) — including alt quality, decorative vs
+  content, images of tables (prefer real table markup), images of math (prefer
+  digital math such as LaTeX/MathML/OMML, or PDF equation images tagged with
+  MathML), low-resolution rasters that fail under magnification, likely wrong
+  orientation, joined/multi-panel figures, alt that repeats nearby prose,
+  language mismatch, and spelling or grammar. Guidance is format-specific
+  (PDF vs EPUB vs eBraille). The HTML report can be filtered, searched, and
+  sorted, and names the model in the disclaimer. PDF image previews follow
+  on-page crop and rotation. Several images are assessed in parallel (eight
+  at a time by default; fewer after a rate limit); the
+  progress dialog shows how many are done, running Likely OK / Needs
+  attention counts, which files are in flight, and an
+  estimated time remaining, can be cancelled, and is spoken to screen readers.
 - **Suggest fix with AI** (EPUB and eBraille only, when FIDO AI settings are present):
   from the same issue details dialog, ask for a minimal suggested markup patch,
   preview before/after, then **Apply fix and validate** to the exploded folder or packaged
@@ -86,8 +93,11 @@ support on Windows, macOS, and Linux.
   that ran (PDF/UA, ebraille, Ace axe-core); **Clear results**
   returns to the launch state
 - **Tools → Settings…**: general preferences (show issues always, sound
-  scheme, AI features) and the veraPDF PDF/UA profile (UA-1 or UA-2).
-  eBraille always uses the `ebraille` EPUBCheck profile
+  scheme, color theme — System / Light / Dark, AI features) and the veraPDF
+  PDF/UA profile (UA-1 or UA-2). eBraille always uses the `ebraille`
+  EPUBCheck profile. System follows the computer light/dark setting; Light
+  and Dark keep CheckMate on that theme (including HTML reports and
+  progress-dialog text).
 - Status bar shows installed checker versions, and Ace / Pipeline when detected
 - UI languages: English plus shipped catalogs (Français, Español, العربية,
   Русский, 日本語) and user-added languages (remembered; first run follows the

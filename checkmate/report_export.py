@@ -219,8 +219,50 @@ def _issue_rows_html(issues: list[Issue], esc) -> str:
     return "\n".join(rows)
 
 
+_REPORT_DARK_ROOT_TOKENS = """
+      :root {
+        --ink: #f1f5f9;
+        --muted: #94a3b8;
+        --paper: #0f172a;
+        --card: #1e293b;
+        --line: #334155;
+        --line-strong: #64748b;
+        --focus: #2dd4bf;
+        --focus-ring: #0f766e;
+        --passed: #bbf7d0;
+        --passed-bg: #14532d;
+        --passed-border: #166534;
+        --warn: #fed7aa;
+        --warn-bg: #7c2d12;
+        --warn-border: #c2410c;
+        --failed: #fecaca;
+        --failed-bg: #7f1d1d;
+        --failed-border: #b91c1c;
+        --fatal-fg: #fecaca;
+        --fatal-bg: #7f1d1d;
+        --error-fg: #fecaca;
+        --error-bg: #7f1d1d;
+        --warning-fg: #fed7aa;
+        --warning-bg: #7c2d12;
+        --info-fg: #bfdbfe;
+        --info-bg: #1e3a8a;
+        --usage-fg: #e2e8f0;
+        --usage-bg: #334155;
+        --toolbar-bg: #1e293b;
+        --shadow: 0 1px 3px rgb(0 0 0 / 35%);
+      }
+"""
+
+
 def _report_css() -> str:
-    return """
+    try:
+        from .ui_appearance import wrap_os_dark_css
+    except Exception:
+        def wrap_os_dark_css(inner: str) -> str:
+            return f"@media (prefers-color-scheme: dark) {{\n{inner}\n}}\n"
+
+    return (
+        """
     :root {
       --ink: #0f172a;
       --muted: #475569;
@@ -255,39 +297,9 @@ def _report_css() -> str:
       --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
       --mono: ui-monospace, "Cascadia Code", "Consolas", "Liberation Mono", monospace;
     }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --ink: #f1f5f9;
-        --muted: #94a3b8;
-        --paper: #0f172a;
-        --card: #1e293b;
-        --line: #334155;
-        --line-strong: #64748b;
-        --focus: #2dd4bf;
-        --focus-ring: #0f766e;
-        --passed: #bbf7d0;
-        --passed-bg: #14532d;
-        --passed-border: #166534;
-        --warn: #fed7aa;
-        --warn-bg: #7c2d12;
-        --warn-border: #c2410c;
-        --failed: #fecaca;
-        --failed-bg: #7f1d1d;
-        --failed-border: #b91c1c;
-        --fatal-fg: #fecaca;
-        --fatal-bg: #7f1d1d;
-        --error-fg: #fecaca;
-        --error-bg: #7f1d1d;
-        --warning-fg: #fed7aa;
-        --warning-bg: #7c2d12;
-        --info-fg: #bfdbfe;
-        --info-bg: #1e3a8a;
-        --usage-fg: #e2e8f0;
-        --usage-bg: #334155;
-        --toolbar-bg: #1e293b;
-        --shadow: 0 1px 3px rgb(0 0 0 / 35%);
-      }
-    }
+"""
+        + wrap_os_dark_css(_REPORT_DARK_ROOT_TOKENS)
+        + """
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
     @media (prefers-reduced-motion: reduce) {
@@ -772,6 +784,25 @@ def _report_css() -> str:
       a { color: inherit; text-decoration: none; }
     }
     """
+    )
+
+
+def _html_root_class() -> str:
+    try:
+        from .ui_appearance import html_root_class
+
+        return html_root_class()
+    except Exception:
+        return "checkmate-theme-system"
+
+
+def _html_color_scheme() -> str:
+    try:
+        from .ui_appearance import html_color_scheme
+
+        return html_color_scheme()
+    except Exception:
+        return "light dark"
 
 
 def _report_js(total: int) -> str:
@@ -1028,11 +1059,11 @@ def format_html_report(
     skip = esc(_("Skip to issues"))
 
     return f"""<!DOCTYPE html>
-<html lang="{esc(get_language())}" dir="{esc(get_text_direction())}">
+<html lang="{esc(get_language())}" dir="{esc(get_text_direction())}" class="{esc(_html_root_class())}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
+  <meta name="color-scheme" content="{esc(_html_color_scheme())}">
   <title>{esc(title)}</title>
   <style>{_report_css()}
   </style>

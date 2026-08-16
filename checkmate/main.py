@@ -12,6 +12,23 @@ import time
 import webbrowser
 from pathlib import Path
 
+# wx 4.3+ reads this at import time on Windows. Light theme must opt out
+# before ``import wx``; see checkmate.ui_appearance.prepare_process_appearance.
+if sys.platform == "win32":
+    _boot_theme = "system"
+    try:
+        from .settings import read_settings as _read_boot_settings
+
+        _boot_theme = str(
+            _read_boot_settings().get("ui_color_theme", "system")
+        ).strip().lower()
+    except Exception:
+        pass
+    if _boot_theme == "light":
+        os.environ["wx_msw_dark_mode"] = "0"
+    else:
+        os.environ.setdefault("wx_msw_dark_mode", "1")
+
 import wx
 import wx.adv
 import wx.dataview as dv
@@ -171,6 +188,12 @@ def _create_ai_html_view(
             except Exception:
                 pass
             # Tab-stop ownership is decided in ``_wire_ai_html_host``.
+            try:
+                from .ui_appearance import apply_webview_appearance
+
+                apply_webview_appearance(view)
+            except Exception:
+                pass
             return view, True
 
     text = wx.TextCtrl(
@@ -491,6 +514,13 @@ def _announce_progress_status(dlg: wx.Window | None, message: str) -> None:
         speak(msg, interrupt=True)
     except Exception:
         pass
+
+
+def _alt_assess_progress_body(message: str) -> str:
+    """Pad inspector status so wx.ProgressDialog keeps a stable multiline height."""
+    from .ai.alt_assess import format_vision_progress_dialog
+
+    return format_vision_progress_dialog(message)
 
 
 def _ai_libraries_status_message() -> str:
@@ -2084,6 +2114,14 @@ class IssueDetailDialog(wx.Dialog):
                 self._content_panel.Layout()
         except RuntimeError:
             pass
+        self._refresh_shown_panel_appearance()
+        try:
+            self._page_appearance_timers = [
+                wx.CallLater(50, self._refresh_shown_panel_appearance),
+                wx.CallLater(350, self._refresh_shown_panel_appearance),
+            ]
+        except Exception:
+            pass
 
     def _refresh_host_tab_stops(self) -> None:
         """Keep only the visible page host in the dialog Tab cycle."""
@@ -2149,6 +2187,27 @@ class IssueDetailDialog(wx.Dialog):
                     _win_ensure_control_parent(panel)
             except RuntimeError:
                 pass
+
+        self._refresh_shown_panel_appearance()
+
+    def _refresh_shown_panel_appearance(self) -> None:
+        """Re-theme follow-up edits after Show/Hide; WebView can reset them."""
+        from .ui_appearance import apply_window_appearance
+
+        for panel in (
+            getattr(self, "_explain_actions", None),
+            getattr(self, "_fix_actions", None),
+            getattr(self, "_explain_followup", None),
+            getattr(self, "_fix_followup", None),
+        ):
+            if panel is None:
+                continue
+            try:
+                if not panel.IsShown():
+                    continue
+            except RuntimeError:
+                continue
+            apply_window_appearance(panel)
 
     def _active_is_ai_page(self) -> bool:
         return self._active_page_key in (self._PAGE_EXPLAIN, self._PAGE_FIX)
@@ -3718,6 +3777,8 @@ class AiOverviewDialog(wx.Dialog):
         self._ai_view_realized = False
         self._ai_focus_gen = 0
         self._closing = False
+        self._pending_later: list[wx.CallLater] = []
+        self._dialog_html_cache: str | None = None
         from .ai.markdown_html import with_ai_disclaimer
 
         self._ai_markdown = with_ai_disclaimer(markdown_text or "")
@@ -3780,11 +3841,35 @@ class AiOverviewDialog(wx.Dialog):
 
         self.SetSizer(root)
         self.CentreOnParent()
-        self.SetEscapeId(wx.ID_CLOSE)
-        self.SetAffirmativeId(wx.ID_CLOSE)
+        self.SetEscapeId(wx.ID_NONE)
+        self.SetAffirmativeId(wx.ID_NONE)
         self.Bind(wx.EVT_CLOSE, self._on_close_dialog)
         self.Bind(wx.EVT_CHAR_HOOK, self._on_dialog_char_hook)
+        self.Bind(wx.EVT_SHOW, self._on_show)
         close_btn.SetDefault()
+
+    def _call_later(self, ms: int, fn) -> wx.CallLater:
+        timer = wx.CallLater(ms, fn)
+        self._pending_later.append(timer)
+        return timer
+
+    def _stop_pending_later(self) -> None:
+        for timer in list(self._pending_later):
+            try:
+                timer.Stop()
+            except Exception:
+                pass
+        self._pending_later.clear()
+
+    def ShowModal(self):  # type: ignore[override]
+        wx.CallAfter(self._realize_ai_html_view)
+        return super().ShowModal()
+
+    def _on_show(self, event: wx.ShowEvent) -> None:
+        event.Skip()
+        if not event.IsShown() or self._ai_view_realized or self._closing:
+            return
+        wx.CallAfter(self._realize_ai_html_view)
 
     def _on_dialog_char_hook(self, event: wx.KeyEvent) -> None:
         if event.GetKeyCode() == wx.WXK_ESCAPE:
@@ -3793,7 +3878,7 @@ class AiOverviewDialog(wx.Dialog):
         event.Skip()
 
     def _realize_ai_html_view(self) -> None:
-        if getattr(self, "_ai_view_realized", False):
+        if getattr(self, "_ai_view_realized", False) or getattr(self, "_closing", False):
             return
         host = getattr(self, "_ai_output_host", None)
         if host is None:
@@ -3805,12 +3890,6 @@ class AiOverviewDialog(wx.Dialog):
 
             view.Bind(html2.EVT_WEBVIEW_NAVIGATING, self._on_webview_navigating)
             view.Bind(html2.EVT_WEBVIEW_LOADED, self._on_webview_loaded)
-            from .ai.markdown_html import ai_idle_placeholder_page
-
-            view.SetPage(
-                ai_idle_placeholder_page(title=_("AI overview"), tab_exit=True),
-                "",
-            )
         else:
             view.ChangeValue(_("AI-generated responses will be shown here."))
         sizer = host.GetSizer()
@@ -3824,19 +3903,23 @@ class AiOverviewDialog(wx.Dialog):
         host.Layout()
         self.Layout()
         if is_webview:
-            wx.CallLater(
+            self._call_later(
                 100,
                 lambda h=host, v=view: _refresh_ai_html_tab_stops(
                     h, v, is_webview=True
                 ),
             )
-            wx.CallLater(
+            self._call_later(
                 300,
                 lambda h=host, v=view: _refresh_ai_html_tab_stops(
                     h, v, is_webview=True
                 ),
             )
-        self._paint_content(focus=True)
+            # First idle after New() is often still about:blank; SetPage twice.
+            wx.CallAfter(lambda: self._paint_content(focus=True))
+            self._call_later(300, lambda: self._paint_content(focus=False))
+        else:
+            self._paint_content(focus=True)
 
     def _on_webview_navigating(self, event) -> None:
         url = (event.GetURL() or "").strip()
@@ -4001,14 +4084,19 @@ class AiOverviewDialog(wx.Dialog):
         )
 
     def _dialog_html(self) -> str:
+        cached = getattr(self, "_dialog_html_cache", None)
+        if cached is not None:
+            return cached
         from .ai.markdown_html import markdown_to_browser_page
 
-        return markdown_to_browser_page(
+        html_doc = markdown_to_browser_page(
             self._ai_markdown or "",
             title=_("AI overview"),
             plain=self._ai_plain,
             tab_exit=True,
         )
+        self._dialog_html_cache = html_doc
+        return html_doc
 
     def _paint_content(self, *, focus: bool = False) -> None:
         if not self._ai_dialog_alive():
@@ -4017,7 +4105,14 @@ class AiOverviewDialog(wx.Dialog):
             return
         if self._ai_output_is_webview:
             self._ai_focus_after_load = bool(focus)
-            self.ai_output.SetPage(self._dialog_html(), "")
+            html_doc = self._dialog_html()
+            try:
+                self.ai_output.SetPage(html_doc, "")
+            except Exception:
+                try:
+                    self.ai_output.SetPage(html_doc, "about:blank")
+                except Exception:
+                    return
             if focus and not self._ai_focus_after_load:
                 if _markdown_has_latest_followup(self._ai_markdown or ""):
                     self._schedule_reveal_latest_followup()
@@ -4215,6 +4310,7 @@ class AiOverviewDialog(wx.Dialog):
             answer=result.text or "",
         )
         self._ai_plain = False
+        self._dialog_html_cache = None
 
         def _paint_followup() -> None:
             if not self._ai_dialog_alive():
@@ -4328,6 +4424,7 @@ class AiOverviewDialog(wx.Dialog):
                 event.Veto()
             return
         self._closing = True
+        self._stop_pending_later()
         # Cancel deferred WebView focus/reveal/paint chains.
         self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
         if self._ai_cancel is not None:
@@ -4754,9 +4851,13 @@ class EBrailleApp(wx.App):
             return False
 
         init_app_telemetry(self)
+        from .ui_appearance import apply_toplevel_appearance, enable_app_appearance
+
+        enable_app_appearance(self)
         self.frame = MainFrame(initial_paths=self._pending_paths)
         self._pending_paths.clear()
         self.frame.Show()
+        apply_toplevel_appearance(self.frame)
         self._open_watcher = OpenRequestWatcher(
             self,
             self._on_external_open_paths,
@@ -4820,14 +4921,18 @@ class MainFrame(wx.Frame):
         self._alt_assess_cancel: threading.Event | None = None
         self._alt_assess_progress: wx.ProgressDialog | None = None
         self._alt_assess_progress_timer: wx.Timer | None = None
+        self._alt_inventory_busy = False
+        self._alt_inventory_dialog = None
+        self._alt_inventory_open_timer = None
+        self._pending_alt_inventory: tuple[Path, Path] | None = None
         self.menu_ai_overview: wx.MenuItem | None = None
         self.menu_settings: wx.MenuItem | None = None
         self._lang_menu_items: dict[str, wx.MenuItem] = {}
         self._issues_visible = True
         self._issues_height_delta = 0
         self._source_filter_wanted = False
-        self._result_icon_cache: dict[tuple[str, int], wx.Bitmap] = {}
-        self._result_icon_key: str | None = None
+        self._result_icon_cache: dict[tuple[str, int, bool], wx.Bitmap] = {}
+        self._result_icon_key: tuple[str, int, bool] | None = None
         self._initial_focus_pending = True
         self._pending_open_paths = list(initial_paths or [])
         self._apply_window_icon()
@@ -4976,10 +5081,10 @@ class MainFrame(wx.Frame):
 
         ``focus=True`` requests a screen-reader announcement.
         """
-        self.result_label.ChangeValue(display)
-        self._apply_result_text_direction()
-        self._set_result_accessible_name(display)
         self._set_result_colors(verdict)
+        self.result_label.ChangeValue(display)
+        self._set_result_accessible_name(display)
+        self._apply_result_text_direction()
         spoken = title if title is not None else display
 
         if focus:
@@ -5029,25 +5134,58 @@ class MainFrame(wx.Frame):
         self.result_label.SetFocus()
         wx.CallAfter(self._prepare_result_for_review)
 
+    def _result_text_attr(
+        self, *, fg: wx.Colour | None = None, bg: wx.Colour | None = None
+    ) -> wx.TextAttr:
+        """Alignment plus optional colours — empty TextAttr defaults to light."""
+        rtl = get_text_direction() == TEXT_DIRECTION_RTL
+        attr = wx.TextAttr()
+        flags = wx.TEXT_ATTR_ALIGNMENT
+        attr.SetAlignment(
+            wx.TEXT_ALIGNMENT_RIGHT if rtl else wx.TEXT_ALIGNMENT_LEFT
+        )
+        if fg is not None and fg.IsOk():
+            attr.SetTextColour(fg)
+            flags |= wx.TEXT_ATTR_TEXT_COLOUR
+        if bg is not None and bg.IsOk():
+            attr.SetBackgroundColour(bg)
+            flags |= wx.TEXT_ATTR_BACKGROUND_COLOUR
+        attr.SetFlags(flags)
+        return attr
+
+    def _apply_result_text_attr(self, attr: wx.TextAttr) -> None:
+        end = self.result_label.GetLastPosition()
+        if end > 0:
+            self.result_label.SetStyle(0, end, attr)
+        self.result_label.SetDefaultStyle(attr)
+
     def _set_result_colors(self, verdict: Verdict | None) -> None:
-        """Color the result pane by verdict; None restores system defaults."""
-        if verdict is None:
-            self.result_label.SetForegroundColour(wx.NullColour)
-            self.result_label.SetBackgroundColour(wx.NullColour)
-            self.result_label.Refresh()
-            return
-        # Dark text + soft tint: readable on light themes; wording still carries meaning.
-        fg, bg = {
-            Verdict.PASSED: (wx.Colour(0, 110, 45), wx.Colour(228, 245, 231)),
-            Verdict.PASSED_WITH_WARNINGS: (
-                wx.Colour(150, 85, 0),
-                wx.Colour(255, 242, 220),
-            ),
-            Verdict.FAILED: (wx.Colour(160, 25, 25), wx.Colour(252, 228, 228)),
-            Verdict.ERROR: (wx.Colour(160, 25, 25), wx.Colour(252, 228, 228)),
-        }[verdict]
+        """Theme fill in dark mode; light mode may tint by verdict."""
+        from .ui_appearance import (
+            control_fill_colour,
+            prefers_dark,
+            primary_text_colour,
+        )
+
+        if verdict is None or prefers_dark():
+            fg = primary_text_colour()
+            bg = control_fill_colour()
+            self.result_label._checkmate_preserve_colours = False
+        else:
+            # Dark text + soft tint: readable on light themes.
+            fg, bg = {
+                Verdict.PASSED: (wx.Colour(0, 110, 45), wx.Colour(228, 245, 231)),
+                Verdict.PASSED_WITH_WARNINGS: (
+                    wx.Colour(150, 85, 0),
+                    wx.Colour(255, 242, 220),
+                ),
+                Verdict.FAILED: (wx.Colour(160, 25, 25), wx.Colour(252, 228, 228)),
+                Verdict.ERROR: (wx.Colour(160, 25, 25), wx.Colour(252, 228, 228)),
+            }[verdict]
+            self.result_label._checkmate_preserve_colours = True
         self.result_label.SetForegroundColour(fg)
         self.result_label.SetBackgroundColour(bg)
+        self._apply_result_text_attr(self._result_text_attr(fg=fg, bg=bg))
         self.result_label.Refresh()
 
     def _result_icon_display_size(self) -> int:
@@ -5076,11 +5214,22 @@ class MainFrame(wx.Frame):
             "ok": "checkmate.png",
             "x": "checkmate-x.png",
         }
-        path = images_dir() / names[key]
+        name = names[key]
+        folder = images_dir()
+        from .ui_appearance import prefers_dark
+
+        if prefers_dark():
+            dark = folder / name.replace(".png", "-dark.png")
+            if dark.is_file():
+                return dark
+        path = folder / name
         return path if path.is_file() else None
 
     def _scaled_result_icon_bitmap(self, key: str, size: int) -> wx.Bitmap | None:
-        cached = self._result_icon_cache.get((key, size))
+        from .ui_appearance import prefers_dark
+
+        cache_key = (key, size, prefers_dark())
+        cached = self._result_icon_cache.get(cache_key)
         if cached is not None and cached.IsOk():
             return cached
         path = self._result_status_icon_path(key)
@@ -5094,16 +5243,19 @@ class MainFrame(wx.Frame):
         bitmap = wx.Bitmap(image)
         if not bitmap.IsOk():
             return None
-        self._result_icon_cache[(key, size)] = bitmap
+        self._result_icon_cache[cache_key] = bitmap
         return bitmap
 
     def _update_result_status_icon(self) -> None:
         """Show waiting / pass / issues graphic beside the result box."""
         if not hasattr(self, "result_icon"):
             return
+        from .ui_appearance import prefers_dark
+
         key = self._result_status_icon_key()
         size = self._result_icon_display_size()
-        if key == self._result_icon_key:
+        token = (key, size, prefers_dark())
+        if token == self._result_icon_key:
             current = self.result_icon.GetBitmap()
             if current.IsOk() and current.GetWidth() == size:
                 return
@@ -5127,7 +5279,7 @@ class MainFrame(wx.Frame):
         self.result_icon.SetName(
             _("Check status: {status}. {action}", status=tip, action=open_hint)
         )
-        self._result_icon_key = key
+        self._result_icon_key = token
         icon_sizer = getattr(self, "result_icon_sizer", None)
         if icon_sizer is not None:
             icon_sizer.Layout()
@@ -5304,6 +5456,7 @@ class MainFrame(wx.Frame):
             )
         )
         root.Add(result_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        self._set_result_colors(None)
         self._update_result_status_icon()
 
         # --- Issues ---
@@ -5685,6 +5838,7 @@ class MainFrame(wx.Frame):
         self.unique_codes_cb.Bind(wx.EVT_CHECKBOX, self.on_unique_codes_changed)
         self.path_ctrl.Bind(wx.EVT_TEXT_ENTER, self.on_check)
         self._bind_menus()
+        self.Bind(wx.EVT_CLOSE, self._on_main_close)
 
         self.Bind(EVT_PROGRESS, self.on_progress_event)
         self.Bind(EVT_RESULT, self.on_result_event)
@@ -5723,6 +5877,19 @@ class MainFrame(wx.Frame):
                 [(wx.ACCEL_NORMAL, wx.WXK_ESCAPE, wx.ID_EXIT)]
             )
         )
+
+    def _on_main_close(self, event: wx.CloseEvent) -> None:
+        from .ai.alt_inventory_dialog import flush_pending_webview_destroys
+
+        dlg = getattr(self, "_alt_inventory_dialog", None)
+        self._alt_inventory_dialog = None
+        if dlg is not None:
+            try:
+                dlg.Destroy()
+            except RuntimeError:
+                pass
+        flush_pending_webview_destroys()
+        event.Skip()
 
     def on_language_selected(self, lang: str) -> None:
         if lang == get_language():
@@ -6277,13 +6444,11 @@ class MainFrame(wx.Frame):
         except Exception:
             pass
         try:
-            align = wx.TEXT_ALIGNMENT_RIGHT if rtl else wx.TEXT_ALIGNMENT_LEFT
-            attr = wx.TextAttr()
-            attr.SetAlignment(align)
-            end = self.result_label.GetLastPosition()
-            if end > 0:
-                self.result_label.SetStyle(0, end, attr)
-            self.result_label.SetDefaultStyle(attr)
+            # Reuse the pane colours. A bare TextAttr defaults to black-on-white
+            # and would flash a light fill when the Checking… text is applied.
+            fg = self.result_label.GetForegroundColour()
+            bg = self.result_label.GetBackgroundColour()
+            self._apply_result_text_attr(self._result_text_attr(fg=fg, bg=bg))
         except Exception:
             pass
 
@@ -6586,6 +6751,19 @@ class MainFrame(wx.Frame):
         self._focus_select_button()
 
     # --- Helpers ---
+
+    def _reclaim_after_modal(self) -> None:
+        """WebView2 / ProgressDialog teardown can leave this frame disabled."""
+        try:
+            self.Enable(True)
+            self.Raise()
+            _win_force_foreground(self)
+        except RuntimeError:
+            pass
+        try:
+            self._update_alt_text_btn_enabled()
+        except Exception:
+            pass
 
     def _update_status_bar(self) -> None:
         """Status bar is reserved for checker/Java version info only."""
@@ -7359,6 +7537,11 @@ class MainFrame(wx.Frame):
             if dlg.ShowModal() != wx.ID_OK:
                 return
             dlg.apply()
+        verdict = (
+            self._last_result.verdict if self._last_result is not None else None
+        )
+        self._set_result_colors(verdict)
+        self._update_result_status_icon()
         if ai_features_enabled() != prev_ai:
             self._apply_ai_features_visibility()
             if ai_features_enabled():
@@ -7694,32 +7877,32 @@ class MainFrame(wx.Frame):
         except Exception:
             pass
 
-        progress = wx.ProgressDialog(
-            _("AI overview"),
-            _("Loading AI view…"),
-            maximum=100,
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE,
-        )
-        dlg = None
         try:
-            _pulse_progress(progress, _("Loading AI view…"))
-            wx.SafeYield(self, True)
-            dlg = AiOverviewDialog(
-                self,
-                markdown_text=out.text or "",
-                result=check_result,
-                session=out.session,
-            )
-            dlg._realize_ai_html_view()
-        finally:
-            _clear_progress_announce(progress)
-            try:
-                progress.Destroy()
-            except RuntimeError:
-                pass
-        if dlg is not None:
+            from .ai.alt_inventory_dialog import flush_pending_webview_destroys
+
+            flush_pending_webview_destroys()
+        except Exception:
+            pass
+
+        dlg = AiOverviewDialog(
+            self,
+            markdown_text=out.text or "",
+            result=check_result,
+            session=out.session,
+        )
+        # Do not create the WebView before ShowModal (blank Edge HWND), and
+        # wait one idle after the generation ProgressDialog is destroyed.
+        self._overview_dialog = dlg
+        wx.CallAfter(self._run_overview_dialog)
+
+    def _run_overview_dialog(self) -> None:
+        dlg = getattr(self, "_overview_dialog", None)
+        self._overview_dialog = None
+        if dlg is None:
+            return
+        try:
             dlg.ShowModal()
+        finally:
             try:
                 dlg.Destroy()
             except RuntimeError:
@@ -7751,11 +7934,35 @@ class MainFrame(wx.Frame):
     def _alt_assess_status_callback(self, message: str) -> None:
         def update() -> None:
             if self._alt_assess_progress is not None:
-                cont = _pulse_progress(self._alt_assess_progress, message)
+                text = _alt_assess_progress_body(
+                    _("Cancelling…")
+                    if self._alt_assess_cancel is not None
+                    and self._alt_assess_cancel.is_set()
+                    else message
+                )
+                cont = _pulse_progress(self._alt_assess_progress, text)
                 if not cont and self._alt_assess_cancel is not None:
                     self._alt_assess_cancel.set()
 
         wx.CallAfter(update)
+
+    def _alt_assess_progress_is_live(self) -> bool:
+        """True when a progress dialog is actually on screen.
+
+        A destroyed or cancelled wx.ProgressDialog can still sit in
+        ``_alt_assess_progress`` and would silently block Alt text.
+        """
+        dlg = self._alt_assess_progress
+        if dlg is None:
+            return False
+        try:
+            if not dlg:
+                self._close_alt_assess_progress()
+                return False
+            return True
+        except RuntimeError:
+            self._close_alt_assess_progress()
+            return False
 
     def _on_alt_assess_progress_timer(self, _event: wx.TimerEvent) -> None:
         dlg = self._alt_assess_progress
@@ -7765,7 +7972,9 @@ class MainFrame(wx.Frame):
         cont = _pulse_progress(dlg)
         if not cont:
             cancel.set()
-            _pulse_progress(dlg, _("Cancelling…"))
+            _pulse_progress(dlg, _alt_assess_progress_body(_("Cancelling…")))
+            # Close now so Alt text is not blocked if the worker returns
+            # before posting a result (e.g. cancel during library preload).
             self._close_alt_assess_progress()
 
     def on_alt_text_report(self, _event: wx.CommandEvent) -> None:
@@ -7778,7 +7987,7 @@ class MainFrame(wx.Frame):
                 self,
             )
             return
-        if self._alt_assess_progress is not None:
+        if self._alt_assess_progress_is_live():
             return
         if self._last_result is None:
             return
@@ -7807,10 +8016,7 @@ class MainFrame(wx.Frame):
         """Open the inventory HTML dialog; optionally continue to AI health check."""
         try:
             from .ai.alt_export import ensure_alt_report_html
-            from .ai.alt_inventory_dialog import (
-                ID_RUN_AI_HEALTH,
-                AltTextReportDialog,
-            )
+            from .ai.alt_inventory_dialog import flush_pending_webview_destroys
 
             html_path = ensure_alt_report_html(folder)
         except Exception as exc:
@@ -7822,18 +8028,98 @@ class MainFrame(wx.Frame):
             )
             return
 
-        dlg = AltTextReportDialog(self, folder=folder, html_path=html_path)
+        self._stop_alt_inventory_open_timer()
+        flush_pending_webview_destroys()
+        self._reclaim_after_modal()
+        # Open now (not CallAfter). After a few Edge create/destroy cycles
+        # idle callbacks stop running and Alt text looks dead.
+        self._present_alt_inventory_report(folder, html_path)
+
+    def _stop_alt_inventory_open_timer(self) -> None:
+        timer = getattr(self, "_alt_inventory_open_timer", None)
+        self._alt_inventory_open_timer = None
+        if timer is None:
+            return
+        try:
+            timer.Stop()
+        except Exception:
+            pass
+
+    def _alive_inventory_dialog(self):
+        dlg = getattr(self, "_alt_inventory_dialog", None)
+        if dlg is None:
+            return None
+        try:
+            if dlg:
+                return dlg
+        except RuntimeError:
+            pass
+        self._alt_inventory_dialog = None
+        return None
+
+    def _present_pending_alt_inventory(self) -> None:
+        self._alt_inventory_open_timer = None
+        pending = getattr(self, "_pending_alt_inventory", None)
+        if pending is None:
+            return
+        folder, html_path = pending
+        self._pending_alt_inventory = None
+        self._present_alt_inventory_report(folder, html_path)
+
+    def _present_alt_inventory_report(self, folder: Path, html_path: Path) -> None:
+        from .ai.alt_inventory_dialog import ID_RUN_AI_HEALTH, AltTextReportDialog
+
+        dlg = self._alive_inventory_dialog()
+        try:
+            if dlg is not None and dlg.IsModal():
+                dlg.Raise()
+                return
+        except RuntimeError:
+            dlg = None
+            self._alt_inventory_dialog = None
+
+        if getattr(self, "_alt_inventory_busy", False):
+            try:
+                live = dlg is not None and dlg.IsModal()
+            except RuntimeError:
+                live = False
+            if live:
+                return
+            self._alt_inventory_busy = False
+
+        self._reclaim_after_modal()
+        if dlg is None:
+            dlg = AltTextReportDialog(self, folder=folder, html_path=html_path)
+            self._alt_inventory_dialog = dlg
+        else:
+            dlg.prepare(folder, html_path)
+
+        self._alt_inventory_busy = True
+        result = wx.ID_CANCEL
         try:
             result = dlg.ShowModal()
+            result = getattr(dlg, "exit_code", result) or result
+        except Exception as exc:
+            wx.MessageBox(
+                _("Could not open the alt text report:\n{error}").format(error=exc),
+                _("Alt text report"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
         finally:
-            dlg.Destroy()
+            self._alt_inventory_busy = False
+            # Keep the dialog and its WebView. Creating a new Edge host each
+            # open dies after a few cycles on Windows.
+            self._reclaim_after_modal()
 
         if result == int(ID_RUN_AI_HEALTH):
             if not ai_features_enabled():
                 return
             # Defer so Edge WebView teardown finishes before the next modal
             # (otherwise Windows can appear to hang after "Run AI health check").
-            wx.CallAfter(self._prompt_alt_assess_sample, folder)
+            self._alt_assess_open_timer = wx.CallLater(
+                700, self._prompt_alt_assess_sample, folder
+            )
 
     def _export_alt_for_assess(self, doc_path: Path) -> Path | None:
         """Build a Fido-style export folder from *doc_path*; return it or None.
@@ -7915,9 +8201,13 @@ class MainFrame(wx.Frame):
                 pass
 
     def _prompt_alt_assess_sample(self, folder: Path) -> None:
+        from .ai.alt_inventory_dialog import flush_pending_webview_destroys
+
+        flush_pending_webview_destroys()
         # Preflight: load CSV + confirm sample size
         try:
             from .ai.alt_export import load_alt_export
+            from .ai.alt_labels import feature_title
             from .ai.alt_sample import DEFAULT_SAMPLE_PERCENT, sample_choice_labels
 
             export = load_alt_export(folder)
@@ -7926,7 +8216,7 @@ class MainFrame(wx.Frame):
 
             wx.MessageBox(
                 error_message_for_key("bad_export", detail=str(exc)),
-                _("Alt text health check"),
+                feature_title(),
                 wx.OK | wx.ICON_ERROR,
                 self,
             )
@@ -7936,7 +8226,7 @@ class MainFrame(wx.Frame):
 
             wx.MessageBox(
                 error_message_for_key("bad_export", detail=str(exc)),
-                _("Alt text health check"),
+                feature_title(),
                 wx.OK | wx.ICON_ERROR,
                 self,
             )
@@ -7944,7 +8234,7 @@ class MainFrame(wx.Frame):
         except Exception as exc:
             wx.MessageBox(
                 _("Could not read the export folder:\n{error}").format(error=exc),
-                _("Alt text health check"),
+                feature_title(),
                 wx.OK | wx.ICON_ERROR,
                 self,
             )
@@ -7983,7 +8273,7 @@ class MainFrame(wx.Frame):
                 decorative=counts["decorative"],
                 missing=counts["missing"],
             ),
-            _("Alt text health check"),
+            feature_title(),
             choices,
         )
         try:
@@ -8008,20 +8298,21 @@ class MainFrame(wx.Frame):
         parent: wx.Window | None = None,
     ) -> None:
         """Run alt assessment on a worker thread and show/update the dialog."""
-        if self._alt_assess_progress is not None:
+        from .ai.alt_labels import feature_title
+
+        if self._alt_assess_progress_is_live():
             return
         cancel = threading.Event()
         self._alt_assess_cancel = cancel
+        start_msg = _alt_assess_progress_body(_ai_libraries_status_message())
         self._alt_assess_progress = wx.ProgressDialog(
-            _("Alt text health check"),
-            _ai_libraries_status_message(),
+            feature_title(),
+            start_msg,
             maximum=100,
             parent=parent or self,
             style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
         )
-        _present_progress_dialog(
-            self._alt_assess_progress, _ai_libraries_status_message()
-        )
+        _present_progress_dialog(self._alt_assess_progress, start_msg)
         self._alt_assess_progress_timer = wx.Timer(self)
         self.Bind(
             wx.EVT_TIMER,
@@ -8033,47 +8324,54 @@ class MainFrame(wx.Frame):
 
         def work() -> None:
             from .ai.alt_assess import AltAssessResult, assess_alt_export
+            from .ai.alt_labels import feature_title
             from .ai.explain import error_message_for_key
             from .ai.litellm_client import preload_litellm
 
-            ok, detail = preload_litellm()
-            if not ok:
-                def fail() -> None:
-                    self._close_alt_assess_progress()
-                    wx.MessageBox(
-                        error_message_for_key("no_litellm", detail=detail),
-                        _("Alt text health check"),
-                        wx.OK | wx.ICON_ERROR,
-                        parent or self,
-                    )
+            posted = False
+            try:
+                ok, detail = preload_litellm()
+                if not ok:
+                    def fail() -> None:
+                        self._close_alt_assess_progress()
+                        wx.MessageBox(
+                            error_message_for_key("no_litellm", detail=detail),
+                            feature_title(),
+                            wx.OK | wx.ICON_ERROR,
+                            parent or self,
+                        )
 
-                wx.CallAfter(fail)
-                return
-            if cancel.is_set():
-                return
-            try:
-                out = assess_alt_export(
-                    folder,
-                    mode=mode,
-                    percent=percent,
-                    prior=prior,
-                    cancel_event=cancel,
-                    status_callback=status_cb,
-                )
-            except Exception as exc:
-                out = AltAssessResult(
-                    ok=False, error_key="provider_error", detail=str(exc)
-                )
-            if cancel.is_set():
-                wx.CallAfter(self._close_alt_assess_progress)
-                return
-            try:
-                wx.PostEvent(
-                    self,
-                    AltAssessAiEvent(result=out),
-                )
-            except RuntimeError:
-                return
+                    wx.CallAfter(fail)
+                    posted = True
+                    return
+                if cancel.is_set():
+                    return
+                try:
+                    out = assess_alt_export(
+                        folder,
+                        mode=mode,
+                        percent=percent,
+                        prior=prior,
+                        cancel_event=cancel,
+                        status_callback=status_cb,
+                    )
+                except Exception as exc:
+                    out = AltAssessResult(
+                        ok=False, error_key="provider_error", detail=str(exc)
+                    )
+                if cancel.is_set():
+                    return
+                try:
+                    wx.PostEvent(
+                        self,
+                        AltAssessAiEvent(result=out),
+                    )
+                    posted = True
+                except RuntimeError:
+                    return
+            finally:
+                if not posted:
+                    wx.CallAfter(self._close_alt_assess_progress)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -8084,6 +8382,7 @@ class MainFrame(wx.Frame):
         if out is None:
             return
         if not out.ok:
+            from .ai.alt_labels import feature_title
             from .ai.explain import error_message_for_key
 
             if out.error_key == "cancelled":
@@ -8093,7 +8392,7 @@ class MainFrame(wx.Frame):
             msg = error_message_for_key(
                 out.error_key, detail=out.detail or out.text or ""
             )
-            wx.MessageBox(msg, _("Alt text health check"), wx.OK | wx.ICON_ERROR, self)
+            wx.MessageBox(msg, feature_title(), wx.OK | wx.ICON_ERROR, self)
             return
 
         try:
@@ -8111,10 +8410,13 @@ class MainFrame(wx.Frame):
             dlg.ShowModal()
         finally:
             self._alt_assess_dialog = None
+            from .ai.alt_inventory_dialog import schedule_webview_window_destroy
+
             try:
-                dlg.Destroy()
+                dlg._release_webview()
             except RuntimeError:
                 pass
+            schedule_webview_window_destroy(dlg)
             # Defer re-enable: EndModal + WebView2 teardown can leave the frame
             # disabled for a tick if Enable runs in the same stack frame.
             wx.CallAfter(self._reenable_after_alt_assess)

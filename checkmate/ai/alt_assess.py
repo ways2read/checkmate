@@ -6,14 +6,41 @@ import base64
 import json
 import logging
 import re
+import sys
 import threading
-from dataclasses import asdict, dataclass, field
+import time
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    CancelledError,
+    ThreadPoolExecutor,
+    wait,
+)
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
 from ..i18n import _, get_language, language_display_name
-from .alt_export import AltExport, AltExportImage, load_alt_export
-from .alt_heuristics import HeuristicReport, run_heuristics, summarize_heuristics
+from .alt_export import (
+    AltExport,
+    AltExportImage,
+    infer_publication_format,
+    load_alt_export,
+    publication_format_label,
+)
+from .alt_heuristics import (
+    FLAG_CLASS_DECORATIVE_MISMATCH,
+    FLAG_DECORATIVE_WITH_ALT,
+    FLAG_DUPLICATE_ALT,
+    FLAG_EMPTY_HAS_ALT,
+    FLAG_FILENAME_AS_ALT,
+    FLAG_JOINED_IMAGES,
+    FLAG_LOW_RESOLUTION,
+    FLAG_MISSING_ALT,
+    FLAG_PLACEHOLDER_ALT,
+    HeuristicReport,
+    run_heuristics,
+    summarize_heuristics,
+)
 from .alt_sample import (
     DEFAULT_SAMPLE_PERCENT,
     SamplePlan,
@@ -38,6 +65,16 @@ _MAX_IMAGE_MB_DEFAULT = 5.0
 _JPEG_QUALITY_DEFAULT = 80
 _VISION_MAX_TOKENS = 2048
 _SYNTH_MAX_TOKENS = DEFAULT_EXPLAIN_MAX_TOKENS
+_DEFAULT_VISION_WORKERS = 8
+_MAX_VISION_WORKERS = 16
+_FATAL_VISION_KEYS = frozenset({"no_key", "no_model", "network", "timeout"})
+_RATE_LIMIT_MAX_RETRIES = 3
+_RATE_LIMIT_BACKOFF_INITIAL_S = 2.0
+_RATE_LIMIT_BACKOFF_MAX_S = 30.0
+_VISION_PROGRESS_LINE_COUNT = 6
+_VISION_PROGRESS_RESERVED_LINE = " "
+# PyMuPDF is not thread-safe; parallel vision workers serialize encode.
+_FITZ_ENCODE_LOCK = threading.Lock()
 
 
 def _vision_image_url_part(data_uri: str, model: str | None) -> dict[str, Any]:
@@ -51,6 +88,25 @@ def _vision_image_url_part(data_uri: str, model: str | None) -> dict[str, Any]:
     if "gemini" not in m:
         image_url["detail"] = "low"
     return {"type": "image_url", "image_url": image_url}
+
+
+def _is_rate_limit_error(error_key: str | None, detail: str | None) -> bool:
+    """True when the provider is asking us to slow down (retryable)."""
+    d = f"{error_key or ''} {detail or ''}".lower()
+    return any(
+        marker in d
+        for marker in (
+            "429",
+            "rate limit",
+            "rate_limit",
+            "ratelimit",
+            "resource_exhausted",
+            "resource exhausted",
+            "too many requests",
+            "quota exceeded",
+            "exceeded your current quota",
+        )
+    )
 
 
 def _fatal_vision_provider_error(error_key: str | None, detail: str | None) -> bool:
@@ -99,6 +155,130 @@ def vision_image_limits() -> tuple[int, int, int]:
     return max_edge, max_bytes, _JPEG_QUALITY_DEFAULT
 
 
+def vision_parallel_workers(
+    model: str | None = None, *, requested: int | None = None
+) -> int:
+    """How many concurrent vision calls to start with.
+
+    Override with CheckMate ``ai_alt_assess_workers`` (1–16) or *requested*.
+    Default is 8; a 429 / quota error halves the in-flight count for later waves.
+    """
+    if requested is not None:
+        try:
+            return max(1, min(int(requested), _MAX_VISION_WORKERS))
+        except (TypeError, ValueError):
+            pass
+    try:
+        from ..settings import read_settings
+
+        raw = read_settings().get("ai_alt_assess_workers")
+        if raw not in (None, ""):
+            return max(1, min(int(raw), _MAX_VISION_WORKERS))
+    except Exception:
+        logger.debug("Could not read AI Image Inspector worker setting", exc_info=True)
+    return _DEFAULT_VISION_WORKERS
+
+
+def _progress_dialog_lead_nl() -> bool:
+    """Whether to prefix a blank line for native Windows Task Dialog sizing.
+
+    GenericProgressDialog (macOS, GTK, and CheckMate's dark-mode Windows
+    patch) shows a leading newline as an empty first row.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import wx
+
+        generic = getattr(wx, "GenericProgressDialog", None)
+        return generic is None or wx.ProgressDialog is not generic
+    except Exception:
+        return True
+
+
+def format_vision_progress_dialog(message: str) -> str:
+    """Fixed-height ProgressDialog body.
+
+    wx sizes the dialog from the first message. Padding to a constant line
+    count keeps later updates from growing or collapsing the window. A
+    leading newline is Windows Task Dialog only.
+    """
+    raw = (message or "").replace("\r\n", "\n").lstrip("\n")
+    lines: list[str] = []
+    for segment in raw.split("\n"):
+        lines.append(segment if segment.strip() else _VISION_PROGRESS_RESERVED_LINE)
+    if not lines:
+        lines.append(_VISION_PROGRESS_RESERVED_LINE)
+    while len(lines) < _VISION_PROGRESS_LINE_COUNT:
+        lines.append(_VISION_PROGRESS_RESERVED_LINE)
+    body = "\n".join(lines[:_VISION_PROGRESS_LINE_COUNT])
+    if _progress_dialog_lead_nl():
+        return "\n" + body
+    return body
+
+
+def _humanize_eta_seconds(seconds: float) -> str:
+    """Short remaining-time phrase for the progress dialog."""
+    s = max(0.0, float(seconds))
+    if s < 50:
+        return _("less than a minute")
+    if s < 90:
+        return _("about a minute")
+    minutes = int(round(s / 60.0))
+    if minutes < 60:
+        return _("about {n} min").format(n=minutes)
+    hours = minutes // 60
+    rem = minutes % 60
+    if rem == 0:
+        return _("about {n} h").format(n=hours)
+    return _("about {hours} h {minutes} min").format(hours=hours, minutes=rem)
+
+
+def vision_progress_message(
+    *,
+    done: int,
+    total: int,
+    inflight: list[str],
+    elapsed_s: float,
+    verdicts: dict[str, int] | None = None,
+    note: str = "",
+) -> str:
+    """Reserved multiline status for the vision ProgressDialog."""
+    if done <= 0:
+        line1 = _("Assessing {total} images…").format(total=total)
+    else:
+        line1 = _("Finished {done} of {total} images.").format(done=done, total=total)
+    counts = verdicts or {}
+    # Two short lines so GenericProgressDialog (macOS) does not widen.
+    line2 = (
+        f"{_('Likely OK')}: {int(counts.get('ok', 0))}    "
+        f"{_('Needs attention')}: {int(counts.get('needs_attention', 0))}"
+    )
+    line3 = (
+        f"{_('OK with caveat')}: {int(counts.get('likely_ok_with_caveat', 0))}    "
+        f"{_('Uncertain')}: {int(counts.get('uncertain', 0))}"
+    )
+    if inflight:
+        shown = inflight[:4]
+        names = ", ".join(shown)
+        if len(inflight) > 4:
+            names += ", …"
+        line4 = _("In progress: {names}").format(names=names)
+    else:
+        line4 = ""
+    if done > 0 and elapsed_s >= 0.5 and done < total:
+        remaining = max(0, total - done)
+        eta = remaining / (done / elapsed_s)
+        line5 = _("Est. time remaining: {eta}").format(eta=_humanize_eta_seconds(eta))
+    elif done < total:
+        line5 = _("Est. time remaining: calculating…")
+    else:
+        line5 = ""
+    return format_vision_progress_dialog(
+        "\n".join((line1, line2, line3, line4, line5, note or ""))
+    )
+
+
 def _mime_for(path: Path) -> str:
     suffix = path.suffix.lower()
     return {
@@ -136,6 +316,10 @@ _ISSUE_VOCAB = frozenset(
         "image_of_math",
         "likely_wrong_orientation",
         "low_resolution",
+        "joined_images",
+        "repeats_surrounding_text",
+        "wrong_language",
+        "spelling_or_grammar",
         "ok",
     }
 )
@@ -189,6 +373,7 @@ class AltAssessResult:
     sample: SamplePlan | None = None
     assessments: list[AltImageAssessment] = field(default_factory=list)
     json_path: Path | None = None
+    model: str = ""
 
 
 def _cancelled(cancel_event: threading.Event | None) -> bool:
@@ -198,7 +383,7 @@ def _cancelled(cancel_event: threading.Event | None) -> bool:
 def _status(cb: StatusCallback | None, message: str) -> None:
     if cb is not None:
         try:
-            cb(message)
+            cb(format_vision_progress_dialog(message))
         except Exception:
             logger.debug("AI status callback failed", exc_info=True)
 
@@ -216,6 +401,56 @@ def model_likely_supports_vision(model: str) -> bool:
         if hint in m:
             return False
     return True
+
+
+def _encode_image_with_fitz(
+    path: Path, *, edge: int, quality: int, byte_cap: int
+) -> tuple[str, str]:
+    import fitz  # type: ignore
+
+    pix = fitz.Pixmap(str(path))
+    if pix.n - pix.alpha >= 4:  # CMYK or similar → RGB
+        pix = fitz.Pixmap(fitz.csRGB, pix)
+    if pix.alpha:
+        pix = fitz.Pixmap(pix, 0)  # drop alpha for JPEG
+
+    w, h = pix.width, pix.height
+    longest = max(w, h) or 1
+    if longest > edge:
+        scale = edge / float(longest)
+        pix = fitz.Pixmap(
+            pix,
+            max(1, int(round(w * scale))),
+            max(1, int(round(h * scale))),
+        )
+
+    q = quality
+    data = pix.tobytes("jpeg", jpg_quality=q)
+    # Shrink / lower quality until under the FIDO MB cap.
+    while len(data) > byte_cap and (pix.width > 64 or q > 40):
+        if len(data) > byte_cap and q > 40:
+            q = max(40, q - 10)
+            data = pix.tobytes("jpeg", jpg_quality=q)
+            continue
+        shrink = min(0.85, (byte_cap / max(len(data), 1)) ** 0.5)
+        pix = fitz.Pixmap(
+            pix,
+            max(64, int(pix.width * shrink)),
+            max(64, int(pix.height * shrink)),
+        )
+        data = pix.tobytes("jpeg", jpg_quality=q)
+
+    b64 = base64.standard_b64encode(data).decode("ascii")
+    logger.debug(
+        "Encoded %s for vision: %sx%s jpeg q=%s %s bytes (cap %s)",
+        path.name,
+        pix.width,
+        pix.height,
+        q,
+        len(data),
+        byte_cap,
+    )
+    return f"data:image/jpeg;base64,{b64}", "image/jpeg"
 
 
 def encode_image_for_vision(
@@ -240,52 +475,12 @@ def encode_image_for_vision(
     quality = max(40, min(95, int(quality)))
 
     # Try pymupdf (already a CheckMate dependency) for resize + JPEG.
+    # MuPDF is not thread-safe; hold the lock for the whole pixmap lifetime.
     try:
-        import fitz  # type: ignore
-
-        pix = fitz.Pixmap(str(path))
-        if pix.n - pix.alpha >= 4:  # CMYK or similar → RGB
-            pix = fitz.Pixmap(fitz.csRGB, pix)
-        if pix.alpha:
-            pix = fitz.Pixmap(pix, 0)  # drop alpha for JPEG
-
-        w, h = pix.width, pix.height
-        longest = max(w, h) or 1
-        if longest > edge:
-            scale = edge / float(longest)
-            pix = fitz.Pixmap(
-                pix,
-                max(1, int(round(w * scale))),
-                max(1, int(round(h * scale))),
+        with _FITZ_ENCODE_LOCK:
+            return _encode_image_with_fitz(
+                path, edge=edge, quality=quality, byte_cap=byte_cap
             )
-
-        q = quality
-        data = pix.tobytes("jpeg", jpg_quality=q)
-        # Shrink / lower quality until under the FIDO MB cap.
-        while len(data) > byte_cap and (pix.width > 64 or q > 40):
-            if len(data) > byte_cap and q > 40:
-                q = max(40, q - 10)
-                data = pix.tobytes("jpeg", jpg_quality=q)
-                continue
-            shrink = min(0.85, (byte_cap / max(len(data), 1)) ** 0.5)
-            pix = fitz.Pixmap(
-                pix,
-                max(64, int(pix.width * shrink)),
-                max(64, int(pix.height * shrink)),
-            )
-            data = pix.tobytes("jpeg", jpg_quality=q)
-
-        b64 = base64.standard_b64encode(data).decode("ascii")
-        logger.debug(
-            "Encoded %s for vision: %sx%s jpeg q=%s %s bytes (cap %s)",
-            path.name,
-            pix.width,
-            pix.height,
-            q,
-            len(data),
-            byte_cap,
-        )
-        return f"data:image/jpeg;base64,{b64}", "image/jpeg"
     except Exception:
         logger.debug("pymupdf image encode failed; using raw file", exc_info=True)
 
@@ -312,11 +507,72 @@ def _section_headings() -> tuple[str, str, str, str, str]:
     )
 
 
-def build_vision_system_prompt() -> str:
+def _publication_format_rules(publication_format: str) -> str:
+    """Coaching that depends on PDF vs EPUB vs eBraille, etc."""
+    key = infer_publication_format(explicit=publication_format)
+    label = publication_format_label(key)
+    common = (
+        f"Publication format: {label} (code: {key}).\n"
+        "Tailor teaching_note and remediation to THIS format. Do not recommend "
+        "techniques that only exist in a different format."
+    )
+    if key == "pdf":
+        return f"""{common}
+- PDF has no extended-description feature (no aria-details, details/summary,
+  longdesc, or hidden long-description container). Accessible name is the
+  figure /Alt. If more than a short alt is needed, that content belongs in
+  the visible body text of the PDF, not a hidden extended description.
+- Math: keep the equation image if needed and tag/associate it with MathML
+  (PDF 2.0 / tagged PDF). Do not recommend EPUB MathML, Word OMML, or
+  replacing the figure with HTML.
+- Tables: use a real tagged PDF table, not a screenshot of a table.
+- Do not recommend MathJax or MathML alttext / alt-text attributes."""
+    if key in {"epub", "ebrl"}:
+        host = "eBraille" if key == "ebrl" else "EPUB"
+        return f"""{common}
+- {host} supports extended descriptions in addition to short alt. Keep alt
+  concise (the img/figure accessible name). For complex images, recommend an
+  extended description in the {host} — for example a details/summary block,
+  a following description, or aria-details pointing to a longer description.
+  Do not dump the extended description into alt.
+- Math: encode as MathML in the {host} package. Do not recommend PDF
+  associated-file MathML or Word OMML as the {host} fix.
+- Tables: use HTML/{host} table markup, not a picture of a table.
+- Do not recommend MathJax or MathML alttext / alt-text attributes."""
+    if key == "docx":
+        return f"""{common}
+- Word alt text is the short description on the picture. Extended
+  descriptions belong in the document body immediately after the image, not
+  only in the alt-text field.
+- Math: use a real Word equation (OMML). Do not recommend PDF associated
+  MathML or EPUB aria-details as the Word fix.
+- Tables: use a real Word table, not a picture of a table.
+- Do not recommend MathJax or MathML alttext / alt-text attributes."""
+    if key == "html":
+        return f"""{common}
+- HTML supports a short alt plus an extended description (figcaption,
+  a following description, or aria-details / aria-describedby). Do not dump
+  a long description into alt.
+- Math: MathML in the HTML. Not PDF associated files or Word OMML.
+- Tables: real HTML tables, not screenshots.
+- Do not recommend MathJax or MathML alttext / alt-text attributes."""
+    return f"""{common}
+- Format is not known. Give format-neutral advice: do not assume PDF
+  tagging, EPUB extended descriptions, or Word OMML.
+- Math encodings by format: EPUB/HTML/eBraille → MathML; Word → OMML; PDF →
+  equation image tagged/associated with MathML. Never MathJax or MathML
+  alttext as the accessibility solution.
+- Tables should be real table markup in the host format, not a screenshot.
+- Extended descriptions exist for EPUB/HTML/eBraille and as body content
+  after a Word image; PDF and PowerPoint do not have that feature."""
+
+
+def build_vision_system_prompt(publication_format: str = "") -> str:
     lang = _language_name()
     lang_code = get_language()
+    format_rules = _publication_format_rules(publication_format)
     return f"""You are an accessibility publishing assistant inside CheckMate.
-You review one image from an EPUB/PDF/eBraille publication together with its
+You review one image from a publication together with its
 declared alt text status, any existing alt text, and optional surrounding page
 text from the publication.
 
@@ -339,7 +595,9 @@ these keys:
   placeholder_alt, filename_as_alt, inaccurate_alt, too_vague, too_verbose,
   missing_text_in_image, likely_content_marked_decorative,
   likely_decorative_with_alt, duplicate_alt, missing_alt, empty_has_alt,
-  image_of_table, image_of_math, likely_wrong_orientation, low_resolution, ok
+  image_of_table, image_of_math, likely_wrong_orientation, low_resolution,
+  joined_images, repeats_surrounding_text, wrong_language,
+  spelling_or_grammar, ok
 - reason: one short sentence explaining the verdict
 - teaching_note: one short coaching sentence for a non-expert reviewer
 - suggested_alt: always null in this version
@@ -362,10 +620,9 @@ Rules:
     not a screenshot of a table. Prefer needs_attention; say so in
     teaching_note.
   - image_of_math: the picture is primarily a mathematical equation or
-    formula. Prefer encoding as digital math appropriate to the format
-    (LaTeX, MathML, or OMML as fits the publication type). For PDF, the
-    equation image may remain if it is tagged/associated with MathML.
-    Prefer needs_attention; say so in teaching_note.
+    formula. Prefer encoding as digital math appropriate to THIS
+    publication format (see Publication format rules). Prefer
+    needs_attention; say so in teaching_note.
   - For image_of_math coaching: do NOT recommend MathJax (that is a
     rendering library, not an encoding). Do NOT recommend MathML alttext /
     alt-text attributes as the accessibility solution — that is not best
@@ -381,26 +638,151 @@ Rules:
     who magnify the page (use Dimensions when provided; also visual softness).
     Prefer needs_attention for content images. Do not flag intentional tiny
     decorative icons, spacers, or vector art.
+  - joined_images: the picture is visually several distinct images, panels,
+    or photos joined into one raster (grid, side-by-side, before/after,
+    labelled A/B/C scientific figure, slide with multiple pictures). Prefer
+    needs_attention so a human can consider splitting the figure so each
+    part can have its own alt text. Do not flag panoramas, double exposures,
+    a single diagram with internal labels, a photo with one magnified inset,
+    or comics/graphic-novel sequential art that is meant as one narrative
+    figure.
+- Document fit (flag even when the alt is otherwise accurate):
+  - repeats_surrounding_text: the alt restates facts, names, captions, or
+    explanations already given in the surrounding text, so a screen-reader
+    user hears the same information twice. Flag when the overlap is
+    substantial. Do not flag a shared proper name, a short figure number, or
+    a brief restatement needed to identify the image. Prefer needs_attention.
+    Do not flag when Surrounding text is "(none provided)", or when the
+    image is decorative with empty alt.
+  - wrong_language: the alt is written in a different natural language from
+    the surrounding publication text (for example English alt next to French
+    body copy). Infer the publication language from Surrounding text, not
+    from the CheckMate UI language (UI language is only for reason and
+    teaching_note). Prefer needs_attention. Do not flag when Surrounding
+    text is "(none provided)", when the alt is empty or decorative, when the
+    alt is only numbers, symbols, or proper names, or when both sides are
+    too short to judge.
+- Alt wording:
+  - spelling_or_grammar: the alt has a clear spelling or grammar error.
+    Prefer needs_attention. Do not flag:
+    - empty alt, decorative images, or alt that is only numbers/symbols;
+    - misspellings or non-standard grammar that match text visible in the
+      image when the alt is quoting that text verbatim (signs, packaging,
+      screenshots, handwritten notes);
+    - noun-phrase alts, missing terminal punctuation, or telegram-style
+      fragments — those are normal for alt text;
+    - regional spelling that matches the publication (colour/color), or
+      proper names, brands, and technical terms you are not sure about.
 - Keep reason and teaching_note concise.
+- Pass A heuristic flags in the user message are local checks (including
+  pixel dimensions). Include each of those codes in "issues" unless you can
+  clearly see they are wrong. Address every confirmed Pass A flag in
+  teaching_note — do not drop low_resolution or joined_images just because
+  another issue (for example image_of_math) is more interesting.
+- The attached picture may be resized for the API. For low_resolution, trust
+  Pass A and the Dimensions field more than how sharp the attachment looks.
+
+Publication format rules:
+{format_rules}
 """
 
 
-def build_vision_user_text(image: AltExportImage, *, heuristic_flags: list[str]) -> str:
+def build_vision_user_text(
+    image: AltExportImage,
+    *,
+    heuristic_flags: list[str],
+    publication_format: str = "",
+) -> str:
     alt = image.alt_stripped or "(none)"
     flags = ", ".join(heuristic_flags) if heuristic_flags else "(none)"
     ctx = image.context_stripped
     ctx_block = ctx if ctx else "(none provided)"
+    fmt = publication_format_label(publication_format)
     return (
         "Assess this image's alt text / decorative status for document fit.\n"
+        f"- Publication format: {fmt}\n"
         f"- Index: {image.index}\n"
         f"- Filename: {image.filename}\n"
         f"- Status: {image.status or '(unknown)'}\n"
         f"- Classification: {image.classification or '(none)'}\n"
         f"- Dimensions: {image.dimensions or '(unknown)'}\n"
-        f"- Pass A heuristic flags: {flags}\n"
+        f"- Pass A heuristic flags (confirm or reject each; mention confirmed "
+        f"ones in teaching_note): {flags}\n"
         f"- Alt text: {alt}\n"
         f"- Surrounding text:\n{ctx_block}\n"
     )
+
+
+# Pass A codes that map onto the vision issue vocabulary.
+_HEURISTIC_TO_ISSUE = {
+    FLAG_MISSING_ALT: "missing_alt",
+    FLAG_PLACEHOLDER_ALT: "placeholder_alt",
+    FLAG_FILENAME_AS_ALT: "filename_as_alt",
+    FLAG_EMPTY_HAS_ALT: "empty_has_alt",
+    FLAG_DECORATIVE_WITH_ALT: "likely_decorative_with_alt",
+    FLAG_DUPLICATE_ALT: "duplicate_alt",
+    FLAG_CLASS_DECORATIVE_MISMATCH: "likely_content_marked_decorative",
+    FLAG_LOW_RESOLUTION: "low_resolution",
+    FLAG_JOINED_IMAGES: "joined_images",
+}
+
+
+def _teaching_for_pass_a_issue(code: str) -> str:
+    return {
+        "low_resolution": _(
+            "The image is also low resolution and may fail under magnification."
+        ),
+        "joined_images": _(
+            "This looks like several images joined into one; consider splitting "
+            "so each part can have its own alt text."
+        ),
+        "likely_content_marked_decorative": _(
+            "Classification suggests this is content, not decorative."
+        ),
+        "likely_decorative_with_alt": _(
+            "Decorative images should not carry alt text."
+        ),
+        "missing_alt": _("This content image still needs alt text."),
+        "empty_has_alt": _("The has-alt status does not match the empty alt."),
+        "placeholder_alt": _("Replace the placeholder with a real description."),
+        "filename_as_alt": _("Do not use the filename as alt text."),
+        "duplicate_alt": _("This alt text is duplicated on another image."),
+    }.get(code, "")
+
+
+def apply_pass_a_flags_to_assessment(
+    assessment: AltImageAssessment,
+    heuristic_flags: list[str],
+) -> AltImageAssessment:
+    """Merge Pass A flags into vision issues and teaching_note when omitted."""
+    extra: list[str] = []
+    existing = list(assessment.issues)
+    for flag in heuristic_flags:
+        issue = _HEURISTIC_TO_ISSUE.get(flag)
+        if issue and issue not in existing and issue not in extra:
+            extra.append(issue)
+    if not extra:
+        return assessment
+    issues = [i for i in existing if i != "ok"] + extra
+    note = (assessment.teaching_note or "").strip()
+    note_l = note.lower()
+    snippets: list[str] = []
+    for code in extra:
+        snippet = _teaching_for_pass_a_issue(code)
+        if not snippet:
+            continue
+        key = snippet.split(".")[0].lower()
+        if key and key in note_l:
+            continue
+        if code.replace("_", " ") in note_l:
+            continue
+        snippets.append(snippet)
+    if snippets:
+        note = f"{note} {' '.join(snippets)}".strip() if note else " ".join(snippets)
+    verdict = assessment.verdict
+    if verdict == "ok":
+        verdict = "needs_attention"
+    return replace(assessment, issues=issues, teaching_note=note, verdict=verdict)
 
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:
@@ -486,10 +868,11 @@ def _repair_json_prompt() -> str:
     )
 
 
-def build_synthesis_system_prompt() -> str:
+def build_synthesis_system_prompt(publication_format: str = "") -> str:
     lang = _language_name()
     lang_code = get_language()
     h1, h2, h3, h4, h5 = _section_headings()
+    format_rules = _publication_format_rules(publication_format)
     return f"""You are an accessibility publishing assistant inside CheckMate.
 You summarize an alt-text quality assessment for publishers and remediators who
 may not know what good alt text looks like.
@@ -513,21 +896,32 @@ Rules:
 - Use only the provided assessment data; do not invent images or findings.
 - Lead with themes a non-expert can act on (especially decorative vs content,
   images of tables, images of math that need digital math, low-resolution
-  images that fail under magnification, and wrong orientation).
+  images that fail under magnification, wrong orientation, joined /
+  multi-panel figures that should be split, alt that repeats nearby prose,
+  alt written in the wrong language, and spelling or grammar errors in the
+  alt).
 - If any assessed image has issues image_of_table, image_of_math,
-  likely_wrong_orientation, or low_resolution, call those out explicitly in
-  "{h2}" and "{h3}" — they matter even when alt text itself looks fine.
+  likely_wrong_orientation, low_resolution, joined_images,
+  repeats_surrounding_text, wrong_language, or spelling_or_grammar, call those
+  out explicitly in "{h2}" and "{h3}".
 - In "{h3}", list the worst items first and cite Index and Filename.
 - In "{h4}", give short coaching tied to what was found in this document
-  (including remediating table images, encoding math as digital math —
-  LaTeX/MathML/OMML as appropriate, or PDF equation images tagged with
-  MathML — replacing low-resolution rasters with sharper assets, and fixing
-  rotation when relevant). Do not recommend MathJax or MathML alttext as the
-  fix for math images.
+  and to the publication format rules below (including remediating table
+  images, encoding math as digital math for THIS format, replacing
+  low-resolution rasters with sharper assets, fixing rotation when relevant,
+  splitting joined/multi-panel rasters so each part can have its own alt text,
+  not repeating surrounding prose, writing alt in the same language as the publication,
+  and fixing spelling or grammar unless the alt quotes text from the image).
+  Do not recommend MathJax or MathML alttext
+  as the fix for math images. Do not recommend EPUB extended-description
+  techniques for PDF, or PDF associated-file MathML for EPUB/eBraille.
 - In "{h5}", note sample vs full review, that AI can be wrong, and that this is
   assisted review — not a conformance certificate.
 - Keep each section concise (short paragraphs or a few bullets).
 - Use markdown so the reply can be shown as HTML.
+
+Publication format rules:
+{format_rules}
 """
 
 
@@ -547,6 +941,7 @@ def build_synthesis_user_prompt(
     lines = [
         f"Summarize this alt-text assessment. Reply entirely in {lang}.",
         f"- Document: {export.document_name}",
+        f"- Publication format: {publication_format_label(export.publication_format)}",
         f"- Total images: {counts['total']}",
         f"- With alt text (export status): {counts['with_alt']}",
         f"- Decorative (export status): {counts['decorative']}",
@@ -626,6 +1021,11 @@ def assessment_sidecar_dict(
                 for f in heuristics.findings
             ],
         },
+        "publication_format": infer_publication_format(
+            explicit=export.publication_format,
+            document_name=export.document_name,
+            folder=export.folder,
+        ),
         "assessments": [a.to_json_dict() for a in assessments],
         "synthesis_markdown": synthesis_markdown,
         "suggested_alt_phase": "v2_reserved",
@@ -638,6 +1038,8 @@ def write_assessment_json(path: Path, payload: dict[str, Any]) -> Path:
         encoding="utf-8",
     )
     return path
+
+
 def _merge_assessments(
     prior: list[AltImageAssessment],
     new: list[AltImageAssessment],
@@ -646,6 +1048,413 @@ def _merge_assessments(
     for a in new:
         by_index[a.index] = a
     return [by_index[i] for i in sorted(by_index)]
+
+
+def _is_fatal_vision_error(error: ProviderError) -> bool:
+    return error.error_key in _FATAL_VISION_KEYS or _fatal_vision_provider_error(
+        error.error_key, error.detail
+    )
+
+
+class _VisionProgress:
+    """Thread-safe finished / in-flight / ETA status for a vision batch."""
+
+    def __init__(
+        self,
+        *,
+        total: int,
+        workers: int,
+        status_callback: StatusCallback | None,
+    ) -> None:
+        self.total = total
+        self.workers = workers
+        self._status_callback = status_callback
+        self._lock = threading.Lock()
+        self._done = 0
+        self._inflight: dict[int, str] = {}
+        self._verdicts = {
+            "ok": 0,
+            "needs_attention": 0,
+            "likely_ok_with_caveat": 0,
+            "uncertain": 0,
+        }
+        self._note = ""
+        self._started = time.perf_counter()
+
+    def set_workers(self, workers: int) -> None:
+        with self._lock:
+            self.workers = max(1, int(workers))
+
+    def set_note(self, note: str) -> None:
+        with self._lock:
+            self._note = (note or "").strip()
+            msg = self._message_locked()
+        _status(self._status_callback, msg)
+
+    def mark_start(self, image: AltExportImage) -> None:
+        with self._lock:
+            self._inflight[image.index] = image.filename
+            msg = self._message_locked()
+        _status(self._status_callback, msg)
+
+    def mark_done(
+        self,
+        image: AltExportImage,
+        *,
+        counted: bool = True,
+        verdict: str = "",
+    ) -> None:
+        with self._lock:
+            self._inflight.pop(image.index, None)
+            if counted:
+                self._done += 1
+                key = (verdict or "uncertain").strip().lower()
+                if key not in self._verdicts:
+                    key = "uncertain"
+                self._verdicts[key] += 1
+            msg = self._message_locked()
+        _status(self._status_callback, msg)
+
+    def _message_locked(self) -> str:
+        return vision_progress_message(
+            done=self._done,
+            total=self.total,
+            inflight=list(self._inflight.values()),
+            elapsed_s=time.perf_counter() - self._started,
+            verdicts=dict(self._verdicts),
+            note=self._note,
+        )
+
+
+def _error_assessment(
+    image: AltExportImage,
+    *,
+    reason: str,
+    error: str,
+    teaching_note: str = "",
+    issues: list[str] | None = None,
+    status_ok: bool = True,
+    recommended_status: str = "has_alt",
+) -> AltImageAssessment:
+    return AltImageAssessment(
+        index=image.index,
+        filename=image.filename,
+        verdict="uncertain",
+        confidence="low",
+        status_ok=status_ok,
+        recommended_status=recommended_status,
+        issues=list(issues or []),
+        reason=reason,
+        teaching_note=teaching_note,
+        pass_name="error",
+        error=error,
+    )
+
+
+def _assess_one_image(
+    image: AltExportImage,
+    *,
+    flags: list[str],
+    pub_fmt: str,
+    system: str,
+    session: ExplainSession,
+    cost_lock: threading.Lock,
+    cancel_event: threading.Event | None,
+) -> tuple[AltImageAssessment | None, ProviderError | None, bool]:
+    """Vision-assess one export image.
+
+    Returns ``(assessment, fatal_error, rate_limited)``.
+    """
+    if _cancelled(cancel_event):
+        return None, None, False
+    if image.image_path is None or not image.image_path.is_file():
+        return (
+            _error_assessment(
+                image,
+                reason=_("Image file was missing from the export folder."),
+                teaching_note=_(
+                    "Re-export the publication so every CSV row has an image file."
+                ),
+                issues=["missing_alt"],
+                status_ok=False,
+                recommended_status="missing",
+                error="missing_file",
+            ),
+            None,
+            False,
+        )
+
+    try:
+        data_uri, _mime = encode_image_for_vision(image.image_path)
+    except Exception as e:
+        logger.exception("Failed to encode image %s", image.filename)
+        return (
+            _error_assessment(image, reason=str(e), error="encode_failed"),
+            None,
+            False,
+        )
+
+    if _cancelled(cancel_event):
+        return None, None, False
+
+    user_content: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": build_vision_user_text(
+                image, heuristic_flags=flags, publication_format=pub_fmt
+            ),
+        },
+        _vision_image_url_part(data_uri, session.model),
+    ]
+    try:
+        vision_session = ExplainSession(
+            model=session.model,
+            api_key=session.api_key,
+            api_base=session.api_base,
+        )
+        text = vision_session.ask_multimodal(
+            system=system,
+            user_content=user_content,
+            max_tokens=_VISION_MAX_TOKENS,
+            operation="alt_vision",
+        )
+        parsed = parse_vision_assessment(text, image=image)
+        if parsed is None:
+            try:
+                repair = vision_session.followup(
+                    _repair_json_prompt(), max_tokens=_VISION_MAX_TOKENS
+                )
+                parsed = parse_vision_assessment(repair, image=image)
+            except Exception:
+                logger.exception(
+                    "Vision JSON repair failed for %s", image.filename
+                )
+        with cost_lock:
+            session.session_cost_usd += vision_session.session_cost_usd
+            session.session_prompt_tokens += vision_session.session_prompt_tokens
+            session.session_completion_tokens += (
+                vision_session.session_completion_tokens
+            )
+        if parsed is None:
+            return (
+                _error_assessment(
+                    image,
+                    reason=_("The AI returned an unreadable assessment."),
+                    error="bad_json",
+                ),
+                None,
+                False,
+            )
+        return apply_pass_a_flags_to_assessment(parsed, flags), None, False
+    except ProviderError as e:
+        assessment = _error_assessment(
+            image,
+            reason=e.detail or e.error_key,
+            error=e.error_key,
+        )
+        if _is_rate_limit_error(e.error_key, e.detail):
+            return assessment, None, True
+        if _is_fatal_vision_error(e):
+            return assessment, e, False
+        return assessment, None, False
+    except Exception as e:
+        logger.exception("Vision assess failed for %s", image.filename)
+        return (
+            _error_assessment(
+                image, reason=str(e), error="provider_error"
+            ),
+            None,
+            False,
+        )
+
+
+def _backoff_wait(
+    seconds: float,
+    cancel_event: threading.Event | None,
+    stop: threading.Event,
+) -> None:
+    remaining = max(0.0, float(seconds))
+    while remaining > 0:
+        if _cancelled(cancel_event) or stop.is_set():
+            return
+        step = min(0.25, remaining)
+        time.sleep(step)
+        remaining -= step
+
+
+def _run_vision_batch(
+    to_review: list[int],
+    *,
+    by_index: dict[int, AltExportImage],
+    findings_by_index: dict[int, Any],
+    pub_fmt: str,
+    system: str,
+    session: ExplainSession,
+    cancel_event: threading.Event | None,
+    status_callback: StatusCallback | None,
+    max_workers: int,
+) -> tuple[list[AltImageAssessment], ProviderError | None]:
+    """Assess *to_review* in waves. Rate limits halve the next wave's workers."""
+    total = len(to_review)
+    if total == 0:
+        return [], None
+    workers = max(1, min(int(max_workers), total, _MAX_VISION_WORKERS))
+    logger.info(
+        "Alt vision batch starting images=%s workers=%s model=%s",
+        total,
+        workers,
+        session.model,
+    )
+    cost_lock = threading.Lock()
+    stop = threading.Event()
+    progress = _VisionProgress(
+        total=total, workers=workers, status_callback=status_callback
+    )
+    assessments: list[AltImageAssessment] = []
+    fatal_error: ProviderError | None = None
+    retries: dict[int, int] = {}
+    current_workers = workers
+    backoff_s = 0.0
+    remaining = list(to_review)
+
+    def work(
+        index: int,
+    ) -> tuple[AltImageAssessment | None, ProviderError | None, bool]:
+        if _cancelled(cancel_event) or stop.is_set():
+            return None, None, False
+        image = by_index.get(index)
+        if image is None:
+            return None, None, False
+        flags = (
+            list(findings_by_index[index].flags)
+            if index in findings_by_index
+            else []
+        )
+        counted = False
+        verdict = ""
+        progress.mark_start(image)
+        try:
+            if _cancelled(cancel_event) or stop.is_set():
+                return None, None, False
+            assessment, fatal, rate_limited = _assess_one_image(
+                image,
+                flags=flags,
+                pub_fmt=pub_fmt,
+                system=system,
+                session=session,
+                cost_lock=cost_lock,
+                cancel_event=cancel_event,
+            )
+            counted = assessment is not None and not rate_limited
+            if counted and assessment is not None:
+                verdict = assessment.verdict
+            return assessment, fatal, rate_limited
+        finally:
+            progress.mark_done(image, counted=counted, verdict=verdict)
+
+    def _unpack(
+        fut: Any, index: int
+    ) -> tuple[AltImageAssessment | None, ProviderError | None, bool]:
+        nonlocal fatal_error
+        image = by_index.get(index)
+        if fut.cancelled():
+            return None, None, False
+        try:
+            result = fut.result()
+            if len(result) == 2:
+                assessment, fatal = result
+                return assessment, fatal, False
+            return result
+        except CancelledError:
+            return None, None, False
+        except Exception as e:
+            logger.exception(
+                "Vision worker crashed for %s",
+                image.filename if image is not None else index,
+            )
+            if image is None:
+                return None, None, False
+            return (
+                _error_assessment(image, reason=str(e), error="provider_error"),
+                None,
+                False,
+            )
+
+    pool = ThreadPoolExecutor(max_workers=workers)
+    in_flight: dict[Any, int] = {}
+    wave_had_rate_limit = False
+    try:
+        while remaining or in_flight:
+            if _cancelled(cancel_event) or stop.is_set():
+                break
+            if not in_flight:
+                if wave_had_rate_limit:
+                    new_workers = max(1, current_workers // 2)
+                    if new_workers < current_workers:
+                        logger.warning(
+                            "Rate limit detected; reducing parallel workers "
+                            "from %s to %s",
+                            current_workers,
+                            new_workers,
+                        )
+                        current_workers = new_workers
+                        progress.set_workers(current_workers)
+                    backoff_s = min(
+                        _RATE_LIMIT_BACKOFF_MAX_S,
+                        (
+                            _RATE_LIMIT_BACKOFF_INITIAL_S
+                            if backoff_s <= 0
+                            else backoff_s * 2
+                        ),
+                    )
+                    progress.set_note(_("Rate limited; slowing down…"))
+                    _backoff_wait(backoff_s, cancel_event, stop)
+                    progress.set_note("")
+                    wave_had_rate_limit = False
+                    if _cancelled(cancel_event) or stop.is_set():
+                        break
+                wave: list[int] = []
+                while remaining and len(wave) < current_workers:
+                    wave.append(remaining.pop(0))
+                if not wave:
+                    break
+                in_flight = {pool.submit(work, index): index for index in wave}
+            done_set, _still = wait(
+                set(in_flight), timeout=0.25, return_when=FIRST_COMPLETED
+            )
+            if not done_set:
+                continue
+            for fut in done_set:
+                index = in_flight.pop(fut)
+                assessment, fatal, rate_limited = _unpack(fut, index)
+                if rate_limited:
+                    n = retries.get(index, 0) + 1
+                    retries[index] = n
+                    if n <= _RATE_LIMIT_MAX_RETRIES:
+                        wave_had_rate_limit = True
+                        remaining.insert(0, index)
+                    elif assessment is not None:
+                        assessments.append(assessment)
+                    continue
+                if assessment is not None:
+                    assessments.append(assessment)
+                if fatal is not None and fatal_error is None:
+                    fatal_error = fatal
+                    stop.set()
+            if stop.is_set():
+                break
+    finally:
+        aborting = _cancelled(cancel_event) or stop.is_set()
+        pool.shutdown(wait=True, cancel_futures=aborting)
+        for fut, index in list(in_flight.items()):
+            if not fut.done():
+                continue
+            assessment, fatal, rate_limited = _unpack(fut, index)
+            if assessment is not None and not rate_limited:
+                assessments.append(assessment)
+            if fatal is not None and fatal_error is None:
+                fatal_error = fatal
+    return assessments, fatal_error
 
 
 def assess_alt_export(
@@ -660,6 +1469,7 @@ def assess_alt_export(
     write_json: bool = True,
     export: AltExport | None = None,
     skip_credentials_check: bool = False,
+    max_workers: int | None = None,
 ) -> AltAssessResult:
     """Run Pass A + vision sample/all + document synthesis on an export folder.
 
@@ -669,6 +1479,7 @@ def assess_alt_export(
     *export* may be a pre-loaded ``AltExport`` (avoids reading the folder twice).
     *skip_credentials_check* is for hosts that already resolved a working model
     (e.g. Fido's bridged session).
+    *max_workers* overrides the default parallel vision worker count.
     """
     if _cancelled(cancel_event):
         return AltAssessResult(ok=False, error_key="cancelled")
@@ -781,164 +1592,42 @@ def assess_alt_export(
             assessments=prior_assessments,
         )
 
+    pub_fmt = infer_publication_format(
+        explicit=export.publication_format,
+        document_name=export.document_name,
+        folder=export.folder,
+    )
+    export.publication_format = pub_fmt
+
     by_index = {im.index: im for im in export.images}
     findings_by_index = heuristics.by_index()
-    system = build_vision_system_prompt()
-    new_assessments: list[AltImageAssessment] = []
+    system = build_vision_system_prompt(publication_format=pub_fmt)
     to_review = [i for i in batch.indices if i not in prior_by_index]
-    total = len(to_review)
-
-    for i, index in enumerate(to_review, start=1):
-        if _cancelled(cancel_event):
-            merged = _merge_assessments(prior_assessments, new_assessments)
-            return AltAssessResult(
-                ok=False,
-                error_key="cancelled",
-                session=session,
-                export=export,
-                heuristics=heuristics,
-                sample=sample,
-                assessments=merged,
-            )
-        image = by_index.get(index)
-        if image is None:
-            continue
-        _status(
-            status_callback,
-            _("Assessing image {current} of {total}…").format(
-                current=i, total=total
-            ),
-        )
-        if image.image_path is None or not image.image_path.is_file():
-            new_assessments.append(
-                AltImageAssessment(
-                    index=image.index,
-                    filename=image.filename,
-                    verdict="uncertain",
-                    confidence="low",
-                    status_ok=False,
-                    recommended_status="missing",
-                    issues=["missing_alt"],
-                    reason=_("Image file was missing from the export folder."),
-                    teaching_note=_(
-                        "Re-export the publication so every CSV row has an image file."
-                    ),
-                    pass_name="error",
-                    error="missing_file",
-                )
-            )
-            continue
-
-        flags = (
-            list(findings_by_index[index].flags) if index in findings_by_index else []
-        )
-        try:
-            data_uri, _mime = encode_image_for_vision(image.image_path)
-        except Exception as e:
-            logger.exception("Failed to encode image %s", image.filename)
-            new_assessments.append(
-                AltImageAssessment(
-                    index=image.index,
-                    filename=image.filename,
-                    verdict="uncertain",
-                    confidence="low",
-                    reason=str(e),
-                    pass_name="error",
-                    error="encode_failed",
-                )
-            )
-            continue
-
-        user_content: list[dict[str, Any]] = [
-            {
-                "type": "text",
-                "text": build_vision_user_text(image, heuristic_flags=flags),
-            },
-            _vision_image_url_part(data_uri, session.model),
-        ]
-        try:
-            vision_session = ExplainSession(
-                model=session.model,
-                api_key=session.api_key,
-                api_base=session.api_base,
-            )
-            text = vision_session.ask_multimodal(
-                system=system,
-                user_content=user_content,
-                max_tokens=_VISION_MAX_TOKENS,
-                operation="alt_vision",
-            )
-            parsed = parse_vision_assessment(text, image=image)
-            if parsed is None:
-                try:
-                    repair = vision_session.followup(
-                        _repair_json_prompt(), max_tokens=_VISION_MAX_TOKENS
-                    )
-                    parsed = parse_vision_assessment(repair, image=image)
-                except Exception:
-                    logger.exception(
-                        "Vision JSON repair failed for %s", image.filename
-                    )
-            session.session_cost_usd += vision_session.session_cost_usd
-            session.session_prompt_tokens += vision_session.session_prompt_tokens
-            session.session_completion_tokens += (
-                vision_session.session_completion_tokens
-            )
-            if parsed is None:
-                new_assessments.append(
-                    AltImageAssessment(
-                        index=image.index,
-                        filename=image.filename,
-                        verdict="uncertain",
-                        confidence="low",
-                        reason=_("The AI returned an unreadable assessment."),
-                        pass_name="error",
-                        error="bad_json",
-                    )
-                )
-            else:
-                new_assessments.append(parsed)
-        except ProviderError as e:
-            new_assessments.append(
-                AltImageAssessment(
-                    index=image.index,
-                    filename=image.filename,
-                    verdict="uncertain",
-                    confidence="low",
-                    reason=e.detail or e.error_key,
-                    pass_name="error",
-                    error=e.error_key,
-                )
-            )
-            if e.error_key in {"no_key", "no_model", "network", "timeout"} or _fatal_vision_provider_error(
-                e.error_key, e.detail
-            ):
-                merged = _merge_assessments(prior_assessments, new_assessments)
-                return AltAssessResult(
-                    ok=False,
-                    error_key=e.error_key,
-                    detail=e.detail,
-                    session=session,
-                    export=export,
-                    heuristics=heuristics,
-                    sample=sample,
-                    assessments=merged,
-                )
-        except Exception as e:
-            logger.exception("Vision assess failed for %s", image.filename)
-            new_assessments.append(
-                AltImageAssessment(
-                    index=image.index,
-                    filename=image.filename,
-                    verdict="uncertain",
-                    confidence="low",
-                    reason=str(e),
-                    pass_name="error",
-                    error="provider_error",
-                )
-            )
-
+    workers = vision_parallel_workers(session.model, requested=max_workers)
+    new_assessments, fatal = _run_vision_batch(
+        to_review,
+        by_index=by_index,
+        findings_by_index=findings_by_index,
+        pub_fmt=pub_fmt,
+        system=system,
+        session=session,
+        cancel_event=cancel_event,
+        status_callback=status_callback,
+        max_workers=workers,
+    )
     assessments = _merge_assessments(prior_assessments, new_assessments)
+
+    if fatal is not None:
+        return AltAssessResult(
+            ok=False,
+            error_key=fatal.error_key,
+            detail=fatal.detail,
+            session=session,
+            export=export,
+            heuristics=heuristics,
+            sample=sample,
+            assessments=assessments,
+        )
 
     if _cancelled(cancel_event):
         return AltAssessResult(
@@ -954,7 +1643,7 @@ def assess_alt_export(
     _status(status_callback, _("Writing assessment summary…"))
     try:
         synth = session.ask(
-            system=build_synthesis_system_prompt(),
+            system=build_synthesis_system_prompt(publication_format=pub_fmt),
             user=build_synthesis_user_prompt(
                 export=export,
                 heuristics=heuristics,
@@ -1037,6 +1726,7 @@ def assess_alt_export(
         sample=sample,
         assessments=assessments,
         json_path=json_path,
+        model=session.model or "",
     )
 
 

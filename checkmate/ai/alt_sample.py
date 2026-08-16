@@ -9,6 +9,7 @@ from ..i18n import _
 from .alt_export import AltExport, AltExportImage
 from .alt_heuristics import (
     FLAG_CLASS_DECORATIVE_MISMATCH,
+    FLAG_JOINED_IMAGES,
     HARD_FLAGS,
     HeuristicReport,
 )
@@ -185,6 +186,27 @@ def build_sample_plan(
     ]
     for im in _stratified_picks(hard_imgs, sample_size):
         take(im.index, "hard_heuristic")
+
+    remaining_budget = sample_size - len(selected)
+    if remaining_budget <= 0:
+        selected_sorted = sorted(selected)
+        return SamplePlan(
+            indices=selected_sorted,
+            mode="percent",
+            total_images=total_all,
+            reasons={i: reasons[i] for i in selected_sorted},
+            percent=int(percent),
+            excluded=frozenset(exclude),
+        )
+
+    # 1.5) Classified joined / multi-panel figures (review even when alt looks fine)
+    joined_imgs = [
+        by_index[f.index]
+        for f in heuristics.findings
+        if f.index in by_index and FLAG_JOINED_IMAGES in f.flags
+    ]
+    for im in _stratified_picks(joined_imgs, remaining_budget):
+        take(im.index, "joined_images")
 
     remaining_budget = sample_size - len(selected)
     if remaining_budget <= 0:

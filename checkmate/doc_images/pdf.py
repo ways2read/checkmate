@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any, List, Optional
 
 from checkmate.doc_images.api import (
@@ -22,7 +23,11 @@ def _pdf_backend_log(message: str, *args, level: int = logging.INFO) -> None:
     except (TypeError, ValueError):
         text = message + (" " + " ".join(str(a) for a in args) if args else "")
     logger.log(level, "[PdfOnDiscBackend] %s", text)
-    print(f"[Fido] PDF: {text}")
+    line = f"[Fido] PDF: {text}"
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        print(line.encode("ascii", "replace").decode("ascii"))
 
 
 def _pdf_decode_string_value(raw: str) -> str:
@@ -131,29 +136,526 @@ class PdfOnDiscBackend(DocumentImageBackend):
         except Exception:
             return False
 
-    def _pdf_render_bbox_png(self, doc, page_index: int, bbox, zoom: float = 2.0) -> Optional[bytes]:
-        """Rasterize a page clip (fallback when the XObject alone is a white rect / stencil)."""
+    @staticmethod
+    def _pdf_image_placement(page, img):
+        """Return (bbox, transform) for a placed image in page display space.
+
+        *bbox* is suitable for ``page.get_pixmap(clip=bbox)`` and already
+        accounts for page ``/Rotate``. *transform* is the image CTM from
+        ``get_image_rects(transform=True)`` / ``get_image_info`` (unrotated
+        page space), or None.
+        """
         import fitz
-        if page_index is None or bbox is None:
+
+        bbox = None
+        transform = None
+        raw_rect = None
+        xref = img[0] if isinstance(img, (tuple, list)) and img else img
+
+        try:
+            rects = page.get_image_rects(img, transform=True)
+        except Exception:
+            rects = None
+        if rects:
+            first = rects[0]
+            if isinstance(first, (tuple, list)) and len(first) >= 2:
+                raw_rect, transform = first[0], first[1]
+            else:
+                raw_rect = first
+
+        try:
+            bbox = page.get_image_bbox(img)
+        except Exception:
+            bbox = None
+
+        if (bbox is None or getattr(bbox, "is_empty", False) or getattr(bbox, "is_infinite", False)) and raw_rect is not None:
+            try:
+                bbox = fitz.Rect(raw_rect) * page.rotation_matrix
+            except Exception:
+                try:
+                    bbox = fitz.Rect(raw_rect)
+                except Exception:
+                    bbox = None
+
+        if bbox is None or transform is None:
+            try:
+                infos = page.get_image_info(xrefs=True)
+            except Exception:
+                infos = []
+            for info in infos:
+                if xref is not None and info.get("xref") != xref:
+                    continue
+                if transform is None and info.get("transform") is not None:
+                    try:
+                        transform = fitz.Matrix(info["transform"])
+                    except Exception:
+                        transform = info["transform"]
+                if (
+                    (bbox is None or getattr(bbox, "is_empty", False) or getattr(bbox, "is_infinite", False))
+                    and info.get("bbox")
+                ):
+                    try:
+                        info_rect = fitz.Rect(info["bbox"])
+                        bbox = info_rect * page.rotation_matrix
+                    except Exception:
+                        try:
+                            bbox = fitz.Rect(info["bbox"])
+                        except Exception:
+                            pass
+                break
+
+        if bbox is not None:
+            try:
+                bbox = fitz.Rect(bbox)
+                if bbox.is_empty or bbox.is_infinite:
+                    bbox = None
+            except Exception:
+                bbox = None
+        if bbox is not None and not PdfOnDiscBackend._pdf_rect_visible_on_page(page, bbox):
+            bbox = None
+        return bbox, transform
+
+    @staticmethod
+    def _pdf_clip_rect(page, bbox, transform=None):
+        """Display-space clip rect for ``page.get_pixmap``, or None."""
+        import fitz
+
+        clip = None
+        if bbox is not None:
+            try:
+                clip = fitz.Rect(bbox)
+            except Exception:
+                clip = None
+        if (clip is None or clip.is_empty or clip.is_infinite) and transform is not None:
+            try:
+                clip = fitz.Rect(0, 0, 1, 1) * fitz.Matrix(transform)
+                if page.rotation:
+                    clip = clip * page.rotation_matrix
+            except Exception:
+                clip = None
+        if clip is None or clip.is_empty or clip.is_infinite:
             return None
         try:
-            page = doc[page_index]
-            clip = fitz.Rect(bbox)
-            if clip.is_empty or clip.is_infinite:
+            clip = clip & page.rect
+        except Exception:
+            pass
+        if clip.is_empty or clip.is_infinite:
+            return None
+        return clip
+
+    @staticmethod
+    def _pdf_rect_visible_on_page(page, bbox, min_edge: float = 4.0) -> bool:
+        """True when *bbox* intersects the visible page by a usable amount."""
+        import fitz
+        if bbox is None:
+            return False
+        try:
+            rect = fitz.Rect(bbox)
+            if rect.is_empty or rect.is_infinite:
+                return False
+            visible = rect & page.rect
+            return (
+                not visible.is_empty
+                and visible.width >= min_edge
+                and visible.height >= min_edge
+            )
+        except Exception:
+            return False
+
+    @staticmethod
+    def _pdf_overlap_score(a, b) -> float:
+        """IoU of two rects; 0 if they do not overlap."""
+        import fitz
+        try:
+            ra, rb = fitz.Rect(a), fitz.Rect(b)
+            inter = ra & rb
+            if inter.is_empty:
+                return 0.0
+            union = (ra.get_area() + rb.get_area()) - inter.get_area()
+            if union <= 0:
+                return 0.0
+            return inter.get_area() / union
+        except Exception:
+            return 0.0
+
+    # Near-full-page rasters are often a composite (photo + logo + chrome).
+    # Pair compact /Figure tags to similarly sized placements first.
+    # 0.70 catches photos with margins that 0.85 treated as "content".
+    _PDF_PAGE_COVER_THRESHOLD = 0.70
+    _PDF_FIGURE_CROP_RATIO = 0.85
+    _PDF_MIN_SIZE_SIM = 0.12
+    _PDF_LOGO_COVER = 0.12
+    _LOGO_ALT_RE = re.compile(
+        r"\b(logo|wordmark|logotype|icon)\b",
+        re.I,
+    )
+
+    def _pdf_alt_looks_like_logo(self, alt: str) -> bool:
+        decoded = _pdf_decode_string_value(alt or "")
+        return bool(self._LOGO_ALT_RE.search(decoded))
+
+    @staticmethod
+    def _pdf_rect_area(bbox) -> float:
+        import fitz
+        try:
+            rect = fitz.Rect(bbox)
+            if rect.is_empty or rect.is_infinite:
+                return 0.0
+            return float(rect.get_area())
+        except Exception:
+            return 0.0
+
+    def _pdf_placement_page_coverage(self, bbox, page) -> float:
+        """Fraction of the visible page covered by *bbox* (0–1)."""
+        if page is None or bbox is None:
+            return 0.0
+        try:
+            page_area = self._pdf_rect_area(page.rect)
+            if page_area <= 0:
+                return 0.0
+            import fitz
+            visible = fitz.Rect(bbox) & page.rect
+            return self._pdf_rect_area(visible) / page_area
+        except Exception:
+            return 0.0
+
+    def _pdf_bbox_is_page_sized(self, bbox, page) -> bool:
+        return self._pdf_placement_page_coverage(bbox, page) >= self._PDF_PAGE_COVER_THRESHOLD
+
+    def _pdf_placement_match_score(self, figure_bbox, place_bbox, page=None) -> float:
+        """IoU weighted by size similarity so a logo does not match a page raster."""
+        iou = self._pdf_overlap_score(figure_bbox, place_bbox)
+        if iou <= 0:
+            return 0.0
+        fig_area = self._pdf_rect_area(figure_bbox)
+        place_area = self._pdf_rect_area(place_bbox)
+        if fig_area <= 0 or place_area <= 0:
+            return iou
+        size_sim = min(fig_area, place_area) / max(fig_area, place_area)
+        if size_sim < self._PDF_MIN_SIZE_SIM:
+            return 0.0
+        if page is not None and self._pdf_bbox_is_page_sized(place_bbox, page):
+            fig_cover = self._pdf_placement_page_coverage(figure_bbox, page)
+            if fig_cover < self._PDF_LOGO_COVER:
+                return 0.0
+        return iou * (0.25 + 0.75 * size_sim)
+
+    def _pdf_preview_clip(self, place_bbox, figure_bbox):
+        """Clip for ``page.get_pixmap``: crop a large XObject, never expand a small one.
+
+        Figure Layout BBox is a useful crop when the XObject is larger than the
+        tagged figure (full-page raster + small logo /A BBox). Using that BBox
+        when it is *larger* than the placement pulls in overlaid text and other
+        graphics from the page composite.
+        """
+        if place_bbox is None:
+            return figure_bbox
+        if figure_bbox is None:
+            return place_bbox
+        import fitz
+        try:
+            place = fitz.Rect(place_bbox)
+            fig = fitz.Rect(figure_bbox)
+        except Exception:
+            return place_bbox
+        if (
+            self._pdf_rect_area(fig) < self._pdf_rect_area(place) * self._PDF_FIGURE_CROP_RATIO
+            and self._pdf_overlap_score(fig, place) > 0
+        ):
+            return fig
+        return place
+
+    @staticmethod
+    def _pdf_parse_rect_array(raw: str):
+        nums: List[float] = []
+        for tok in (raw or "").replace("[", " ").replace("]", " ").split():
+            try:
+                nums.append(float(tok))
+            except ValueError:
+                continue
+        if len(nums) < 4:
+            return None
+        return nums[:4]
+
+    def _pdf_layout_bbox_from_attr_xref(self, doc, attr_xref, page):
+        """Layout /BBox on an attribute object, converted to PyMuPDF page space."""
+        import fitz
+        try:
+            b_type, b_val = doc.xref_get_key(attr_xref, "BBox")
+        except Exception:
+            return None
+        if b_type != "array":
+            return None
+        nums = self._pdf_parse_rect_array(b_val or "")
+        if not nums:
+            return None
+        try:
+            pdf_rect = fitz.Rect(nums[0], nums[1], nums[2], nums[3])
+            display = pdf_rect * page.transformation_matrix
+            if display.is_empty or display.is_infinite:
                 return None
-            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip, alpha=False)
-            return pix.tobytes("png")
-        except Exception as e:
-            logger.debug("PdfOnDiscBackend bbox render failed page %s: %s", page_index, e)
+            return display
+        except Exception:
             return None
 
-    def _pdf_xref_to_png_bytes(self, doc, xref: int, page_index=None, bbox=None) -> bytes:
+    def _pdf_figure_layout_bbox(self, doc, struct_xref, page):
+        """Screen-reader highlight rect for a /Figure (/A Layout BBox), or None."""
+        import fitz
+        try:
+            a_type, a_val = doc.xref_get_key(struct_xref, "A")
+        except Exception:
+            a_type, a_val = "null", None
+        candidates = []
+        if a_type == "xref" and a_val:
+            try:
+                candidates.append(int(str(a_val).split()[0]))
+            except (TypeError, ValueError):
+                pass
+        elif a_type == "array" and a_val:
+            import re
+            for ref in re.findall(r"(\d+)\s+\d+\s+R", a_val):
+                try:
+                    candidates.append(int(ref))
+                except ValueError:
+                    pass
+        for ax in candidates:
+            bbox = self._pdf_layout_bbox_from_attr_xref(doc, ax, page)
+            if bbox is not None and self._pdf_rect_visible_on_page(page, bbox):
+                return bbox
+        try:
+            b_type, b_val = doc.xref_get_key(struct_xref, "BBox")
+            if b_type == "array":
+                nums = self._pdf_parse_rect_array(b_val or "")
+                if nums:
+                    display = fitz.Rect(nums[0], nums[1], nums[2], nums[3]) * page.transformation_matrix
+                    if self._pdf_rect_visible_on_page(page, display):
+                        return display
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _pdf_valid_xref(xref) -> bool:
+        try:
+            return int(xref) > 0
+        except (TypeError, ValueError):
+            return False
+
+    def _pdf_resolve_placement_xref(self, page, xref, bbox):
+        """Return a usable image XObject xref, or None.
+
+        ``get_image_info(xrefs=True)`` sometimes reports xref 0 (inline images
+        or Form-XObject draws). Isolated preview then fails with ``bad xref``
+        and falls back to a page clip that includes overlays.
         """
-        Build PNG bytes for a PDF image XObject.
-        Handles CMYK and soft masks (/SMask). Charts often store ink in a mask over a white/empty base —
-        without applying the mask the preview is a blank white rectangle.
-        Falls back to rendering the figure bbox when the extracted pixmap is still blank.
+        if self._pdf_valid_xref(xref):
+            return int(xref)
+        if bbox is None:
+            return None
+        best_xref = None
+        best_score = 0.0
+        try:
+            images = page.get_images(full=True) or []
+        except Exception:
+            images = []
+        for img in images:
+            img_xref = img[0] if img else None
+            if not self._pdf_valid_xref(img_xref):
+                continue
+            try:
+                place, _transform = self._pdf_image_placement(page, img)
+            except Exception:
+                continue
+            if place is None:
+                continue
+            score = self._pdf_placement_match_score(bbox, place, page)
+            if score > best_score:
+                best_score = score
+                best_xref = int(img_xref)
+        return best_xref if best_score > 0 else None
+
+    def _pdf_page_placements(self, page) -> List[tuple]:
+        """On-page image placements: (xref, display_bbox, transform)."""
+        import fitz
+        placements: List[tuple] = []
+        seen_xrefs: set[int] = set()
+        try:
+            infos = page.get_image_info(xrefs=True) or []
+        except Exception:
+            infos = []
+        for info in infos:
+            raw_xref = info.get("xref")
+            if not info.get("bbox"):
+                continue
+            try:
+                raw = fitz.Rect(info["bbox"])
+                bbox = raw * page.rotation_matrix if page.rotation else raw
+                transform = (
+                    fitz.Matrix(info["transform"])
+                    if info.get("transform") is not None
+                    else None
+                )
+            except Exception:
+                continue
+            if not self._pdf_rect_visible_on_page(page, bbox):
+                continue
+            xref = self._pdf_resolve_placement_xref(page, raw_xref, bbox)
+            if xref is None:
+                logger.debug(
+                    "PdfOnDiscBackend: skipped placement with unusable xref=%r bbox=%s",
+                    raw_xref,
+                    bbox,
+                )
+                continue
+            placements.append((xref, bbox, transform))
+            seen_xrefs.add(int(xref))
+        # get_image_info often lists the page raster and omits a small logo
+        # XObject (or reports xref 0). Merge get_images() so the logo stays
+        # in the pairing queue.
+        try:
+            images = page.get_images(full=True) or []
+        except Exception:
+            images = []
+        for img in images:
+            try:
+                xref = img[0] if img else None
+                if not self._pdf_valid_xref(xref) or int(xref) in seen_xrefs:
+                    continue
+                bbox, transform = self._pdf_image_placement(page, img)
+                if bbox is None:
+                    continue
+                placements.append((int(xref), bbox, transform))
+                seen_xrefs.add(int(xref))
+            except Exception:
+                self._pdf_match_stats["bbox_failures"] = (
+                    int(self._pdf_match_stats.get("bbox_failures", 0)) + 1
+                )
+        return placements
+
+    def _pdf_pick_placement_index(
+        self, queue: list, figure_bbox, page=None, alt_text: str = ""
+    ) -> Optional[int]:
+        """Choose a page-image placement for a /Figure.
+
+        A small figure that sits inside a full-page raster has a non-zero IoU
+        with that backdrop. Prefer a similarly sized placement, and do not
+        fall back to queue[0] when that slot is a near-full-page composite.
+
+        When the tagged alt names a logo/icon and a compact XObject remains,
+        take that even if /A BBox is the photo (common tagging error).
         """
+        if not queue:
+            return None
+
+        def _is_backdrop(index: int) -> bool:
+            return self._pdf_bbox_is_page_sized(queue[index][1], page)
+
+        compact = [i for i in range(len(queue)) if not _is_backdrop(i)]
+        fallback = compact[0] if compact else 0
+
+        if compact and self._pdf_alt_looks_like_logo(alt_text):
+            return min(compact, key=lambda i: self._pdf_rect_area(queue[i][1]))
+
+        if figure_bbox is None or self._pdf_bbox_is_page_sized(figure_bbox, page):
+            return fallback
+
+        best_i = None
+        best_score = 0.0
+        for i, (_xref, bbox, _transform) in enumerate(queue):
+            score = self._pdf_placement_match_score(figure_bbox, bbox, page)
+            if score > best_score:
+                best_score = score
+                best_i = i
+        if best_i is not None and best_score > 0:
+            return best_i
+        return fallback
+
+    @staticmethod
+    def _pdf_matrix_ortho_rotation(transform) -> Optional[int]:
+        """Axis-aligned rotation encoded by an image CTM, or None if skewed."""
+        if transform is None:
+            return 0
+        import math
+        import fitz
+
+        try:
+            matrix = fitz.Matrix(transform)
+        except Exception:
+            return None
+        angle = math.degrees(math.atan2(matrix.b, matrix.a))
+        if angle < 0:
+            angle += 360
+        snapped = int(round(angle / 90.0)) * 90 % 360
+        residual = min(abs(angle - snapped), abs(angle - snapped - 360), abs(angle - snapped + 360))
+        if residual > 8:
+            return None
+        return snapped
+
+    def _pdf_display_insert_rotation(self, page, transform) -> Optional[int]:
+        """Rotation to apply when drawing the raw XObject into a display-space rect.
+
+        ``atan2(b, a)`` of the image CTM is the +x axis in y-down page space.
+        PyMuPDF ``insert_image(..., rotate=)`` uses the opposite convention
+        (``insert_image(rotate=90)`` yields CTM angle 270).
+        """
+        ctm_rot = self._pdf_matrix_ortho_rotation(transform)
+        if ctm_rot is None:
+            return None
+        insert_rot = (360 - ctm_rot) % 360
+        return (insert_rot + int(getattr(page, "rotation", 0) or 0)) % 360
+
+    @staticmethod
+    def _pdf_contain_rect(dest, src_w: float, src_h: float):
+        """Largest rectangle inside *dest* that keeps *src* aspect ratio."""
+        import fitz
+
+        dest = fitz.Rect(dest)
+        if src_w <= 0 or src_h <= 0 or dest.is_empty or dest.is_infinite:
+            return dest
+        scale = min(dest.width / src_w, dest.height / src_h)
+        rw = src_w * scale
+        rh = src_h * scale
+        x0 = dest.x0 + (dest.width - rw) / 2.0
+        y0 = dest.y0 + (dest.height - rh) / 2.0
+        return fitz.Rect(x0, y0, x0 + rw, y0 + rh)
+
+    def _pdf_pixmap_rotated(self, pix, rot: int):
+        """Return *pix* rotated clockwise by 0/90/180/270 without stretching."""
+        import fitz
+
+        rot = int(rot) % 360
+        if rot == 0 or pix is None:
+            return pix
+        if rot not in (90, 180, 270):
+            return pix
+        src_w, src_h = pix.width, pix.height
+        dest_w, dest_h = (src_h, src_w) if rot in (90, 270) else (src_w, src_h)
+        try:
+            stream = pix.tobytes("png")
+        except Exception:
+            return pix
+        tmp = fitz.open()
+        try:
+            page = tmp.new_page(width=dest_w, height=dest_h)
+            page.insert_image(
+                page.rect,
+                stream=stream,
+                rotate=rot,
+                keep_proportion=True,
+            )
+            out = page.get_pixmap(alpha=False)
+            rgb = self._pdf_pixmap_to_rgb(out)
+            return rgb if rgb is not None else out
+        except Exception:
+            return pix
+        finally:
+            try:
+                tmp.close()
+            except Exception:
+                pass
+
+    def _pdf_extract_xobject_pixmap(self, doc, xref: int):
+        """Raw XObject as RGB/gray pixmap with /SMask applied, or None if blank."""
         import fitz
 
         smask = 0
@@ -165,21 +667,15 @@ class PdfOnDiscBackend(DocumentImageBackend):
             info = None
 
         pix = fitz.Pixmap(doc, xref)
-
         if smask > 0:
             try:
-                # Convert base to RGB/gray before combining with mask (set_alpha / Pixmap(pix, mask)
-                # require gray or RGB, not CMYK).
                 pix = self._pdf_pixmap_to_rgb(pix)
                 mask = fitz.Pixmap(doc, smask)
                 if mask.n - mask.alpha != 1:
-                    # Unexpected mask shape — try converting to gray
                     mask = fitz.Pixmap(fitz.csGRAY, mask)
                 try:
-                    # Modern constructor: image + mask → pixmap with alpha
                     pix = fitz.Pixmap(pix, mask)
                 except Exception:
-                    # Older API fallback
                     if not pix.alpha:
                         pix = fitz.Pixmap(pix, 1)
                     pix.set_alpha(mask.samples)
@@ -193,14 +689,301 @@ class PdfOnDiscBackend(DocumentImageBackend):
         else:
             pix = self._pdf_pixmap_to_rgb(pix)
 
-        # Stencil / mask-only XObjects (no colorspace) and white chart backgrounds: show page clip instead
         if self._pdf_pixmap_is_mostly_blank(pix):
-            rendered = self._pdf_render_bbox_png(doc, page_index, bbox)
-            if rendered:
-                return rendered
-
+            return None
         if pix.n - pix.alpha != 3 and pix.n - pix.alpha != 1:
             pix = self._pdf_pixmap_to_rgb(pix)
+        return pix
+
+    def _pdf_render_xobject_only_png(
+        self,
+        doc,
+        xref: int,
+        page_index: int,
+        bbox,
+        transform=None,
+        place_bbox=None,
+        zoom: float = 2.0,
+    ) -> Optional[bytes]:
+        """Rasterize only the tagged XObject, in on-page orientation.
+
+        Draws the extracted bitmap onto a blank page with the placement
+        rotation (CTM + ``/Rotate``). Overlaid text and neighboring images
+        are omitted so the vision model sees the tagged item, not the page
+        composite. Skewed CTMs and blank/mask-only XObjects return None so
+        the caller can fall back to a page clip.
+        """
+        import fitz
+
+        if page_index is None:
+            return None
+        try:
+            page = doc[page_index]
+        except Exception:
+            return None
+        place = place_bbox if place_bbox is not None else bbox
+        if not self._pdf_valid_xref(xref):
+            xref = self._pdf_resolve_placement_xref(page, xref, place)
+            if xref is None:
+                return None
+        place_clip = self._pdf_clip_rect(page, place, transform=transform)
+        if place_clip is None:
+            return None
+        rot = self._pdf_display_insert_rotation(page, transform)
+        if rot is None:
+            return None
+        raw = self._pdf_extract_xobject_pixmap(doc, xref)
+        if raw is None:
+            return None
+        oriented = self._pdf_pixmap_rotated(raw, rot)
+        if oriented is None:
+            return None
+        try:
+            stream = oriented.tobytes("png")
+        except Exception:
+            return None
+        # Rotate in pixel space first. insert_image(rotate=…, keep_proportion=False)
+        # stretches the *unrotated* bitmap into the already-rotated display
+        # rect and squashes photos (and can turn a full-page raster into a
+        # flattened "logo").
+        fit = self._pdf_contain_rect(
+            place_clip, oriented.width, oriented.height
+        )
+        scratch = fitz.open()
+        try:
+            scratch_page = scratch.new_page(
+                width=page.rect.width, height=page.rect.height
+            )
+            scratch_page.insert_image(
+                fit,
+                stream=stream,
+                rotate=0,
+                keep_proportion=True,
+            )
+            figure_clip = self._pdf_clip_rect(page, bbox, transform=transform)
+            render_clip = fit
+            if (
+                figure_clip is not None
+                and self._pdf_rect_area(figure_clip)
+                < self._pdf_rect_area(place_clip) * self._PDF_FIGURE_CROP_RATIO
+                and self._pdf_overlap_score(figure_clip, fit) > 0
+            ):
+                inter = fitz.Rect(figure_clip) & fitz.Rect(fit)
+                if not inter.is_empty:
+                    render_clip = inter
+            pix = scratch_page.get_pixmap(
+                matrix=fitz.Matrix(zoom, zoom), clip=render_clip, alpha=False
+            )
+            pix = self._pdf_pixmap_to_rgb(pix)
+            if pix is None or self._pdf_pixmap_is_mostly_blank(pix):
+                return None
+            return pix.tobytes("png")
+        except Exception as e:
+            logger.debug(
+                "PdfOnDiscBackend isolated XObject render failed xref=%s: %s",
+                xref,
+                e,
+            )
+            return None
+        finally:
+            try:
+                scratch.close()
+            except Exception:
+                pass
+
+    def _pdf_render_bbox_png(
+        self, doc, page_index: int, bbox, zoom: float = 2.0, transform=None
+    ) -> Optional[bytes]:
+        """Rasterize the page clip so the PNG matches Acrobat/Preview (CTM + /Rotate)."""
+        import fitz
+        if page_index is None:
+            return None
+        try:
+            page = doc[page_index]
+            clip = self._pdf_clip_rect(page, bbox, transform=transform)
+            if clip is None:
+                return None
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip, alpha=False)
+            pix = self._pdf_pixmap_to_rgb(pix)
+            return pix.tobytes("png")
+        except Exception as e:
+            logger.debug("PdfOnDiscBackend bbox render failed page %s: %s", page_index, e)
+            return None
+
+    def _pdf_page_backdrop_xrefs(self, page) -> set:
+        """Image XRefs whose on-page placement covers most of the page."""
+        found: set[int] = set()
+        try:
+            infos = page.get_image_info(xrefs=True) or []
+        except Exception:
+            infos = []
+        for info in infos:
+            xref = info.get("xref")
+            if not self._pdf_valid_xref(xref) or not info.get("bbox"):
+                continue
+            if self._pdf_bbox_is_page_sized(info["bbox"], page):
+                found.add(int(xref))
+        try:
+            for img in page.get_images(full=True) or []:
+                xref = img[0] if img else None
+                if not self._pdf_valid_xref(xref) or int(xref) in found:
+                    continue
+                bbox, _transform = self._pdf_image_placement(page, img)
+                if bbox is not None and self._pdf_bbox_is_page_sized(bbox, page):
+                    found.add(int(xref))
+        except Exception:
+            pass
+        return found
+
+    def _pdf_render_clip_hiding_backdrops(
+        self, doc, page_index: int, clip_bbox, zoom: float = 2.0
+    ) -> Optional[bytes]:
+        """Page clip with full-page rasters removed (vector logo over a photo)."""
+        import fitz
+
+        if page_index is None or clip_bbox is None:
+            return None
+        tmp = fitz.open()
+        try:
+            tmp.insert_pdf(doc, from_page=int(page_index), to_page=int(page_index))
+            tpage = tmp[0]
+            for info in tpage.get_image_info(xrefs=True) or []:
+                xref = info.get("xref")
+                if not self._pdf_valid_xref(xref) or not info.get("bbox"):
+                    continue
+                if not self._pdf_bbox_is_page_sized(info["bbox"], tpage):
+                    continue
+                try:
+                    tpage.delete_image(int(xref))
+                except Exception:
+                    continue
+            clip = self._pdf_clip_rect(tpage, clip_bbox)
+            if clip is None:
+                return None
+            pix = tpage.get_pixmap(
+                matrix=fitz.Matrix(zoom, zoom), clip=clip, alpha=False
+            )
+            pix = self._pdf_pixmap_to_rgb(pix)
+            if pix is None or self._pdf_pixmap_is_mostly_blank(pix):
+                return None
+            return pix.tobytes("png")
+        except Exception as e:
+            logger.debug(
+                "PdfOnDiscBackend overlay-only clip failed page %s: %s",
+                page_index,
+                e,
+            )
+            return None
+        finally:
+            try:
+                tmp.close()
+            except Exception:
+                pass
+
+    def _pdf_clip_is_compact(self, clip_bbox, page) -> bool:
+        return clip_bbox is not None and not self._pdf_bbox_is_page_sized(clip_bbox, page)
+
+    def _pdf_preview_png_bytes(
+        self,
+        doc,
+        xref: int,
+        page_index=None,
+        bbox=None,
+        transform=None,
+        place_bbox=None,
+    ) -> Optional[bytes]:
+        """PNG of the tagged image in on-page orientation, without page chrome.
+
+        A compact /Figure (logo) is often only vector art sitting on a
+        full-page photo. Isolated render of that photo is the boy, not the
+        logo. Hide page-sized rasters and clip to the figure instead.
+
+        Otherwise prefer an isolated XObject render (CTM + ``/Rotate``).
+        Fall back to a page clip, then the raw XObject bitmap.
+        """
+        try:
+            page = doc[page_index] if page_index is not None else None
+        except Exception:
+            page = None
+        clip_bbox = bbox if bbox is not None else place_bbox
+        if (
+            page is not None
+            and self._pdf_clip_is_compact(clip_bbox, page)
+            and (
+                not self._pdf_valid_xref(xref)
+                or int(xref) in self._pdf_page_backdrop_xrefs(page)
+            )
+        ):
+            try:
+                overlay = self._pdf_render_clip_hiding_backdrops(
+                    doc, page_index, clip_bbox
+                )
+                if overlay:
+                    return overlay
+            except Exception as e:
+                logger.debug(
+                    "PdfOnDiscBackend overlay preview failed xref=%s: %s", xref, e
+                )
+        try:
+            isolated = self._pdf_render_xobject_only_png(
+                doc,
+                xref,
+                page_index,
+                bbox,
+                transform=transform,
+                place_bbox=place_bbox,
+            )
+            if isolated:
+                return isolated
+        except Exception as e:
+            logger.debug(
+                "PdfOnDiscBackend isolated preview failed xref=%s: %s", xref, e
+            )
+        try:
+            rendered = self._pdf_render_bbox_png(
+                doc, page_index, bbox, transform=transform
+            )
+            if rendered:
+                return rendered
+        except Exception as e:
+            logger.debug(
+                "PdfOnDiscBackend on-page preview failed xref=%s: %s", xref, e
+            )
+        try:
+            return self._pdf_xref_to_png_bytes(
+                doc, xref, page_index=page_index, bbox=bbox, transform=transform
+            )
+        except Exception as e:
+            logger.warning(
+                "PdfOnDiscBackend XObject extract failed xref=%s: %s",
+                xref,
+                e,
+                exc_info=True,
+            )
+            return None
+
+    def _pdf_xref_to_png_bytes(
+        self, doc, xref: int, page_index=None, bbox=None, transform=None
+    ) -> bytes:
+        """
+        Build PNG bytes from the raw PDF image XObject (embedded bitmap).
+
+        Ignores placement CTM / page rotation — use ``_pdf_preview_png_bytes``
+        for UI and AI. Handles CMYK and soft masks (/SMask). Charts often store
+        ink in a mask over a white/empty base — without applying the mask the
+        extract is a blank white rectangle. Falls back to rendering the figure
+        bbox when the extracted pixmap is still blank.
+        """
+        pix = self._pdf_extract_xobject_pixmap(doc, xref)
+        if pix is None:
+            rendered = self._pdf_render_bbox_png(
+                doc, page_index, bbox, transform=transform
+            )
+            if rendered:
+                return rendered
+            import fitz
+
+            pix = self._pdf_pixmap_to_rgb(fitz.Pixmap(doc, xref))
         return pix.tobytes("png")
 
     def _pdf_log_image_record(self, index: int, rec: dict) -> None:
@@ -208,12 +991,18 @@ class PdfOnDiscBackend(DocumentImageBackend):
         img_xref = rec.get("image_xref")
         struct_xref = rec.get("struct_xref")
         alt_raw = rec.get("alt_text") or ""
+        bbox = rec.get("bbox")
+        try:
+            clip = f"{bbox.width:.0f}x{bbox.height:.0f}"
+        except Exception:
+            clip = "?"
         _pdf_backend_log(
-            "Image %d: page %d, figure=%s, image_xref=%s, existing alt=%r (decoded: %s)",
+            "Image %d: page %d, figure=%s, image_xref=%s, clip=%s, existing alt=%r (decoded: %s)",
             index + 1,
             page,
             struct_xref if struct_xref is not None else "none",
             img_xref,
+            clip,
             alt_raw[:80] if alt_raw else "",
             _pdf_alt_preview(alt_raw),
         )
@@ -232,7 +1021,6 @@ class PdfOnDiscBackend(DocumentImageBackend):
             logger.info("[PdfOnDiscBackend] open_document: PyMuPDF (fitz) not installed: %s", e)
             print("[Fido] PDF open: PyMuPDF (fitz) is not installed. Install with: pip install pymupdf")
             return False
-        from collections import deque
         self._document_path = os.path.realpath(source)
         self._images_data = []
         try:
@@ -264,35 +1052,33 @@ class PdfOnDiscBackend(DocumentImageBackend):
             page_image_queues = {}
             for i in range(len(doc)):
                 page = doc[i]
-                q = deque()
-                for img in page.get_images(full=True):
-                    try:
-                        bbox = page.get_image_bbox(img)
-                        q.append((img[0], bbox))
-                    except Exception as e:
-                        self._pdf_match_stats["bbox_failures"] += 1
-                        logger.debug(
-                            "PdfOnDiscBackend: get_image_bbox failed page %d image xref %s: %s",
-                            i + 1,
-                            img[0] if img else "?",
-                            e,
-                        )
+                q = self._pdf_page_placements(page)
                 page_image_queues[i] = q
                 self._pdf_match_stats["page_image_counts"][i] = len(q)
                 if q:
                     _pdf_backend_log(
-                        "Page %d: %d raster image(s) on page (pairing order = structure-tree /Figure order)",
+                        "Page %d: %d on-page raster image(s) (pairing uses /Figure Layout BBox overlap)",
                         i + 1,
                         len(q),
                     )
             results = []
             self._pdf_walk_figures(doc, root_xref, page_xref_map, page_image_queues, results, None)
-            for struct_xref, page_index, image_xref, bbox, existing_alt in results:
+            for (
+                struct_xref,
+                page_index,
+                image_xref,
+                bbox,
+                transform,
+                existing_alt,
+                place_bbox,
+            ) in results:
                 self._images_data.append({
                     "struct_xref": struct_xref,
                     "page_index": page_index,
                     "image_xref": image_xref,
                     "bbox": bbox,
+                    "place_bbox": place_bbox,
+                    "transform": transform,
                     "alt_text": existing_alt,
                 })
                 self._pdf_match_stats["figures_matched"] += 1
@@ -309,7 +1095,7 @@ class PdfOnDiscBackend(DocumentImageBackend):
             )
             if skipped:
                 _pdf_backend_log(
-                    "Hint: skipped figures usually mean structure-tree order ≠ drawing order on the page"
+                    "Hint: skipped figures usually mean structure-tree order != drawing order on the page"
                 )
             if unmatched_images:
                 _pdf_backend_log(
@@ -323,34 +1109,27 @@ class PdfOnDiscBackend(DocumentImageBackend):
             )
             for page_index in range(len(doc)):
                 page = doc[page_index]
-                for img in page.get_images(full=True):
+                for image_xref, bbox, transform in self._pdf_page_placements(page):
+                    existing_alt = ""
                     try:
-                        bbox = page.get_image_bbox(img)
-                        image_xref = img[0]
-                        existing_alt = ""
-                        try:
-                            alt_type, alt_val = doc.xref_get_key(image_xref, "Alt")
-                            if alt_type == "string":
-                                existing_alt = alt_val
-                        except Exception as e:
-                            logger.debug(
-                                "PdfOnDiscBackend: read Alt on image xref %s failed: %s",
-                                image_xref,
-                                e,
-                            )
-                        self._images_data.append({
-                            "struct_xref": None,
-                            "page_index": page_index,
-                            "image_xref": image_xref,
-                            "bbox": bbox,
-                            "alt_text": existing_alt,
-                        })
+                        alt_type, alt_val = doc.xref_get_key(image_xref, "Alt")
+                        if alt_type == "string":
+                            existing_alt = alt_val
                     except Exception as e:
                         logger.debug(
-                            "PdfOnDiscBackend: untagged page %d image skipped: %s",
-                            page_index + 1,
+                            "PdfOnDiscBackend: read Alt on image xref %s failed: %s",
+                            image_xref,
                             e,
                         )
+                    self._images_data.append({
+                        "struct_xref": None,
+                        "page_index": page_index,
+                        "image_xref": image_xref,
+                        "bbox": bbox,
+                        "place_bbox": bbox,
+                        "transform": transform,
+                        "alt_text": existing_alt,
+                    })
 
         self._doc = doc
         _pdf_backend_log("Opened %s — %d image(s) in utility list", self._document_path, len(self._images_data))
@@ -370,18 +1149,39 @@ class PdfOnDiscBackend(DocumentImageBackend):
                 try:
                     alt_type, alt_val = doc.xref_get_key(xref, "Alt")
                     if alt_type == "string":
-                        existing_alt = alt_val
+                        existing_alt = _pdf_decode_string_value(alt_val)
                 except Exception:
                     pass
                 queue = page_image_queues.get(page_index)
-                if queue:
-                    img_xref, bbox = queue.popleft()
-                    results.append((xref, page_index, img_xref, bbox, existing_alt))
+                page = doc[page_index] if 0 <= page_index < len(doc) else None
+                figure_bbox = (
+                    self._pdf_figure_layout_bbox(doc, xref, page) if page is not None else None
+                )
+                pick = self._pdf_pick_placement_index(
+                    queue or [], figure_bbox, page, alt_text=existing_alt
+                )
+                if queue is not None and pick is not None:
+                    img_xref, place_bbox, transform = queue.pop(pick)
+                    clip_bbox = self._pdf_preview_clip(place_bbox, figure_bbox)
+                    results.append(
+                        (
+                            xref,
+                            page_index,
+                            img_xref,
+                            clip_bbox,
+                            transform,
+                            existing_alt,
+                            place_bbox,
+                        )
+                    )
                     logger.debug(
-                        "PdfOnDiscBackend: paired /Figure xref %s page %d → image xref %s",
+                        "PdfOnDiscBackend: paired /Figure xref %s page %d → image xref %s "
+                        "(placement %s, clip %s)",
                         xref,
                         page_index + 1,
                         img_xref,
+                        place_bbox,
+                        clip_bbox,
                     )
                 else:
                     self._pdf_match_stats["figures_skipped"] = (
@@ -475,33 +1275,21 @@ class PdfOnDiscBackend(DocumentImageBackend):
             return None
         rec = self._images_data[index]
         doc = self._doc
-        try:
-            image_bytes = self._pdf_xref_to_png_bytes(
-                doc,
-                rec["image_xref"],
-                page_index=rec.get("page_index"),
-                bbox=rec.get("bbox"),
-            )
-        except Exception as e:
-            logger.warning(
-                "PdfOnDiscBackend extract failed index %d image_xref %s: %s",
-                index,
-                rec.get("image_xref"),
-                e,
-                exc_info=True,
-            )
+        image_bytes = self._pdf_preview_png_bytes(
+            doc,
+            rec["image_xref"],
+            page_index=rec.get("page_index"),
+            bbox=rec.get("bbox"),
+            transform=rec.get("transform"),
+            place_bbox=rec.get("place_bbox"),
+        )
+        if not image_bytes:
             _pdf_backend_log(
-                "Could not extract preview bitmap for image %d (xref %s): %s",
+                "Could not extract preview bitmap for image %d (xref %s)",
                 index + 1,
                 rec.get("image_xref"),
-                e,
             )
-            # Last resort: page clip when XObject extract fails entirely
-            image_bytes = self._pdf_render_bbox_png(
-                doc, rec.get("page_index"), rec.get("bbox")
-            )
-            if not image_bytes:
-                return load_image_result("", rec["alt_text"], False)
+            return load_image_result("", rec["alt_text"], False)
         path = os.path.join(self._resolve_temp_dir(), f"pdf_image_{index}.png")
         try:
             with open(path, "wb") as f:

@@ -14,6 +14,64 @@ try:
 except ImportError:
     _markdown = None  # type: ignore
 
+def _html_root_class() -> str:
+    try:
+        from ..ui_appearance import html_root_class
+
+        return html_root_class()
+    except Exception:
+        return "checkmate-theme-system"
+
+
+def _html_color_scheme() -> str:
+    try:
+        from ..ui_appearance import html_color_scheme
+
+        return html_color_scheme()
+    except Exception:
+        return "light dark"
+
+
+_AI_DARK_ROOT_TOKENS = """
+      :root {
+        --ink: #f1f5f9;
+        --muted: #94a3b8;
+        --paper: #0f172a;
+        --card: #1e293b;
+        --line: #334155;
+        --line-strong: #64748b;
+        --focus: #2dd4bf;
+        --focus-ring: #0f766e;
+        --link: #5eead4;
+        --link-visited: #99f6e4;
+        --note-fg: #fed7aa;
+        --note-bg: #7c2d12;
+        --note-border: #c2410c;
+        --fix-fg: #bbf7d0;
+        --fix-border: #166534;
+        --chat-user-bg: #1e3a5f;
+        --chat-user-fg: #eff6ff;
+        --chat-user-border: #3b82f6;
+        --code-bg: #0f172a;
+        --shadow: 0 1px 3px rgb(0 0 0 / 35%);
+      }
+"""
+
+_ISSUE_DARK_ROOT_TOKENS = """
+      :root {
+        --fatal-fg: #fecaca;
+        --fatal-bg: #7f1d1d;
+        --error-fg: #fecaca;
+        --error-bg: #7f1d1d;
+        --warning-fg: #fed7aa;
+        --warning-bg: #7c2d12;
+        --info-fg: #bfdbfe;
+        --info-bg: #1e3a8a;
+        --usage-fg: #cbd5e1;
+        --usage-bg: #334155;
+      }
+"""
+
 # wx.html.HtmlWindow supports only a small HTML subset (no real CSS).
 _CODE_BLOCK_RE = re.compile(
     r"<pre><code(?:\s+[^>]*)?>(.*?)</code></pre>",
@@ -214,7 +272,14 @@ def markdown_to_page(text: str, *, plain: bool = False) -> str:
 
 def _ai_browser_css() -> str:
     """Shared look with the checker HTML report (lighter, prose-focused)."""
-    return """
+    try:
+        from ..ui_appearance import wrap_os_dark_css
+    except Exception:
+        def wrap_os_dark_css(inner: str) -> str:
+            return f"@media (prefers-color-scheme: dark) {{\n{inner}\n}}\n"
+
+    return (
+        """
     :root {
       --ink: #0f172a;
       --muted: #475569;
@@ -240,30 +305,9 @@ def _ai_browser_css() -> str:
       --mono: ui-monospace, "Cascadia Code", "Consolas", "Liberation Mono", monospace;
       --shadow: 0 1px 2px rgb(15 23 42 / 8%);
     }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --ink: #f1f5f9;
-        --muted: #94a3b8;
-        --paper: #0f172a;
-        --card: #1e293b;
-        --line: #334155;
-        --line-strong: #64748b;
-        --focus: #2dd4bf;
-        --focus-ring: #0f766e;
-        --link: #5eead4;
-        --link-visited: #99f6e4;
-        --note-fg: #fed7aa;
-        --note-bg: #7c2d12;
-        --note-border: #c2410c;
-        --fix-fg: #bbf7d0;
-        --fix-border: #166534;
-        --chat-user-bg: #1e3a5f;
-        --chat-user-fg: #eff6ff;
-        --chat-user-border: #3b82f6;
-        --code-bg: #0f172a;
-        --shadow: 0 1px 3px rgb(0 0 0 / 35%);
-      }
-    }
+"""
+        + wrap_os_dark_css(_AI_DARK_ROOT_TOKENS)
+        + """
     * { box-sizing: border-box; }
     html {
       margin: 0;
@@ -541,6 +585,7 @@ def _ai_browser_css() -> str:
       }
     }
     """
+    )
 
 
 def _structure_ai_browser_body(fragment: str) -> str:
@@ -709,11 +754,11 @@ def markdown_to_browser_page(
     lang = html.escape(get_language())
     direction = html.escape(get_text_direction())
     return f"""<!DOCTYPE html>
-<html lang="{lang}" dir="{direction}">
+<html lang="{lang}" dir="{direction}" class="{_html_root_class()}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="{_html_color_scheme()}">
 <title>{safe_title}</title>
 <style>{_ai_browser_css()}
 </style>
@@ -1021,6 +1066,12 @@ def _issue_help_fields(issue: "Issue") -> tuple[str, str, str]:
 
 def _issue_details_dialog_css() -> str:
     """Brand tokens from the AI page, tightened for the issue-details WebView."""
+    try:
+        from ..ui_appearance import wrap_os_dark_css
+    except Exception:
+        def wrap_os_dark_css(inner: str) -> str:
+            return f"@media (prefers-color-scheme: dark) {{\n{inner}\n}}\n"
+
     return (
         _ai_browser_css()
         + """
@@ -1036,20 +1087,9 @@ def _issue_details_dialog_css() -> str:
       --usage-fg: #334155;
       --usage-bg: #e8eef5;
     }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --fatal-fg: #fecaca;
-        --fatal-bg: #7f1d1d;
-        --error-fg: #fecaca;
-        --error-bg: #7f1d1d;
-        --warning-fg: #fed7aa;
-        --warning-bg: #7c2d12;
-        --info-fg: #bfdbfe;
-        --info-bg: #1e3a8a;
-        --usage-fg: #cbd5e1;
-        --usage-bg: #334155;
-      }
-    }
+"""
+        + wrap_os_dark_css(_ISSUE_DARK_ROOT_TOKENS)
+        + """
     main {
       max-width: none;
       margin: 0;
@@ -1235,12 +1275,12 @@ def issue_details_page(
     lang = html.escape(get_language())
     direction = html.escape(get_text_direction())
     return f"""<!DOCTYPE html>
-<html lang="{lang}" dir="{direction}">
+<html lang="{lang}" dir="{direction}" class="{_html_root_class()}">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
-<title>{title}</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="{_html_color_scheme()}">
+  <title>{title}</title>
 <style>{_issue_details_dialog_css()}
 </style>
 </head>

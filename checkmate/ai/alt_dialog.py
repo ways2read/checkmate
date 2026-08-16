@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 import tempfile
 import threading
+import uuid
 import webbrowser
 from pathlib import Path
 
@@ -15,6 +15,7 @@ import wx.lib.newevent
 
 from ..i18n import _
 from .alt_assess import AltAssessResult, ask_alt_assess_followup
+from .alt_labels import FEATURE_FILENAME_STEM, feature_title
 from .alt_report import assessment_markdown_export, build_assessment_html
 from .alt_sample import assess_more_choice_labels
 from .explain import ExplainResult, error_message_for_key
@@ -24,6 +25,15 @@ from .markdown_html import append_followup_markdown
 logger = logging.getLogger(__name__)
 
 AltFollowupEvent, EVT_ALT_FOLLOWUP = wx.lib.newevent.NewEvent()
+
+
+def _unlink_quietly(path: Path | None) -> None:
+    if path is None:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 _SCROLL_FOLLOWUP_JS = """
 (function () {
@@ -50,6 +60,12 @@ def _present_progress(dlg: wx.ProgressDialog, message: str) -> None:
     main_mod._present_progress_dialog(dlg, message)
 
 
+def _progress_body(message: str) -> str:
+    from .. import main as main_mod
+
+    return main_mod._alt_assess_progress_body(message)
+
+
 def _clear_progress(dlg: wx.ProgressDialog | None) -> None:
     from .. import main as main_mod
 
@@ -61,7 +77,7 @@ class AltAssessDialog(wx.Dialog):
     def __init__(self, parent: wx.Window, *, result: AltAssessResult) -> None:
         super().__init__(
             parent,
-            title=_("Alt text health check"),
+            title=feature_title(),
             style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX,
         )
         self.SetSize((820, 700))
@@ -80,14 +96,14 @@ class AltAssessDialog(wx.Dialog):
         self._close_btn: wx.Button | None = None
 
         root = wx.BoxSizer(wx.VERTICAL)
-        heading = wx.StaticText(self, label=_("Alt text health check"))
+        heading = wx.StaticText(self, label=feature_title())
         font = heading.GetFont()
         if font.IsOk():
             font.SetWeight(wx.FONTWEIGHT_BOLD)
             heading.SetFont(font)
         root.Add(heading, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
 
-        self._host = wx.Panel(self, name=_("Alt text health check"))
+        self._host = wx.Panel(self, name=feature_title())
         self._host.SetMinSize((-1, 400))
         host_sizer = wx.BoxSizer(wx.VERTICAL)
         loading = wx.StaticText(self._host, label=_("Loading AI view…"))
@@ -140,6 +156,7 @@ class AltAssessDialog(wx.Dialog):
         self.copy_btn.Bind(wx.EVT_BUTTON, self._on_copy)
         self.Bind(EVT_ALT_FOLLOWUP, self._on_followup_event)
         self.Bind(wx.EVT_CLOSE, self._on_close_dialog)
+        self.Bind(wx.EVT_WINDOW_DESTROY, self._on_window_destroy)
         self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
 
         self.SetSizer(root)
@@ -150,7 +167,13 @@ class AltAssessDialog(wx.Dialog):
         self._sync_assess_more_enabled()
 
         self._view: wx.Window | None = None
-        self._realize_view()
+        self._html_tmp: Path | None = None
+        self._html_tmp_prev: list[Path] = []
+        self._load_retries = 0
+        self._webview_replaced = False
+        self._pending_later: list[wx.CallLater] = []
+        # Create the WebView after ShowModal so Edge is not a blank HWND.
+        wx.CallAfter(self._realize_view)
         # Keep Enter-in-follow-up working without making Ask the dialog default
         # (Ask-as-default + WebView focus after follow-up can strand the frame).
         self.followup_ctrl.Bind(wx.EVT_SET_FOCUS, self._on_followup_focus)
@@ -199,6 +222,19 @@ class AltAssessDialog(wx.Dialog):
             return
         event.Skip()
 
+    def _call_later(self, ms: int, fn) -> wx.CallLater:
+        timer = wx.CallLater(ms, fn)
+        self._pending_later.append(timer)
+        return timer
+
+    def _stop_pending_later(self) -> None:
+        for timer in list(self._pending_later):
+            try:
+                timer.Stop()
+            except Exception:
+                pass
+        self._pending_later.clear()
+
     def _alive(self) -> bool:
         if self._closing:
             return False
@@ -212,6 +248,8 @@ class AltAssessDialog(wx.Dialog):
         return build_assessment_html(self._result, for_dialog=True)
 
     def _realize_view(self) -> None:
+        if self._closing or self._view is not None:
+            return
         host = self._host
         sizer = host.GetSizer()
         view: wx.Window
@@ -221,6 +259,12 @@ class AltAssessDialog(wx.Dialog):
 
             view = html2.WebView.New(host)
             is_webview = True
+            try:
+                from ..ui_appearance import apply_webview_appearance
+
+                apply_webview_appearance(view)
+            except Exception:
+                pass
             view.Bind(html2.EVT_WEBVIEW_NAVIGATING, self._on_navigating)
             view.Bind(html2.EVT_WEBVIEW_LOADED, self._on_webview_loaded)
         except Exception:
@@ -235,7 +279,10 @@ class AltAssessDialog(wx.Dialog):
         self._is_webview = is_webview
         host.Layout()
         self.Layout()
-        self._paint()
+        # WebView2 is not ready for LoadURL during construction.
+        wx.CallAfter(self._paint)
+        if is_webview:
+            self._call_later(400, self._reload_webview_if_needed)
 
     def _on_navigating(self, event) -> None:
         if self._closing:
@@ -254,11 +301,25 @@ class AltAssessDialog(wx.Dialog):
             except OSError:
                 pass
             return
+        # file:// (temp report) and about:blank must load.
         event.Skip()
 
     def _on_webview_loaded(self, event) -> None:
         event.Skip()
         if self._closing:
+            return
+        if self._view is not None:
+            try:
+                from ..ui_appearance import apply_webview_appearance
+
+                apply_webview_appearance(self._view)
+            except Exception:
+                pass
+        url = (event.GetURL() or "").strip().lower()
+        if self._html_tmp is not None and (
+            not url or url == "about:blank" or url.startswith("about:")
+        ):
+            self._reload_webview_if_needed()
             return
         if self._scroll_followup_after_load and self._is_webview and self._view:
             self._scroll_followup_after_load = False
@@ -266,11 +327,137 @@ class AltAssessDialog(wx.Dialog):
                 self._view.RunScript(_SCROLL_FOLLOWUP_JS)
             except Exception:
                 logger.debug("Could not scroll to follow-up", exc_info=True)
-            # Return keyboard focus to the follow-up field (wx), not Edge.
             try:
                 self.followup_ctrl.SetFocus()
             except RuntimeError:
                 pass
+
+    def _load_html_in_webview(self, html_doc: str) -> None:
+        """Load report HTML via file://.
+
+        Edge WebView2 ``SetPage`` / NavigateToString silently shows a blank
+        document once the HTML (embedded image data-URIs) exceeds ~1–2 MB.
+        Loading a temp file matches “View in browser”, which already works.
+        """
+        view = self._view
+        if view is None:
+            return
+        from .alt_inventory_dialog import (
+            cleanup_view_html,
+            webview_file_uri,
+            write_unique_view_html,
+        )
+
+        export = self._result.export
+        try:
+            if export is not None and export.folder:
+                folder = Path(export.folder)
+                canonical = folder / "ai_image_inspector.html"
+                canonical.write_text(html_doc, encoding="utf-8")
+                cleanup_view_html(folder)
+                path = write_unique_view_html(canonical)
+            else:
+                tmp_dir = Path(tempfile.gettempdir()) / "checkmate_alt_assess"
+                tmp_dir.mkdir(parents=True, exist_ok=True)
+                path = tmp_dir / f"assess_{os.getpid()}_{uuid.uuid4().hex}.html"
+                path.write_text(html_doc, encoding="utf-8")
+        except OSError:
+            logger.exception("Could not write inspector HTML for WebView")
+            try:
+                view.SetPage(html_doc, "about:blank")
+            except Exception:
+                logger.exception("SetPage fallback failed")
+            return
+        prev = self._html_tmp
+        self._html_tmp = path
+        self._load_retries = 0
+        if prev is not None and prev != path and not prev.name.startswith(".cm_view_"):
+            self._html_tmp_prev.append(prev)
+        elif prev is not None and prev != path:
+            _unlink_quietly(prev)
+        uri = webview_file_uri(path)
+        logger.debug(
+            "Inspector WebView LoadURL %s (%s bytes)", uri, path.stat().st_size
+        )
+        try:
+            view.LoadURL(uri)
+            return
+        except Exception:
+            logger.exception("LoadURL failed for inspector HTML")
+        try:
+            view.SetPage(html_doc, uri)
+        except Exception:
+            logger.exception("SetPage fallback failed for inspector HTML")
+
+    def _reload_webview_if_needed(self) -> None:
+        """If Edge loaded about:blank instead of the report, try the file again."""
+        if not self._alive() or not self._is_webview or self._view is None:
+            return
+        if self._html_tmp is None:
+            return
+        view = self._view
+        try:
+            current = (view.GetCurrentURL() or "").strip().lower()
+        except Exception:
+            current = ""
+        expected = self._html_tmp.name.lower()
+        if expected and expected in current.replace("\\", "/"):
+            return
+        if not current:
+            return
+        if not (current == "about:blank" or current.startswith("about:")):
+            return
+        if self._load_retries >= 2:
+            self._replace_webview()
+            return
+        self._load_retries += 1
+        try:
+            view.LoadURL(self._html_tmp.resolve().as_uri())
+        except Exception:
+            logger.debug("Inspector WebView reload failed", exc_info=True)
+
+    def _replace_webview(self) -> None:
+        """Recreate the Edge control once if reloads still show a blank document."""
+        if self._webview_replaced or not self._alive():
+            return
+        self._webview_replaced = True
+        from .alt_inventory_dialog import _safe_destroy_window
+
+        old = self._view
+        self._release_webview()
+        host = self._host
+        sizer = host.GetSizer()
+        view: wx.Window
+        is_webview = False
+        try:
+            import wx.html2 as html2
+
+            view = html2.WebView.New(host)
+            is_webview = True
+            view.Bind(html2.EVT_WEBVIEW_NAVIGATING, self._on_navigating)
+            view.Bind(html2.EVT_WEBVIEW_LOADED, self._on_webview_loaded)
+        except Exception:
+            view = wx.TextCtrl(
+                host,
+                style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2 | wx.BORDER_NONE,
+            )
+        self._view = view
+        self._is_webview = is_webview
+        self._load_retries = 0
+        if sizer is not None:
+            if old is not None:
+                try:
+                    sizer.Detach(old)
+                except Exception:
+                    pass
+            sizer.Add(view, 1, wx.EXPAND)
+        host.Layout()
+        self.Layout()
+        if old is not None and old is not view:
+            self._call_later(500, lambda: _safe_destroy_window(old))
+        wx.CallAfter(self._paint)
+        if is_webview:
+            self._call_later(400, self._reload_webview_if_needed)
 
     def _paint(self, *, scroll_followup: bool = False) -> None:
         if not self._alive() or self._view is None:
@@ -279,9 +466,13 @@ class AltAssessDialog(wx.Dialog):
         self._scroll_followup_after_load = bool(scroll_followup and self._is_webview)
         html_doc = self._current_html()
         if self._is_webview:
-            self._view.SetPage(html_doc, "")
+            self._load_html_in_webview(html_doc)
         else:
-            self._view.SetValue(self._synthesis_md)
+            setter = getattr(self._view, "ChangeValue", None) or getattr(
+                self._view, "SetValue", None
+            )
+            if setter is not None:
+                setter(self._synthesis_md)
             if scroll_followup:
                 try:
                     self._view.ShowPosition(len(self._view.GetValue() or ""))
@@ -331,7 +522,7 @@ class AltAssessDialog(wx.Dialog):
         cancel = threading.Event()
         self._ai_cancel = cancel
         self._ai_progress = wx.ProgressDialog(
-            _("Alt text health check"),
+            feature_title(),
             _("Thinking…"),
             maximum=100,
             parent=self,
@@ -379,7 +570,7 @@ class AltAssessDialog(wx.Dialog):
             if out.error_key != "cancelled":
                 wx.MessageBox(
                     error_message_for_key(out.error_key, detail=out.text or ""),
-                    _("Alt text health check"),
+                    feature_title(),
                     wx.OK | wx.ICON_ERROR,
                     self,
                 )
@@ -417,7 +608,7 @@ class AltAssessDialog(wx.Dialog):
         if not rows:
             wx.MessageBox(
                 _("All images in this export have already been assessed."),
-                _("Alt text health check"),
+                feature_title(),
                 wx.OK | wx.ICON_INFORMATION,
                 self,
             )
@@ -448,14 +639,15 @@ class AltAssessDialog(wx.Dialog):
         prior = self._result
         cancel = threading.Event()
         self._ai_cancel = cancel
+        start_msg = _progress_body(ai_libraries_status_message())
         self._ai_progress = wx.ProgressDialog(
-            _("Alt text health check"),
-            ai_libraries_status_message(),
+            feature_title(),
+            start_msg,
             maximum=100,
             parent=self,
             style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
         )
-        _present_progress(self._ai_progress, ai_libraries_status_message())
+        _present_progress(self._ai_progress, start_msg)
         self._ai_progress_timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self._on_progress_timer, self._ai_progress_timer)
         self._ai_progress_timer.Start(200)
@@ -464,7 +656,12 @@ class AltAssessDialog(wx.Dialog):
         def status(message: str) -> None:
             def update() -> None:
                 if self._ai_progress is not None:
-                    cont = _pulse_progress(self._ai_progress, message)
+                    text = _progress_body(
+                        _("Cancelling…")
+                        if self._ai_cancel is not None and self._ai_cancel.is_set()
+                        else message
+                    )
+                    cont = _pulse_progress(self._ai_progress, text)
                     if not cont and self._ai_cancel is not None:
                         self._ai_cancel.set()
 
@@ -504,7 +701,7 @@ class AltAssessDialog(wx.Dialog):
                             error_message_for_key(
                                 out.error_key, detail=out.detail or out.text or ""
                             ),
-                            _("Alt text health check"),
+                            feature_title(),
                             wx.OK | wx.ICON_ERROR,
                             self,
                         )
@@ -547,7 +744,7 @@ class AltAssessDialog(wx.Dialog):
         with wx.FileDialog(
             self,
             _("Save as HTML"),
-            defaultFile="alt_text_assessment.html",
+            defaultFile=f"{FEATURE_FILENAME_STEM}.html",
             wildcard=_("HTML files (*.html)|*.html|All files (*.*)|*.*"),
             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
         ) as dlg:
@@ -576,7 +773,7 @@ class AltAssessDialog(wx.Dialog):
         with wx.FileDialog(
             self,
             _("Save as Markdown"),
-            defaultFile="alt_text_assessment.md",
+            defaultFile=f"{FEATURE_FILENAME_STEM}.md",
             wildcard=_("Markdown files (*.md)|*.md|All files (*.*)|*.*"),
             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
         ) as dlg:
@@ -618,60 +815,55 @@ class AltAssessDialog(wx.Dialog):
             pass
 
     def _on_close_dialog(self, event: wx.Event | None = None) -> None:
-        # Same pattern as IssueDetailDialog / AltTextReportDialog: do not tear
-        # down WebView2 inside navigating/key handlers.
         if self._closing:
             if isinstance(event, wx.CloseEvent):
-                event.Veto()
+                # ShowModal already returned; allow the caller's Destroy().
+                event.Skip()
             return
         self._closing = True
         self._paint_gen += 1
         self._scroll_followup_after_load = False
+        self._stop_pending_later()
         if self._ai_cancel is not None:
             self._ai_cancel.set()
         self._close_progress()
         self._release_webview()
         if isinstance(event, wx.CloseEvent):
             event.Veto()
-        # One more idle after release so Edge can drop the HWND before EndModal.
-        wx.CallAfter(self._finish_close_dialog)
+        self._finish_close_dialog()
 
     def _on_close(self, event: wx.Event | None = None) -> None:
         self._on_close_dialog(event)
 
     def _release_webview(self) -> None:
-        """Drop Edge focus and destroy the control before EndModal/Destroy.
-
-        Avoid blanking a large ``SetPage`` document here — that can freeze the
-        UI on Windows after follow-up / Save HTML. Destroying the WebView HWND
-        is faster and leaves focus on dialog chrome.
-        """
+        """Unbind Edge events; do not Stop/Hide the control (that blanks or crashes)."""
+        self._stop_pending_later()
+        self._focus_dialog_chrome()
         view = self._view
-        self._view = None
         if view is None or not self._is_webview:
             return
-        self._focus_dialog_chrome()
         try:
-            view.Stop()
+            import wx.html2 as html2
+
+            view.Unbind(html2.EVT_WEBVIEW_LOADED)
+            view.Unbind(html2.EVT_WEBVIEW_NAVIGATING)
         except Exception:
             pass
-        try:
-            view.Hide()
-        except RuntimeError:
-            pass
-        try:
-            # Detach from the sizer so Destroy does not race Layout.
-            host = self._host
-            sizer = host.GetSizer() if host is not None else None
-            if sizer is not None:
-                sizer.Detach(view)
-        except Exception:
-            pass
-        try:
-            view.Destroy()
-        except RuntimeError:
-            pass
-        self._is_webview = False
+
+    def _cleanup_html_tmp(self) -> None:
+        for leftover in list(self._html_tmp_prev):
+            _unlink_quietly(leftover)
+        self._html_tmp_prev.clear()
+        # Keep the copy written beside the export (relative images/ resolve).
+        if self._html_tmp is None or self._html_tmp.name != "ai_image_inspector.html":
+            _unlink_quietly(self._html_tmp)
+        self._html_tmp = None
+
+    def _on_window_destroy(self, event: wx.WindowDestroyEvent) -> None:
+        event.Skip()
+        if event.GetEventObject() is not self:
+            return
+        self._cleanup_html_tmp()
 
     def _finish_close_dialog(self) -> None:
         try:
@@ -679,19 +871,9 @@ class AltAssessDialog(wx.Dialog):
                 return
         except RuntimeError:
             return
-        if sys.platform == "win32":
-            try:
-                import ctypes
-
-                hwnd = int(self.GetHandle() or 0)
-                if hwnd:
-                    ctypes.windll.user32.SetFocus(hwnd)
-            except Exception:
-                pass
+        self._focus_dialog_chrome()
         try:
             if self.IsModal():
                 self.EndModal(wx.ID_CLOSE)
-            else:
-                self.Destroy()
         except RuntimeError:
             pass

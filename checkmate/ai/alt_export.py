@@ -21,6 +21,107 @@ _INDEX_KEYS = ("Index", "index")
 _DIM_KEYS = ("Dimensions", "dimensions")
 _SIZE_KEYS = ("File Size", "FileSize", "file_size")
 _CONTEXT_KEYS = ("Context", "context", "Surrounding Text", "surrounding_text")
+_FORMAT_KEYS = ("Format", "Publication Format", "publication_format")
+
+PUBLICATION_FORMATS = frozenset(
+    {"pdf", "epub", "ebrl", "docx", "pptx", "html", "idml", "folder", "unknown"}
+)
+
+_FORMAT_ALIASES = {
+    "doc": "docx",
+    "word": "docx",
+    "htm": "html",
+    "xhtml": "html",
+    "powerpoint": "pptx",
+    "ppt": "pptx",
+    "indesign": "idml",
+    "ebraille": "ebrl",
+}
+
+
+def normalize_publication_format(value: str | None) -> str:
+    """Return a canonical format key, or ``unknown``."""
+    raw = (value or "").strip().lower()
+    if not raw:
+        return "unknown"
+    raw = raw.split(".", 1)[-1] if raw.startswith(".") else raw
+    raw = _FORMAT_ALIASES.get(raw, raw)
+    if raw in PUBLICATION_FORMATS:
+        return raw
+    return "unknown"
+
+
+def publication_format_label(value: str | None) -> str:
+    """Short display name for prompts (``PDF``, ``EPUB``, …)."""
+    key = normalize_publication_format(value)
+    return {
+        "pdf": "PDF",
+        "epub": "EPUB",
+        "ebrl": "eBraille",
+        "docx": "Word (DOCX)",
+        "pptx": "PowerPoint (PPTX)",
+        "html": "HTML",
+        "idml": "InDesign (IDML)",
+        "folder": "image folder",
+        "unknown": "unknown",
+    }.get(key, "unknown")
+
+
+def infer_publication_format(
+    *,
+    explicit: str = "",
+    document_name: str = "",
+    folder: Path | str | None = None,
+    backend: object | None = None,
+) -> str:
+    """Best-effort publication format from an explicit value, backend, or filename."""
+    for candidate in (explicit, publication_format_from_backend(backend)):
+        key = normalize_publication_format(candidate)
+        if key != "unknown":
+            return key
+    for name in (document_name, str(folder) if folder is not None else ""):
+        if not name:
+            continue
+        stem = Path(str(name)).name
+        ext = Path(stem).suffix.lower().lstrip(".")
+        key = normalize_publication_format(ext)
+        if key != "unknown":
+            return key
+        lower = stem.lower()
+        for token in ("ebrl", "epub", "pdf", "docx", "pptx", "idml"):
+            if f".{token}" in lower or lower.endswith(token):
+                return token
+    return "unknown"
+
+
+def publication_format_from_backend(backend: object | None) -> str:
+    """Infer format from a document-image backend instance."""
+    if backend is None:
+        return "unknown"
+    cls = type(backend).__name__.lower()
+    hints = (
+        ("pdf", "pdf"),
+        ("ebrl", "ebrl"),
+        ("ebraille", "ebrl"),
+        ("epub", "epub"),
+        ("docx", "docx"),
+        ("word", "docx"),
+        ("pptx", "pptx"),
+        ("powerpoint", "pptx"),
+        ("idml", "idml"),
+        ("html", "html"),
+        ("folder", "folder"),
+    )
+    for needle, key in hints:
+        if needle in cls:
+            return key
+    for attr in ("_document_path", "document_path", "_source_path", "source"):
+        path = getattr(backend, attr, None)
+        if isinstance(path, str) and path.strip():
+            key = infer_publication_format(document_name=path)
+            if key != "unknown":
+                return key
+    return "unknown"
 
 
 @dataclass(frozen=True)
@@ -63,6 +164,7 @@ class AltExport:
     document_name: str = ""
     images: list[AltExportImage] = field(default_factory=list)
     csv_path: Path | None = None
+    publication_format: str = "unknown"
 
     @property
     def total(self) -> int:
@@ -188,12 +290,15 @@ def load_alt_export(folder: Path | str) -> AltExport:
 
     images: list[AltExportImage] = []
     missing_files = 0
+    csv_format = ""
     for i, row in enumerate(rows, start=1):
         filename = _pick(row, _FILE_KEYS).strip()
         index = _parse_index(_pick(row, _INDEX_KEYS), i)
         path = resolve_image_path(root, filename) if filename else None
         if filename and path is None:
             missing_files += 1
+        if not csv_format:
+            csv_format = _pick(row, _FORMAT_KEYS).strip()
         images.append(
             AltExportImage(
                 index=index,
@@ -217,6 +322,7 @@ def load_alt_export(folder: Path | str) -> AltExport:
 
     doc_name = ""
     html = root / "alt_text_report.html"
+    html_format = ""
     if html.is_file():
         try:
             text = html.read_text(encoding="utf-8", errors="replace")
@@ -230,17 +336,31 @@ def load_alt_export(folder: Path | str) -> AltExport:
             )
             if m:
                 doc_name = m.group(1).strip()
+            m = re.search(
+                r"Format:</strong>\s*([^<]+)",
+                text,
+                flags=re.IGNORECASE,
+            )
+            if m:
+                html_format = m.group(1).strip()
         except OSError:
             pass
     if not doc_name:
         # Folder name often embeds the publication stem
         doc_name = root.name
 
+    publication_format = infer_publication_format(
+        explicit=csv_format or html_format,
+        document_name=doc_name,
+        folder=root,
+    )
+
     return AltExport(
         folder=root,
         document_name=doc_name,
         images=images,
         csv_path=csv_path,
+        publication_format=publication_format,
     )
 
 
@@ -272,20 +392,27 @@ def ensure_alt_report_html(
 
     export = load_alt_export(root)
     counts = export.counts()
-    export_data = [
-        {
-            "index": im.index,
-            "filename": im.filename,
-            "alt_text": im.alt_text,
-            "status": im.status,
-            "is_decorative": im.is_decorative,
-            "dimensions": im.dimensions,
-            "file_size": im.file_size,
-            "image_classification": im.classification or "Unclassified",
-            "context": im.context or "",
-        }
-        for im in export.images
-    ]
+    export_data = []
+    for im in export.images:
+        thumb_filename = ""
+        if im.filename:
+            stem = Path(im.filename).stem
+            if (root / "thumbs" / f"{stem}.jpg").is_file():
+                thumb_filename = f"{stem}.jpg"
+        export_data.append(
+            {
+                "index": im.index,
+                "filename": im.filename,
+                "thumb_filename": thumb_filename,
+                "alt_text": im.alt_text,
+                "status": im.status,
+                "is_decorative": im.is_decorative,
+                "dimensions": im.dimensions,
+                "file_size": im.file_size,
+                "image_classification": im.classification or "Unclassified",
+                "context": im.context or "",
+            }
+        )
     stats = {
         "total": counts["total"],
         "with_alt_text": counts["with_alt"],
@@ -302,3 +429,65 @@ def ensure_alt_report_html(
         exported_by=exporter,
     )
     return html_path
+
+
+def inventory_webview_html(folder: Path | str, *, exported_by: str = "CheckMate") -> str:
+    """Self-contained inventory HTML for in-app ``SetPage`` (data-URI thumbs).
+
+    Edge WebView2 often paints a blank document for a second ``LoadURL(file://)``
+    in the same process. ``SetPage`` with embedded thumbs matches the Knowledge
+    Base viewer. Click-to-enlarge uses ``https://checkmate.invalid/preview/<index>``
+    so Edge fires a real navigation (custom ``checkmate://`` is often dropped
+    after ``SetPage``). Do not embed full-size data-URIs — that bloated
+    ``SetPage`` and painted a blank view.
+    """
+    from datetime import datetime
+
+    from checkmate.ai.alt_inventory_dialog import preview_href_for_index
+    from checkmate.ai.alt_report import _thumb_data_uri
+    from checkmate.doc_images.export import write_alt_text_html_report
+
+    root = Path(folder).expanduser().resolve()
+    export = load_alt_export(root)
+    counts = export.counts()
+    export_data = []
+    for im in export.images:
+        thumb_path = None
+        if im.filename:
+            stem = Path(im.filename).stem
+            sidecar = root / "thumbs" / f"{stem}.jpg"
+            if sidecar.is_file():
+                thumb_path = sidecar
+            elif im.image_path is not None and im.image_path.is_file():
+                thumb_path = im.image_path
+        export_data.append(
+            {
+                "index": im.index,
+                "filename": im.filename,
+                "thumb_filename": "",
+                "img_src": _thumb_data_uri(thumb_path),
+                "preview_href": preview_href_for_index(im.index),
+                "full_src": "",
+                "alt_text": im.alt_text,
+                "status": im.status,
+                "is_decorative": im.is_decorative,
+                "dimensions": im.dimensions,
+                "file_size": im.file_size,
+                "image_classification": im.classification or "Unclassified",
+                "context": im.context or "",
+            }
+        )
+    stats = {
+        "total": counts["total"],
+        "with_alt_text": counts["with_alt"],
+        "decorative": counts["decorative"],
+        "no_alt_text": counts["missing"],
+    }
+    return write_alt_text_html_report(
+        None,
+        doc_name=export.document_name or root.name,
+        export_data=export_data,
+        stats=stats,
+        timestamp=datetime.now().strftime("%Y%m%d_%H%M%S"),
+        exported_by=(exported_by or "CheckMate").strip() or "CheckMate",
+    )

@@ -34,6 +34,15 @@ SOUND_SCHEME_LABELS: dict[str, str] = {
 }
 DEFAULT_SOUND_SCHEME = "1"
 
+# Light / dark / follow the OS (Tools → Settings…).
+COLOR_THEMES: tuple[str, ...] = ("system", "light", "dark")
+COLOR_THEME_LABELS: dict[str, str] = {
+    "system": "System",
+    "light": "Light",
+    "dark": "Dark",
+}
+DEFAULT_COLOR_THEME = "system"
+
 
 def settings_path() -> Path:
     return app_data_dir() / "settings.json"
@@ -109,6 +118,21 @@ def mark_ai_translation_warning_shown() -> None:
 def show_issues_always() -> bool:
     """True when the Issues list should open automatically after a check."""
     return bool(read_settings().get("show_issues_always", False))
+
+
+def color_theme() -> str:
+    """Selected UI color theme (``system``, ``light``, or ``dark``)."""
+    from .ui_appearance import normalize_color_theme
+
+    return normalize_color_theme(
+        read_settings().get("ui_color_theme", DEFAULT_COLOR_THEME)
+    )
+
+
+def color_theme_label(theme: str | None = None) -> str:
+    """Human label for a color theme (e.g. ``System``)."""
+    key = theme if theme is not None else color_theme()
+    return COLOR_THEME_LABELS.get(key, key)
 
 
 def sound_scheme() -> str:

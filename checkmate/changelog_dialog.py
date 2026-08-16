@@ -43,7 +43,9 @@ class ChangelogDialog(wx.Dialog):
         root.Add(heading, 0, wx.ALL, 12)
 
         path_label = wx.StaticText(self, label=str(self._path))
-        path_label.SetForegroundColour(wx.Colour(70, 70, 70))
+        from .ui_appearance import secondary_text_colour
+
+        path_label.SetForegroundColour(secondary_text_colour())
         root.Add(path_label, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
 
         self._host = main_mod._AiHtmlHostPanel(self, name=_("Edit changelog"))
