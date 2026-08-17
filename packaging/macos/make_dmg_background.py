@@ -85,15 +85,20 @@ def main() -> None:
         for _x in range(W):
             raw.extend(rgb(y))
 
+    # Between CheckMate.app (165, 195) and Applications (495, 195) at 96px
+    # icon size. Geometry is 75% of the original stem/head. cy is below the
+    # window midline so the shaft runs through the icon centres rather than
+    # along their top edges (Finder paints the 96px icons lower than the
+    # background midpoint).
     draw_arrow_right(
         raw,
-        stem_left=120,
-        stem_right=400,
-        cy=H // 2,
-        stem_half=3,
-        tip_x=455,
-        head_back=55,
-        head_half_h=38,
+        stem_left=162,
+        stem_right=373,
+        cy=248,
+        stem_half=2,
+        tip_x=414,
+        head_back=41,
+        head_half_h=28,
         col=(90, 98, 118),
     )
 

@@ -4852,16 +4852,30 @@ class EBrailleApp(wx.App):
             return False
 
         init_app_telemetry(self)
-        from .ui_appearance import apply_toplevel_appearance, enable_app_appearance
 
         # Application menu title on macOS (otherwise "Python" when run from source).
         self.SetAppName(APP_NAME)
         self.SetAppDisplayName(APP_NAME)
-        enable_app_appearance(self)
+        apply_toplevel_appearance = None
+        try:
+            from .ui_appearance import apply_toplevel_appearance, enable_app_appearance
+        except Exception:
+            logging.getLogger(__name__).exception("ui_appearance import failed")
+        else:
+            try:
+                enable_app_appearance(self)
+            except Exception:
+                logging.getLogger(__name__).exception("enable_app_appearance failed")
         self.frame = MainFrame(initial_paths=self._pending_paths)
         self._pending_paths.clear()
         self.frame.Show()
-        apply_toplevel_appearance(self.frame)
+        if apply_toplevel_appearance is not None:
+            try:
+                apply_toplevel_appearance(self.frame)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "apply_toplevel_appearance failed"
+                )
         self._open_watcher = OpenRequestWatcher(
             self,
             self._on_external_open_paths,

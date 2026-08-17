@@ -5,9 +5,10 @@
 #
 # Background: packaging/macos/dmg_background.png (660×400).
 # Icon centres (logical points): app ≈ (165, 195), Applications ≈ (495, 195).
+# Arrow in the background is centred near y=248 so it lines up with those icons.
 #
 # Usage:  ./scripts/build_macos_dmg.sh [marketing-version]
-# Output: dist/CheckMate-macos-<version>-<arch>.dmg
+# Output: dist/CheckMate-macos-<version>.<build>-<arch>.dmg
 
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -15,6 +16,8 @@ cd "$REPO_ROOT"
 
 # shellcheck source=macos_release_arch_suffix.inc.sh
 source "$REPO_ROOT/scripts/macos_release_arch_suffix.inc.sh"
+# shellcheck source=macos_build_version.inc.sh
+source "$REPO_ROOT/scripts/macos_build_version.inc.sh"
 
 read_project_version() {
   if [[ -f "$REPO_ROOT/pyproject.toml" ]]; then
@@ -49,8 +52,9 @@ APP_Y=195
 APPS_X=495
 APPS_Y=195
 
-DMG_RW="$REPO_ROOT/dist/CheckMate-macos-${MARKETING_VER}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.rw.dmg"
-DMG_OUT="$REPO_ROOT/dist/CheckMate-macos-${MARKETING_VER}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.dmg"
+INSTALLER_TAG="$(installer_version_tag "$MARKETING_VER")"
+DMG_RW="$REPO_ROOT/dist/CheckMate-macos-${INSTALLER_TAG}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.rw.dmg"
+DMG_OUT="$REPO_ROOT/dist/CheckMate-macos-${INSTALLER_TAG}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.dmg"
 VOL_LABEL="CheckMate"
 MOUNT_PT=""
 

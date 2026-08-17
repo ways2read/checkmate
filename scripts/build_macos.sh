@@ -6,7 +6,7 @@
 #
 # Output:
 #   dist/CheckMate_App/CheckMate.app
-#   dist/CheckMate-macOS-<version>-<arch>.zip
+#   dist/CheckMate-macOS-<version>.<build>-<arch>.zip
 #
 # Each run increments build_counter.txt and stamps CFBundleVersion so a new DMG
 # can replace an older build of the same marketing version in /Applications.
@@ -33,11 +33,16 @@ if [[ -z "$VERSION" ]]; then
 fi
 VERSION="${VERSION:-dev}"
 
-BUILD_NUMBER="$(next_build_number)"
+if [[ -n "${EBC_BUILD_NUMBER:-}" ]]; then
+  BUILD_NUMBER="$EBC_BUILD_NUMBER"
+  write_build_counter "$BUILD_NUMBER"
+else
+  BUILD_NUMBER="$(next_build_number)"
+fi
 
 APP_NAME="CheckMate"
 APP_DIR="dist/CheckMate_App"
-ARCHIVE_NAME="CheckMate-macOS-${VERSION}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.zip"
+ARCHIVE_NAME="CheckMate-macOS-$(installer_version_tag "$VERSION")${EBC_MACOS_RELEASE_ARCH_SUFFIX}.zip"
 
 echo "Building CheckMate for macOS"
 echo "  version: $VERSION"

@@ -415,13 +415,13 @@ checkmate/
     build_macos.sh           # macOS: package .app + zip
     build_macos_dmg.sh       # macOS: drag-to-Applications .dmg
     build_macos_release.sh   # macOS: sign + .dmg + notarize
-    make_icns.py             # Build .icns (defaults to .ico; packaging uses --from-png)
+    make_icns.py             # Build .icns/.ico from installer/icon.png (blue on white)
     macos_release_arch_suffix.inc.sh
   installer/
     CheckMate.iss         # Inno Setup script (Windows installer)
     CheckMate.ico         # App / setup icon (Windows)
     CheckMate.icns        # App / volume icon (macOS; rebuilt from icon.png)
-    icon.png              # CheckMate artwork (macOS .icns master)
+    icon.png              # Blue CheckMate mark on white (macOS .icns master)
     welcome.txt           # Setup wizard intro text
   packaging/macos/
     entitlements.plist    # Hardened runtime + JVM entitlements (required)
@@ -563,7 +563,8 @@ Prerequisites:
 - [uv](https://docs.astral.sh/uv/)
 - A **Developer ID Application** certificate in your login keychain
 - Notary credentials (one of):
-  - Keychain profile: `xcrun notarytool store-credentials "ebraille-notary" …`
+  - Keychain profile: `xcrun notarytool store-credentials "fido-notary" …`
+    (CheckMate falls back to this Fido profile when `ebraille-notary` is missing)
   - Or App Store Connect API key (`AuthKey_*.p8` + key id + issuer)
 
 **Signing must use `packaging/macos/entitlements.plist`.** That plist enables
@@ -578,16 +579,20 @@ One-shot release (package → sign → DMG → notarize → staple):
 
 ```bash
 chmod +x scripts/build_macos_release.sh
-EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh
+EBC_NOTARY_PROFILE=fido-notary ./scripts/build_macos_release.sh
 # optional explicit version:
-EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh 0.2.2
+EBC_NOTARY_PROFILE=fido-notary ./scripts/build_macos_release.sh 0.2.2
 ```
 
 Outputs (arch suffix is `-AppleSilicon` or `-Intel`):
 
 - `dist/CheckMate_App/CheckMate.app`
-- `dist/CheckMate-macOS-<version>-<arch>.zip`
-- `dist/CheckMate-macos-<version>-<arch>.dmg` (signed + notarized when credentials are set)
+- `dist/CheckMate-macOS-<version>.<build>-<arch>.zip`
+- `dist/CheckMate-macos-<version>.<build>-<arch>.dmg` (signed + notarized when credentials are set)
+
+The finished `.dmg` is also copied to the shared **development builds** folder as
+`setupcheckmate_<version>.<build>-<arch>.dmg` (override with `EBC_DEV_BUILDS_DIR`,
+or skip with `EBC_SKIP_ONEDRIVE_COPY=1`).
 
 Step by step:
 
@@ -597,9 +602,8 @@ Step by step:
 ```
 
 App icon: macOS packaging rebuilds `installer/CheckMate.icns` from
-`installer/icon.png` (same CheckMate artwork as the Windows `.ico`).
-`scripts/make_icns.py` defaults to the `.ico`; pass `--from-png` for
-the high-resolution PNG master.
+`installer/icon.png` (blue CheckMate mark on a white background). The green
+PNGs in `images/` are in-app status graphics only.
 
 Useful environment variables:
 
@@ -611,6 +615,8 @@ Useful environment variables:
 | `EBC_SKIP_NOTARY=1` | Build and sign only (no notarization) |
 | `EBC_SKIP_APP_SIGN=1` | Skip codesign (local smoke builds) |
 | `EBC_SKIP_APPLICATION_BUILD=1` | Re-sign / notarize an existing `dist/CheckMate_App/` |
+| `EBC_DEV_BUILDS_DIR` | Folder for the versioned `.dmg` copy (default: OneDrive development builds) |
+| `EBC_SKIP_ONEDRIVE_COPY=1` | Do not copy the `.dmg` to the development builds folder |
 
 **Upgrading / reinstalling:** macOS compares `CFBundleVersion` (an integer build
 number from `build_counter.txt`, bumped on each `build_macos.sh` run) when you

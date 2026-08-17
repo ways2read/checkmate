@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # One-shot macOS release: app build → codesign → zip → drag-install .dmg →
-# DMG codesign → notarize + staple.
+# DMG codesign → notarize + staple → copy to the development builds folder.
 #
 # Usage:
 #   ./scripts/build_macos_release.sh [marketing-version]
 # Example:
 #   EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh 0.1.0
+#
+# Installer filenames always include the marketing version and build counter:
+#   dist/CheckMate-macos-<version>.<build>-<arch>.dmg
+#   development builds/setupcheckmate_<version>.<build>-<arch>.dmg
 #
 # Environment (all optional):
 #   EBC_APP_SIGN_IDENTITY     — Developer ID Application (name or SHA-1)
@@ -22,6 +26,8 @@
 #   EBC_NOTARY_ISSUER         — API key issuer UUID
 #   EBC_NOTARY_KEY            — path to AuthKey_*.p8
 #   EBC_NOTARY_ALSO_SUBMIT_ZIP=1 — also notarize the zip archive
+#   EBC_BUILD_NUMBER          — stamp this CFBundleVersion instead of incrementing build_counter.txt
+#   EBC_SKIP_ONEDRIVE_COPY=1  — do not copy the .dmg to the dev builds folder
 #   EBC_MACOS_RELEASE_ARCH_SUFFIX / EBC_NO_MACOS_RELEASE_ARCH_SUFFIX — see
 #     scripts/macos_release_arch_suffix.inc.sh
 
@@ -51,14 +57,51 @@ VERSION="${VERSION:-dev}"
 
 # shellcheck source=macos_release_arch_suffix.inc.sh
 source "$REPO_ROOT/scripts/macos_release_arch_suffix.inc.sh"
+# shellcheck source=macos_build_version.inc.sh
+source "$REPO_ROOT/scripts/macos_build_version.inc.sh"
 
-ARCHIVE_NAME="CheckMate-macOS-${VERSION}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.zip"
+ARCHIVE_NAME="CheckMate-macOS-$(installer_version_tag "$VERSION")${EBC_MACOS_RELEASE_ARCH_SUFFIX}.zip"
 ZIP_PATH="$REPO_ROOT/dist/$ARCHIVE_NAME"
 
 pick_app_identity() {
   security find-identity -v -p codesigning "$SIGN_KEYCHAIN" 2>/dev/null \
     | awk '/Developer ID Application/ { print $2; exit }'
 }
+
+notary_profile_exists() {
+  local profile="$1"
+  [[ -n "$profile" ]] || return 1
+  security find-generic-password -s "AC_PASSWORD" -a "$profile" >/dev/null 2>&1
+}
+
+# Same Apple notary login as Fido on this machine is usually "fido-notary".
+# "ebraille-notary" is documented but often not stored in the keychain.
+resolve_notary_profile() {
+  local requested="${EBC_NOTARY_PROFILE:-${FIDO_NOTARY_PROFILE:-}}"
+  if [[ -n "$requested" ]] && notary_profile_exists "$requested"; then
+    echo "$requested"
+    return 0
+  fi
+  local p
+  for p in fido-notary ebraille-notary "${requested}"; do
+    [[ -n "$p" ]] || continue
+    if notary_profile_exists "$p"; then
+      if [[ -n "$requested" && "$p" != "$requested" ]]; then
+        echo "Notary profile '$requested' is not in the keychain; using '$p'." >&2
+      fi
+      echo "$p"
+      return 0
+    fi
+  done
+  if [[ -n "$requested" ]]; then
+    echo "$requested"
+    return 0
+  fi
+  echo ""
+}
+
+EBC_NOTARY_PROFILE="$(resolve_notary_profile)"
+export EBC_NOTARY_PROFILE
 
 notary_credentials_set() {
   [[ -n "${EBC_NOTARY_PROFILE:-}" ]] || \
@@ -239,7 +282,7 @@ else
   codesign --verify --verbose=2 "$APP_BUNDLE"
   echo "Refreshing dist zip so it contains the signed app…"
   # Prefer version from build_macos naming; rebuild zip name if SETUP_VER differs
-  ARCHIVE_NAME="CheckMate-macOS-${SETUP_VER}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.zip"
+  ARCHIVE_NAME="CheckMate-macOS-$(installer_version_tag "$SETUP_VER")${EBC_MACOS_RELEASE_ARCH_SUFFIX}.zip"
   ZIP_PATH="$REPO_ROOT/dist/$ARCHIVE_NAME"
   rm -f "$ZIP_PATH"
   (cd dist && zip -qr "$ARCHIVE_NAME" CheckMate_App)
@@ -250,7 +293,7 @@ echo "=== 3/5 Disk image (.dmg) ==="
 chmod +x "$REPO_ROOT/scripts/build_macos_dmg.sh"
 "$REPO_ROOT/scripts/build_macos_dmg.sh" "$SETUP_VER"
 
-DMG="$REPO_ROOT/dist/CheckMate-macos-${SETUP_VER}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.dmg"
+DMG="$REPO_ROOT/dist/CheckMate-macos-$(installer_version_tag "$SETUP_VER")${EBC_MACOS_RELEASE_ARCH_SUFFIX}.dmg"
 if [[ ! -f "$DMG" ]]; then
   echo "WARNING: Expected dmg not found at $DMG"
 else
@@ -274,7 +317,7 @@ if [[ "${EBC_SKIP_NOTARY:-}" == "1" ]]; then
   echo "Skipped (EBC_SKIP_NOTARY=1)."
 elif ! notary_credentials_set; then
   echo "Skipped — no notary credentials in the environment."
-  echo "  To automate: set EBC_NOTARY_PROFILE (keychain) or"
+  echo "  To automate: set EBC_NOTARY_PROFILE (keychain, often fido-notary) or"
   echo "  EBC_NOTARY_KEY + EBC_NOTARY_KEY_ID + EBC_NOTARY_ISSUER (API key)."
   echo "  Manual after this script:"
   echo "    xcrun notarytool submit \"$DMG\" --keychain-profile \"YOUR_PROFILE\" --wait"
@@ -287,6 +330,9 @@ elif ! codesign -v "$DMG" 2>/dev/null; then
   exit 1
 else
   echo "Submitting signed dmg to Apple notary service (notarytool --wait)…"
+  if [[ -n "${EBC_NOTARY_PROFILE:-}" ]]; then
+    echo "  keychain profile: $EBC_NOTARY_PROFILE"
+  fi
   NOTARY_TMP="$(mktemp)"
   set +e
   if [[ -n "${EBC_NOTARY_PROFILE:-}" ]]; then
@@ -328,6 +374,22 @@ else
       echo "Notarized + stapled: $ZIP_PATH"
     fi
   fi
+fi
+
+# Copy dmg to shared OneDrive development builds (version + build in the filename).
+DEFAULT_DEV_BUILDS_DIR="$HOME/Library/CloudStorage/OneDrive-SharedLibraries-DAISYConsortium/Shared Projects - Documents/Exploring AI/Experimentation app/development builds"
+DEV_BUILDS_DIR="${EBC_DEV_BUILDS_DIR:-$DEFAULT_DEV_BUILDS_DIR}"
+if [[ "${EBC_SKIP_ONEDRIVE_COPY:-}" == "1" ]]; then
+  echo "Skipping OneDrive dev copy (EBC_SKIP_ONEDRIVE_COPY=1)."
+elif [[ ! -f "$DMG" ]]; then
+  echo "ERROR: Cannot copy installer — dmg not found: $DMG"
+  exit 1
+else
+  SETUP_NAME="setupcheckmate_$(installer_version_tag "$SETUP_VER")${EBC_MACOS_RELEASE_ARCH_SUFFIX}.dmg"
+  echo "Copying disk image to development builds: $DEV_BUILDS_DIR/$SETUP_NAME"
+  mkdir -p "$DEV_BUILDS_DIR"
+  cp -f "$DMG" "$DEV_BUILDS_DIR/$SETUP_NAME"
+  echo "Copied: $DEV_BUILDS_DIR/$SETUP_NAME"
 fi
 
 echo ""

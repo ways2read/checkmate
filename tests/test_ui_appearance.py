@@ -291,6 +291,7 @@ def test_dark_mode_status_icons_exist() -> None:
 
 def test_ui_appearance_imports_on_non_windows() -> None:
     """Win32 callback types must not be built at import time."""
+    import ctypes
     import sys
 
     from checkmate import ui_appearance as ua
@@ -299,6 +300,7 @@ def test_ui_appearance_imports_on_non_windows() -> None:
         assert ua._SUBCLASSPROC is not None
     else:
         assert ua._SUBCLASSPROC is None
+        assert not hasattr(ctypes, "WINFUNCTYPE")
 
 
 def test_clear_forced_colours_is_safe() -> None:

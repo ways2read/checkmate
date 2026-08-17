@@ -31,17 +31,13 @@ BUILD_COUNTER_FILE = ROOT / "build_counter.txt"
 
 
 def _ensure_macos_icns() -> None:
-    """Rebuild CheckMate.icns from the CheckMate artwork so Dock / Finder match Windows."""
-    if sys.platform != "darwin":
-        return
+    """Rebuild app icons from installer/icon.png (blue mark on white)."""
     script = ROOT / "scripts" / "make_icns.py"
     if not script.is_file():
         return
-    src_png = ROOT / "installer" / "icon.png"
-    extra = ["--from-png"] if src_png.is_file() else []
-    print("Rebuilding installer/CheckMate.icns from CheckMate artwork…")
+    print("Rebuilding installer icons from installer/icon.png…")
     subprocess.run(
-        [sys.executable, str(script), *extra],
+        [sys.executable, str(script), "--from-png"],
         check=True,
         cwd=ROOT,
     )

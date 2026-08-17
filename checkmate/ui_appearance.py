@@ -1411,6 +1411,8 @@ def _notebook_track_hot(hwnd: int, lparam) -> None:
 
 def _control_subclass_callback(hwnd, msg, wparam, lparam, _uid, _ref):
     comctl = _windows_comctl32()
+    if comctl is None:
+        return 0
     ih = int(hwnd)
     try:
         if ih in _ctlcolor_parent_hwnds and msg in (
@@ -1469,17 +1471,23 @@ _control_subclass_proc = None
 
 def _windows_control_subclass_proc():
     global _control_subclass_proc
+    if _SUBCLASSPROC is None:
+        return None
     if _control_subclass_proc is None:
         _control_subclass_proc = _SUBCLASSPROC(_control_subclass_callback)
     return _control_subclass_proc
 
 
 def _windows_ensure_control_subclass(hwnd: int) -> None:
-    if not hwnd or hwnd in _control_subclassed:
+    if sys.platform != "win32" or not hwnd or hwnd in _control_subclassed:
         return
     try:
-        ok = _windows_comctl32().SetWindowSubclass(
-            hwnd, _windows_control_subclass_proc(), _CONTROL_SUBCLASS_ID, 0
+        comctl = _windows_comctl32()
+        proc = _windows_control_subclass_proc()
+        if comctl is None or proc is None:
+            return
+        ok = comctl.SetWindowSubclass(
+            hwnd, proc, _CONTROL_SUBCLASS_ID, 0
         )
         if ok:
             _control_subclassed.add(hwnd)
@@ -1488,15 +1496,19 @@ def _windows_ensure_control_subclass(hwnd: int) -> None:
 
 
 def _windows_release_control_subclass(hwnd: int) -> None:
-    if not hwnd or hwnd not in _control_subclassed:
+    if sys.platform != "win32" or not hwnd or hwnd not in _control_subclassed:
         return
     if hwnd in _edit_hint_hwnds or hwnd in _list_header_dark_hwnds:
         return
     if hwnd in _notebook_dark_hwnds or hwnd in _ctlcolor_parent_hwnds:
         return
     try:
-        _windows_comctl32().RemoveWindowSubclass(
-            hwnd, _windows_control_subclass_proc(), _CONTROL_SUBCLASS_ID
+        comctl = _windows_comctl32()
+        proc = _windows_control_subclass_proc()
+        if comctl is None or proc is None:
+            return
+        comctl.RemoveWindowSubclass(
+            hwnd, proc, _CONTROL_SUBCLASS_ID
         )
     except Exception:
         pass
@@ -1543,9 +1555,10 @@ _menubar_subclassed: set[int] = set()
 _menubar_tracking: set[int] = set()
 _menubar_brushes: dict[tuple[int, int, int], int] = {}
 _menubar_font = 0
-# ctypes.WINFUNCTYPE is Windows-only; leave None so this module imports on macOS.
-_SUBCLASSPROC = (
-    ctypes.WINFUNCTYPE(
+# WINFUNCTYPE exists only on Windows; constructing it at import crashed macOS.
+_win_func_type = getattr(ctypes, "WINFUNCTYPE", None)
+if sys.platform == "win32" and _win_func_type is not None:
+    _SUBCLASSPROC = _win_func_type(
         ctypes.c_ssize_t,
         ctypes.c_void_p,
         ctypes.c_uint,
@@ -1554,15 +1567,16 @@ _SUBCLASSPROC = (
         ctypes.c_size_t,
         ctypes.c_size_t,
     )
-    if sys.platform == "win32"
-    else None
-)
+else:
+    _SUBCLASSPROC = None
 _menubar_subclass_proc = None
 _comctl32 = None
 
 
 def _windows_comctl32():
     global _comctl32
+    if sys.platform != "win32" or _SUBCLASSPROC is None:
+        return None
     if _comctl32 is not None:
         return _comctl32
     dll = ctypes.WinDLL("comctl32")
@@ -1986,6 +2000,8 @@ def _uah_draw_menu_nc_line(hwnd: int) -> None:
 
 def _menubar_subclass_callback(hwnd, msg, wparam, lparam, _uid, _ref):
     comctl = _windows_comctl32()
+    if comctl is None:
+        return 0
     try:
         if _menubar_dark_enabled:
             ih = int(hwnd)
@@ -2019,6 +2035,8 @@ def _menubar_subclass_callback(hwnd, msg, wparam, lparam, _uid, _ref):
 
 def _windows_menubar_subclass_proc():
     global _menubar_subclass_proc
+    if _SUBCLASSPROC is None:
+        return None
     if _menubar_subclass_proc is None:
         _menubar_subclass_proc = _SUBCLASSPROC(_menubar_subclass_callback)
     return _menubar_subclass_proc
@@ -2035,6 +2053,8 @@ def _windows_set_menubar_dark(win: wx.Window, enabled: bool) -> None:
     _menubar_dark_enabled = bool(enabled)
     proc = _windows_menubar_subclass_proc()
     comctl = _windows_comctl32()
+    if proc is None or comctl is None:
+        return
     try:
         if enabled:
             if hwnd not in _menubar_subclassed:

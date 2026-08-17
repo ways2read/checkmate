@@ -30,3 +30,14 @@ next_build_number() {
   write_build_counter "$next"
   echo "$next"
 }
+
+# Filename stem: marketing version plus build counter (e.g. 0.7.32.8).
+installer_version_tag() {
+  local ver="${1:-dev}"
+  local bc
+  bc="$(read_build_counter)"
+  if [[ ! "$bc" =~ ^[0-9]+$ ]]; then
+    bc="0"
+  fi
+  printf '%s.%s' "$ver" "$bc"
+}
