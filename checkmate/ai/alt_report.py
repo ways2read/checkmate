@@ -13,6 +13,7 @@ from .alt_export import AltExport, AltExportImage
 from .alt_heuristics import HeuristicReport
 from .alt_labels import feature_title
 from .markdown_html import (
+    _LATEST_FOLLOWUP_SCROLL_SCRIPT,
     _WEBVIEW_TAB_EXIT_SCRIPT,
     _ai_browser_css,
     _structure_ai_browser_body,
@@ -781,7 +782,12 @@ _ALT_ASSESS_EXTRA_CSS = """
 """
 
 
-def build_assessment_html(result: AltAssessResult, *, for_dialog: bool = True) -> str:
+def build_assessment_html(
+    result: AltAssessResult,
+    *,
+    for_dialog: bool = True,
+    scroll_followup: bool = False,
+) -> str:
     """Full HTML page for the assessment dialog or browser."""
     export = result.export
     if export is None:
@@ -856,6 +862,7 @@ def build_assessment_html(result: AltAssessResult, *, for_dialog: bool = True) -
         "</main>",
         _IMAGE_MODAL_HTML,
         _FILTER_JS,
+        _LATEST_FOLLOWUP_SCROLL_SCRIPT if for_dialog and scroll_followup else "",
         _WEBVIEW_TAB_EXIT_SCRIPT if for_dialog else "",
         "</body></html>",
     ]

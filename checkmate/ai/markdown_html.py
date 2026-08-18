@@ -857,56 +857,104 @@ _WEBVIEW_TAB_EXIT_JS = """
 _WEBVIEW_TAB_EXIT_SCRIPT = f"<script>\n{_WEBVIEW_TAB_EXIT_JS}\n</script>"
 
 
+# Shared scroll for #cm-latest-followup. Do not el.focus() in the sniff-test
+# dialog: moving keyboard focus into Edge WebView2 after LoadURL/SetPage can
+# leave the host modal unable to quit on Windows.
+_LATEST_FOLLOWUP_SCROLL_JS = """
+    var el = document.getElementById('cm-latest-followup');
+    if (el) {
+      try {
+        // Prefer scrolling the document so tall pages remain scrollable after
+        // WebView SetPage (height:100% layouts can clip follow-ups otherwise).
+        var top = 0;
+        try {
+          var rect = el.getBoundingClientRect();
+          top = (window.pageYOffset || document.documentElement.scrollTop || 0)
+            + rect.top - 12;
+        } catch (e0) {
+          top = el.offsetTop || 0;
+        }
+        if (top < 0) top = 0;
+        window.scrollTo(0, top);
+        if (document.documentElement) {
+          document.documentElement.scrollTop = top;
+        }
+        if (document.body) {
+          document.body.scrollTop = top;
+        }
+        el.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'auto' });
+      } catch (e) {
+        try { el.scrollIntoView(true); } catch (e2) {}
+      }
+    }
+""".strip()
+
+# Host RunScript: scroll only (no Edge focus).
+_WEBVIEW_SCROLL_LATEST_FOLLOWUP_JS = (
+    "(function () {\n  try {\n    "
+    + _LATEST_FOLLOWUP_SCROLL_JS
+    + "\n    return document.getElementById('cm-latest-followup') ? 'scrolled' : 'none';"
+    + "\n  } catch (e5) { return 'err'; }\n})();"
+)
+
 # After SetPage, put the newest follow-up question at the top of the viewport
 # and move accessibility focus onto it when present.
-_LATEST_FOLLOWUP_REVEAL_SCRIPT = """
+_LATEST_FOLLOWUP_REVEAL_SCRIPT = f"""
 <script>
-(function () {
-  function revealLatestFollowup() {
-    var el = document.getElementById('cm-latest-followup');
-    if (!el) return;
-    try {
-      // Prefer scrolling the document so tall pages remain scrollable after
-      // WebView SetPage (height:100% layouts can clip follow-ups otherwise).
-      var top = 0;
-      try {
-        var rect = el.getBoundingClientRect();
-        top = (window.pageYOffset || document.documentElement.scrollTop || 0)
-          + rect.top - 12;
-      } catch (e0) {
-        top = el.offsetTop || 0;
-      }
-      if (top < 0) top = 0;
-      window.scrollTo(0, top);
-      if (document.documentElement) {
-        document.documentElement.scrollTop = top;
-      }
-      if (document.body) {
-        document.body.scrollTop = top;
-      }
-      el.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'auto' });
-    } catch (e) {
-      try { el.scrollIntoView(true); } catch (e2) {}
-    }
-    try {
-      if (!(el.tabIndex < 0)) { el.tabIndex = -1; }
-      el.focus({ preventScroll: true });
-    } catch (e3) {
-      try { el.focus(); } catch (e4) {}
-    }
-  }
-  function schedule() {
+(function () {{
+  function revealLatestFollowup() {{
+    try {{
+{_LATEST_FOLLOWUP_SCROLL_JS}
+    }} catch (e5) {{}}
+    try {{
+      var focusEl = document.getElementById('cm-latest-followup');
+      if (!focusEl) return;
+      if (!(focusEl.tabIndex < 0)) {{ focusEl.tabIndex = -1; }}
+      focusEl.focus({{ preventScroll: true }});
+    }} catch (e3) {{
+      try {{
+        var focusEl2 = document.getElementById('cm-latest-followup');
+        if (focusEl2) focusEl2.focus();
+      }} catch (e4) {{}}
+    }}
+  }}
+  function schedule() {{
     setTimeout(revealLatestFollowup, 0);
     setTimeout(revealLatestFollowup, 50);
     setTimeout(revealLatestFollowup, 200);
-  }
-  if (document.readyState === 'loading') {
+  }}
+  if (document.readyState === 'loading') {{
     document.addEventListener('DOMContentLoaded', schedule);
-  } else {
+  }} else {{
     schedule();
-  }
+  }}
   window.addEventListener('load', schedule);
-})();
+}})();
+</script>
+""".strip()
+
+# Dialog path: scroll on load without stealing Win32 focus into Edge.
+_LATEST_FOLLOWUP_SCROLL_SCRIPT = f"""
+<script>
+(function () {{
+  function scrollLatestFollowup() {{
+    try {{
+{_LATEST_FOLLOWUP_SCROLL_JS}
+    }} catch (e5) {{}}
+  }}
+  function schedule() {{
+    setTimeout(scrollLatestFollowup, 0);
+    setTimeout(scrollLatestFollowup, 50);
+    setTimeout(scrollLatestFollowup, 200);
+    setTimeout(scrollLatestFollowup, 500);
+  }}
+  if (document.readyState === 'loading') {{
+    document.addEventListener('DOMContentLoaded', schedule);
+  }} else {{
+    schedule();
+  }}
+  window.addEventListener('load', schedule);
+}})();
 </script>
 """.strip()
 
@@ -951,6 +999,42 @@ def append_followup_markdown(
     if prev:
         return prev + block
     return block.lstrip()
+
+
+_FOLLOWUP_BUBBLE_MARKER = 'class="chat-bubble chat-user"'
+
+
+def followup_markdown_suffix(md: str) -> str:
+    """Return the follow-up Q&A suffix (from the first chat bubble), or ``""``.
+
+    Used so “Assess more…” can replace the synthesis while keeping earlier
+    questions in the report.
+    """
+    text = md or ""
+    idx = text.find(_FOLLOWUP_BUBBLE_MARKER)
+    if idx < 0:
+        return ""
+    sep = text.rfind("\n\n---\n\n", 0, idx)
+    if sep >= 0:
+        return text[sep:]
+    div = text.rfind("<div", 0, idx)
+    if div >= 0:
+        return text[div:]
+    return ""
+
+
+def merge_followup_suffix(synthesis: str, suffix: str) -> str:
+    """Append a previously extracted follow-up suffix onto new synthesis text."""
+    base = (synthesis or "").rstrip()
+    extra = suffix or ""
+    if not extra.strip():
+        return base
+    if _FOLLOWUP_BUBBLE_MARKER in base:
+        return base
+    extra = extra if extra.startswith("\n") else "\n\n" + extra.lstrip()
+    if not base:
+        return extra.lstrip()
+    return base + extra
 
 
 def explanation_filename_stem(issue_code: str) -> str:
