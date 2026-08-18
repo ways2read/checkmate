@@ -872,6 +872,7 @@ def test_inspector_html_scrolls_followup_only_when_requested(tmp_path: Path) -> 
     idle = build_assessment_html(result, for_dialog=True, scroll_followup=False)
     asked = build_assessment_html(result, for_dialog=True, scroll_followup=True)
     assert 'id="cm-latest-followup"' in idle
+    assert 'id="cm-followups"' in idle
     assert "What about the logo?" in idle
     assert "scrollLatestFollowup" not in idle
     assert "scrollLatestFollowup" in asked

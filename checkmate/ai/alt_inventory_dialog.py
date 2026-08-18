@@ -12,11 +12,12 @@ import wx
 
 from ..i18n import _
 from ..settings import ai_features_enabled
-from .alt_labels import feature_run_button_label
+from .alt_dialog import AltSniffTestMixin
+from .alt_labels import feature_run_button_label, feature_title
 
 logger = logging.getLogger(__name__)
 
-# Returned from ShowModal when the user wants the AI health check.
+# Legacy ShowModal id (no longer used). Sniff test runs on a tab of this dialog.
 ID_RUN_AI_HEALTH = wx.NewIdRef()
 
 # Edge WebView2 crashes or serves a blank HWND if we Destroy a controller
@@ -185,8 +186,15 @@ def schedule_webview_window_destroy(win: wx.Window | None, *, delay_ms: int = 50
     _retain_calllater(wx.CallLater(delay_ms, _go))
 
 
-class AltTextReportDialog(wx.Dialog):
-    """Show ``alt_text_report.html`` from an export folder."""
+class AltTextReportDialog(AltSniffTestMixin, wx.Dialog):
+    """Alt-text inventory report with an optional sniff-test page.
+
+    Same pattern as issue details: notebook tabs are a strip only; each page
+    has its own WebView host stacked in a content panel (show/hide).
+    """
+
+    _PAGE_REPORT = "report"
+    _PAGE_SNIFF = "sniff"
 
     def __init__(self, parent: wx.Window, *, folder: Path, html_path: Path) -> None:
         super().__init__(
@@ -194,7 +202,8 @@ class AltTextReportDialog(wx.Dialog):
             title=_("Alt text report"),
             style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX,
         )
-        self.SetSize((900, 720))
+        self.SetSize((900, 760))
+        self.SetMinSize((720, 520))
         self.folder = Path(folder)
         self._html_path = Path(html_path)
         cleanup_view_html(self.folder)
@@ -206,10 +215,20 @@ class AltTextReportDialog(wx.Dialog):
         self._output: wx.Window | None = None
         self._pending_later: list[wx.CallLater] = []
         self._dialog_html_cache: str | None = None
+        self._show_sniff = ai_features_enabled()
+        self._notebook: wx.Notebook | None = None
+        self._page_keys: list[str] = [self._PAGE_REPORT]
+        self._active_page_key = self._PAGE_REPORT
+        self._content_panel: wx.Panel | None = None
+        self._sniff_run_panel: wx.Panel | None = None
+        self._sniff_followup: wx.Panel | None = None
+        self._sniff_actions: wx.Panel | None = None
+        self._report_actions: wx.Panel | None = None
 
         from .. import main as main_mod
 
         self._main = main_mod
+        self._init_sniff_state()
 
         root = wx.BoxSizer(wx.VERTICAL)
         heading = wx.StaticText(self, label=_("Alt text report"))
@@ -223,10 +242,38 @@ class AltTextReportDialog(wx.Dialog):
         from ..ui_appearance import secondary_text_colour
 
         self._path_label.SetForegroundColour(secondary_text_colour())
-        root.Add(self._path_label, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        root.Add(self._path_label, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-        self._host = main_mod._AiHtmlHostPanel(self, name=_("Alt text report"))
-        self._host.SetMinSize((-1, 420))
+        self._notebook = wx.Notebook(self, name=_("Alt text report pages"))
+        self._page_keys = [self._PAGE_REPORT]
+        if self._show_sniff:
+            self._page_keys.append(self._PAGE_SNIFF)
+        for key, label in (
+            (self._PAGE_REPORT, _("Alt text report")),
+            (self._PAGE_SNIFF, feature_title()),
+        ):
+            if key not in self._page_keys:
+                continue
+            page = wx.Panel(self._notebook)
+            page.SetMinSize((-1, 1))
+            self._notebook.AddPage(page, label)
+        root.Add(self._notebook, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+
+        if self._show_sniff:
+            self._sniff_run_panel = self._build_sniff_run_panel(self)
+            root.Add(
+                self._sniff_run_panel,
+                0,
+                wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP,
+                8,
+            )
+
+        self._content_panel = wx.Panel(self, style=wx.TAB_TRAVERSAL)
+        main_mod._win_ensure_control_parent(self._content_panel)
+        self._host = main_mod._AiHtmlHostPanel(
+            self._content_panel, name=_("Alt text report")
+        )
+        self._host.SetMinSize((-1, 280))
         host_sizer = wx.BoxSizer(wx.VERTICAL)
         self._loading_label = wx.StaticText(
             self._host, label=_("Loading report…")
@@ -234,56 +281,279 @@ class AltTextReportDialog(wx.Dialog):
         host_sizer.Add(self._loading_label, 0, wx.ALL, 8)
         self._host.SetSizer(host_sizer)
         main_mod._win_clear_tab_stop(self._host)
-        root.Add(self._host, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
 
-        btns = wx.BoxSizer(wx.HORIZONTAL)
-        self.ai_health_btn = wx.Button(self, label=feature_run_button_label())
-        self.ai_health_btn.SetToolTip(
-            _(
-                "Sample images and assess decorative status and alt quality with AI"
+        content_sizer = wx.BoxSizer(wx.VERTICAL)
+        content_sizer.Add(self._host, 1, wx.EXPAND)
+        if self._show_sniff:
+            self._sniff_host = main_mod._AiHtmlHostPanel(
+                self._content_panel, name=feature_title()
             )
-        )
-        self.open_browser_btn = wx.Button(self, label=_("Open in &browser"))
-        self.open_folder_btn = wx.Button(self, label=_("Open &folder"))
-        self.open_browser_btn.SetToolTip(
-            _("Open the alt text report in your browser")
-        )
-        self.open_folder_btn.SetToolTip(
-            _("Reveal the export folder in the file manager")
-        )
+            self._sniff_host.SetMinSize((-1, 280))
+            sniff_sizer = wx.BoxSizer(wx.VERTICAL)
+            sniff_loading = wx.StaticText(
+                self._sniff_host,
+                label=_("Loading sniff test…"),
+            )
+            sniff_sizer.Add(sniff_loading, 0, wx.ALL, 8)
+            self._sniff_host.SetSizer(sniff_sizer)
+            main_mod._win_clear_tab_stop(self._sniff_host)
+            self._sniff_host.Hide()
+            content_sizer.Add(self._sniff_host, 1, wx.EXPAND)
+        self._content_panel.SetSizer(content_sizer)
+        root.Add(self._content_panel, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
+
+        self._report_actions = self._build_report_actions(self)
+        root.Add(self._report_actions, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
+        if self._show_sniff:
+            self._sniff_followup = self._build_sniff_followup(self)
+            self._sniff_actions = self._build_sniff_actions(self)
+            root.Add(self._sniff_followup, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 12)
+            root.Add(self._sniff_actions, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 4)
+
+        close_row = wx.BoxSizer(wx.HORIZONTAL)
+        close_row.AddStretchSpacer(1)
         self._close_btn = wx.Button(self, wx.ID_ANY, label=_("&Close"))
+        close_row.Add(self._close_btn, 0)
+        root.Add(close_row, 0, wx.EXPAND | wx.ALL, 12)
 
-        if ai_features_enabled():
-            btns.Add(self.ai_health_btn, 0, wx.RIGHT, 8)
-        else:
-            self.ai_health_btn.Hide()
-        btns.Add(self.open_browser_btn, 0, wx.RIGHT, 8)
-        btns.Add(self.open_folder_btn, 0, wx.RIGHT, 8)
-        btns.AddStretchSpacer(1)
-        btns.Add(self._close_btn, 0)
-        root.Add(btns, 0, wx.EXPAND | wx.ALL, 12)
-
-        self.ai_health_btn.Bind(wx.EVT_BUTTON, self._on_ai_health)
-        self.open_browser_btn.Bind(wx.EVT_BUTTON, self._on_open_browser)
-        self.open_folder_btn.Bind(wx.EVT_BUTTON, self._on_open_folder)
         self._close_btn.Bind(wx.EVT_BUTTON, self._on_close_dialog)
         self.Bind(wx.EVT_CLOSE, self._on_close_dialog)
         self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
+        self._notebook.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self._on_notebook_page)
+        self._id_prev_page = wx.NewIdRef()
+        self._id_next_page = wx.NewIdRef()
+        self.Bind(wx.EVT_MENU, self._on_accel_prev_page, id=self._id_prev_page)
+        self.Bind(wx.EVT_MENU, self._on_accel_next_page, id=self._id_next_page)
+        self.SetAcceleratorTable(
+            wx.AcceleratorTable(
+                [
+                    (wx.ACCEL_CTRL, wx.WXK_PAGEUP, self._id_prev_page),
+                    (wx.ACCEL_CTRL, wx.WXK_PAGEDOWN, self._id_next_page),
+                ]
+            )
+        )
 
         self.SetSizer(root)
         self.CentreOnParent()
         # Escape is handled by CHAR_HOOK / in-page JS. Stock ID_CLOSE as the
         # escape id leaves a queued EndModal that instantly closes the next open.
         self.SetEscapeId(wx.ID_NONE)
-        # Do not make Close the affirmative id: EndModal(ID_RUN_AI_HEALTH)
-        # plus a later CloseEvent would otherwise become wx.ID_CLOSE.
         self.SetAffirmativeId(wx.ID_NONE)
         self._close_btn.SetDefault()
+        self._apply_active_page(self._PAGE_REPORT, initial=True)
 
         # Do not CallAfter(_realize_view) from __init__: Destroy() of a previous
         # WebView can pump that callback before ShowModal, and Edge then paints
         # a blank HWND. Create the control only after this dialog is shown.
         self.Bind(wx.EVT_SHOW, self._on_show)
+
+    def _build_sniff_run_panel(self, parent: wx.Window) -> wx.Panel:
+        panel = wx.Panel(parent, style=wx.TAB_TRAVERSAL)
+        self._main._win_clear_tab_stop(panel)
+        self._main._win_ensure_control_parent(panel)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        self.sniff_run_btn = wx.Button(panel, label=feature_run_button_label())
+        self.sniff_run_btn.SetToolTip(
+            _(
+                "Sample images and assess decorative status and alt quality with AI"
+            )
+        )
+        self.sniff_run_btn.Bind(wx.EVT_BUTTON, self._on_run_sniff)
+        self.ai_health_btn = self.sniff_run_btn
+        sizer.Add(self.sniff_run_btn, 0, wx.TOP | wx.BOTTOM, 4)
+        panel.SetSizer(sizer)
+        panel.Hide()
+        return panel
+
+    def _build_sniff_followup(self, parent: wx.Window) -> wx.Panel:
+        panel = wx.Panel(parent, style=wx.TAB_TRAVERSAL)
+        self._main._win_clear_tab_stop(panel)
+        self._main._win_ensure_control_parent(panel)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        self.followup_ctrl, self.ask_btn = self._main._add_followup_question_row(
+            panel,
+            sizer,
+            on_ask=self._on_ask,
+            ask_enabled=False,
+        )
+        self.followup_ctrl.Bind(wx.EVT_SET_FOCUS, self._on_followup_focus)
+        self.followup_ctrl.Bind(wx.EVT_KILL_FOCUS, self._on_followup_kill_focus)
+        panel.SetSizer(sizer)
+        panel.Hide()
+        return panel
+
+    def _build_sniff_actions(self, parent: wx.Window) -> wx.Panel:
+        panel = wx.Panel(parent, style=wx.TAB_TRAVERSAL)
+        self._main._win_clear_tab_stop(panel)
+        self._main._win_ensure_control_parent(panel)
+        sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.assess_more_btn = wx.Button(panel, label=_("Assess &more…"))
+        self.assess_more_btn.SetToolTip(
+            _("Send additional images to the vision model (keeps earlier results)")
+        )
+        self.assess_more_btn.Bind(wx.EVT_BUTTON, self._on_assess_more)
+        self.assess_more_btn.Enable(False)
+        sizer.Add(self.assess_more_btn, 0, wx.RIGHT, 8)
+
+        self.save_html_btn = wx.Button(panel, label=_("Save as &HTML…"))
+        self.save_html_btn.Bind(wx.EVT_BUTTON, self._on_save_html)
+        sizer.Add(self.save_html_btn, 0, wx.RIGHT, 8)
+
+        self.save_md_btn = wx.Button(panel, label=_("Save as &Markdown…"))
+        self.save_md_btn.Bind(wx.EVT_BUTTON, self._on_save_md)
+        sizer.Add(self.save_md_btn, 0, wx.RIGHT, 8)
+
+        self.copy_btn = wx.Button(panel, label=_("&Copy"))
+        self.copy_btn.Bind(wx.EVT_BUTTON, self._on_copy)
+        sizer.Add(self.copy_btn, 0, wx.RIGHT, 8)
+
+        self.view_browser_btn = wx.Button(panel, label=_("View in &browser"))
+        self.view_browser_btn.SetToolTip(
+            _("Open the sniff-test report in your web browser")
+        )
+        self.view_browser_btn.Bind(wx.EVT_BUTTON, self._on_view_browser)
+        sizer.Add(self.view_browser_btn, 0)
+        panel.SetSizer(sizer)
+        panel.Hide()
+        return panel
+
+    def _build_report_actions(self, parent: wx.Window) -> wx.Panel:
+        panel = wx.Panel(parent, style=wx.TAB_TRAVERSAL)
+        self._main._win_clear_tab_stop(panel)
+        self._main._win_ensure_control_parent(panel)
+        sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.open_browser_btn = wx.Button(panel, label=_("Open in &browser"))
+        self.open_folder_btn = wx.Button(panel, label=_("Open &folder"))
+        self.open_browser_btn.SetToolTip(
+            _("Open the alt text report in your browser")
+        )
+        self.open_folder_btn.SetToolTip(
+            _("Reveal the export folder in the file manager")
+        )
+        self.open_browser_btn.Bind(wx.EVT_BUTTON, self._on_open_browser)
+        self.open_folder_btn.Bind(wx.EVT_BUTTON, self._on_open_folder)
+        sizer.Add(self.open_browser_btn, 0, wx.RIGHT, 8)
+        sizer.Add(self.open_folder_btn, 0)
+        panel.SetSizer(sizer)
+        return panel
+
+    def _page_key_for_selection(self, sel: int) -> str:
+        if 0 <= sel < len(self._page_keys):
+            return self._page_keys[sel]
+        return self._PAGE_REPORT
+
+    def _on_notebook_page(self, event: wx.BookCtrlEvent) -> None:
+        event.Skip()
+        self._apply_active_page(self._page_key_for_selection(event.GetSelection()))
+
+    def _on_accel_prev_page(self, _event: wx.Event) -> None:
+        self._cycle_notebook_page(-1)
+
+    def _on_accel_next_page(self, _event: wx.Event) -> None:
+        self._cycle_notebook_page(1)
+
+    def _cycle_notebook_page(self, delta: int) -> None:
+        if self._notebook is None or not delta:
+            return
+        count = self._notebook.GetPageCount()
+        if count <= 1:
+            return
+        sel = self._notebook.GetSelection()
+        if sel < 0:
+            return
+        new_sel = sel + int(delta)
+        if new_sel < 0 or new_sel >= count or new_sel == sel:
+            return
+        self._notebook.SetSelection(new_sel)
+
+    def _select_page(self, key: str) -> None:
+        if self._notebook is None:
+            self._apply_active_page(key)
+            return
+        try:
+            idx = self._page_keys.index(key)
+        except ValueError:
+            return
+        if self._notebook.GetSelection() != idx:
+            self._notebook.ChangeSelection(idx)
+        self._apply_active_page(key)
+
+    def _apply_active_page(self, key: str, *, initial: bool = False) -> None:
+        self._active_page_key = key
+        show_report = key == self._PAGE_REPORT
+        show_sniff = key == self._PAGE_SNIFF and self._show_sniff
+
+        self._host.Show(show_report)
+        if self._sniff_host is not None:
+            self._sniff_host.Show(show_sniff)
+        if self._sniff_run_panel is not None:
+            self._sniff_run_panel.Show(show_sniff)
+        if self._report_actions is not None:
+            self._report_actions.Show(show_report)
+        if self._sniff_followup is not None:
+            self._sniff_followup.Show(show_sniff)
+        if self._sniff_actions is not None:
+            self._sniff_actions.Show(show_sniff)
+
+        if not initial and show_sniff:
+            self._realize_sniff_view()
+
+        self._refresh_host_tab_stops()
+        try:
+            self.Layout()
+            if self._content_panel is not None:
+                self._content_panel.Layout()
+        except RuntimeError:
+            pass
+
+    def _refresh_host_tab_stops(self) -> None:
+        key = self._active_page_key
+        details = self._host
+        sniff = getattr(self, "_sniff_host", None)
+        on_report = key == self._PAGE_REPORT
+        if on_report and getattr(self, "_output_is_webview", False):
+            view = getattr(self, "_output", None)
+            if view is not None:
+                self._main._refresh_ai_html_tab_stops(details, view, is_webview=True)
+            details._accept_kbd_focus = True
+        else:
+            self._main._win_clear_tab_stop(details)
+            details._accept_kbd_focus = False
+
+        if sniff is not None:
+            on_sniff = key == self._PAGE_SNIFF
+            ready = (
+                on_sniff
+                and getattr(self, "_sniff_view_realized", False)
+                and getattr(self, "_sniff_is_webview", False)
+            )
+            if ready and self._sniff_view is not None:
+                self._main._refresh_ai_html_tab_stops(
+                    sniff, self._sniff_view, is_webview=True
+                )
+                sniff._accept_kbd_focus = True
+            else:
+                self._main._win_clear_tab_stop(sniff)
+                sniff._accept_kbd_focus = False
+
+        if self._content_panel is not None:
+            self._main._win_clear_tab_stop(self._content_panel)
+            self._main._win_ensure_control_parent(self._content_panel)
+
+        for panel in (
+            self._sniff_run_panel,
+            self._report_actions,
+            self._sniff_followup,
+            self._sniff_actions,
+        ):
+            if panel is None:
+                continue
+            try:
+                if panel.IsShown():
+                    self._main._win_clear_tab_stop(panel)
+                    self._main._win_ensure_control_parent(panel)
+            except RuntimeError:
+                pass
 
     def prepare(self, folder: Path, html_path: Path) -> None:
         """Reuse this dialog for another ShowModal without recreating Edge."""
@@ -299,6 +569,9 @@ class AltTextReportDialog(wx.Dialog):
             self._path_label.SetLabel(str(self.folder))
         except RuntimeError:
             pass
+        self._reset_sniff_state()
+        if self._notebook is not None:
+            self._select_page(self._PAGE_REPORT)
 
     def _same_gen(self, gen: int) -> bool:
         if self._closing or int(gen) != int(getattr(self, "_load_gen", 0)):
@@ -342,18 +615,6 @@ class AltTextReportDialog(wx.Dialog):
         if not event.IsShown() or self._closing:
             return
         wx.CallAfter(self._after_shown, self._load_gen)
-
-    def _on_char_hook(self, event: wx.KeyEvent) -> None:
-        if event.GetKeyCode() == wx.WXK_ESCAPE:
-            gen = self._load_gen
-            wx.CallAfter(self._close_if_gen, gen)
-            return
-        event.Skip()
-
-    def _close_if_gen(self, gen: int) -> None:
-        if not self._same_gen(gen):
-            return
-        self._on_close_dialog(None)
 
     def _inject_webview_key_handlers(self) -> None:
         """Escape/Tab-exit JS — Edge never delivers Escape to wx CHAR_HOOK."""
@@ -592,6 +853,9 @@ class AltTextReportDialog(wx.Dialog):
             return
         if action in ("page_prev", "page_next"):
             event.Veto()
+            wx.CallAfter(
+                self._cycle_notebook_page, -1 if action == "page_prev" else 1
+            )
             return
         if action in ("next", "prev"):
             event.Veto()
@@ -608,25 +872,18 @@ class AltTextReportDialog(wx.Dialog):
         event.Skip()
 
     def _leave_webview(self, forward: bool) -> None:
+        try_focus = self._main._try_set_focus
         if forward:
-            if (
-                ai_features_enabled()
-                and self.ai_health_btn.IsShown()
-                and self._main._try_set_focus(self.ai_health_btn)
-            ):
+            if try_focus(self.open_browser_btn):
                 return
-            if self._main._try_set_focus(self.open_browser_btn):
-                return
-            self._main._try_set_focus(self._close_btn)
+            try_focus(self._close_btn)
             return
-        if ai_features_enabled() and self.ai_health_btn.IsShown():
-            self._main._try_set_focus(self.ai_health_btn)
-        else:
-            self._main._try_set_focus(self.open_browser_btn)
+        if try_focus(self._notebook):
+            return
+        try_focus(self.open_browser_btn)
 
     def _release_webview(self) -> None:
         """Unbind Edge events; do not Stop/Hide the control (that blanks or crashes)."""
-        self._stop_pending_later()
         view = self._output
         if view is None or not self._output_is_webview:
             return
@@ -647,19 +904,6 @@ class AltTextReportDialog(wx.Dialog):
             view_html.unlink(missing_ok=True)
         except OSError:
             pass
-
-    def _on_ai_health(self, _event: wx.Event) -> None:
-        # Mark closed before EndModal so Destroy()'s EVT_CLOSE cannot schedule
-        # a second EndModal(wx.ID_CLOSE) and drop ID_RUN_AI_HEALTH.
-        if self._closing:
-            return
-        self._load_gen = int(getattr(self, "_load_gen", 0)) + 1
-        self._closing = True
-        self._stop_pending_later()
-        self._cleanup_view_copy()
-        self.exit_code = int(ID_RUN_AI_HEALTH)
-        if self.IsModal():
-            self.EndModal(self.exit_code)
 
     def _on_open_browser(self, _event: wx.Event) -> None:
         try:
@@ -691,43 +935,3 @@ class AltTextReportDialog(wx.Dialog):
                     wx.OK | wx.ICON_ERROR,
                     self,
                 )
-
-    def _on_close_dialog(self, event: wx.Event | None = None) -> None:
-        # Avoid tearing down WebView2 inside navigating/key handlers
-        # (SetEscapeId + CHAR_HOOK + checkmate://close can all fire).
-        if self._closing:
-            if isinstance(event, wx.CloseEvent):
-                if self.IsModal():
-                    # Still inside ShowModal after EndModal(ID_RUN_AI_HEALTH).
-                    # Skip() lets wx EndModal(ID_CLOSE) and drops the inspector.
-                    event.Veto()
-                else:
-                    # ShowModal already returned; allow the caller's Destroy().
-                    event.Skip()
-            return
-        self._load_gen = int(getattr(self, "_load_gen", 0)) + 1
-        self._closing = True
-        self._stop_pending_later()
-        self._cleanup_view_copy()
-        if isinstance(event, wx.CloseEvent):
-            event.Veto()
-        self._finish_close_dialog()
-
-    # Compatibility for callers / host Escape wiring.
-    def _on_close(self, event: wx.Event | None = None) -> None:
-        self._on_close_dialog(event)
-
-    def _finish_close_dialog(self) -> None:
-        try:
-            if not self:
-                return
-        except RuntimeError:
-            return
-        try:
-            # Only EndModal while the dialog loop is still running. Never
-            # Destroy here — the ShowModal caller owns teardown.
-            if self.IsModal():
-                self.exit_code = int(wx.ID_CLOSE)
-                self.EndModal(self.exit_code)
-        except RuntimeError:
-            pass

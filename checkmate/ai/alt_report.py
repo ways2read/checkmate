@@ -18,6 +18,7 @@ from .markdown_html import (
     _ai_browser_css,
     _structure_ai_browser_body,
     markdown_to_body_html,
+    split_followup_markdown,
 )
 
 logger = logging.getLogger(__name__)
@@ -794,16 +795,28 @@ def build_assessment_html(
         return "<html><body><p>No export.</p></body></html>"
 
     title = feature_title()
-    has_synth = bool((result.text or "").strip())
+    synth_md, follow_md = split_followup_markdown(result.text or "")
     synth_section = ""
-    if has_synth:
-        synth_body = _structure_ai_browser_body(
-            markdown_to_body_html(result.text or "", for_dialog=False)
-        )
+    if synth_md.strip() or follow_md.strip():
+        parts_body: list[str] = []
+        if synth_md.strip():
+            parts_body.append(
+                _structure_ai_browser_body(
+                    markdown_to_body_html(synth_md, for_dialog=False)
+                )
+            )
+        if follow_md.strip():
+            follow_body = markdown_to_body_html(follow_md, for_dialog=False)
+            parts_body.append(
+                f'<section class="followups" id="cm-followups" '
+                f'aria-label="{html.escape(_("Follow-up"))}">'
+                f"<h2>{html.escape(_('Follow-up'))}</h2>"
+                f"{follow_body}</section>"
+            )
         synth_section = (
             f'<section class="synthesis" '
             f'aria-label="{html.escape(_("Assessment summary"))}">'
-            f"{synth_body}</section>"
+            f"{''.join(parts_body)}</section>"
         )
     disclaimer = _report_disclaimer_html(result)
     lang = html.escape(get_language())

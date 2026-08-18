@@ -1023,6 +1023,18 @@ def followup_markdown_suffix(md: str) -> str:
     return ""
 
 
+def split_followup_markdown(md: str) -> tuple[str, str]:
+    """Split synthesis markdown from the follow-up Q&A suffix."""
+    text = md or ""
+    suffix = followup_markdown_suffix(text)
+    if not suffix:
+        return text.rstrip(), ""
+    idx = text.find(suffix)
+    if idx < 0:
+        return text.rstrip(), suffix
+    return text[:idx].rstrip(), suffix
+
+
 def merge_followup_suffix(synthesis: str, suffix: str) -> str:
     """Append a previously extracted follow-up suffix onto new synthesis text."""
     base = (synthesis or "").rstrip()

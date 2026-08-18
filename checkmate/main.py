@@ -8114,7 +8114,7 @@ class MainFrame(wx.Frame):
         self._present_alt_inventory_report(folder, html_path)
 
     def _present_alt_inventory_report(self, folder: Path, html_path: Path) -> None:
-        from .ai.alt_inventory_dialog import ID_RUN_AI_HEALTH, AltTextReportDialog
+        from .ai.alt_inventory_dialog import AltTextReportDialog
 
         dlg = self._alive_inventory_dialog()
         try:
@@ -8158,15 +8158,6 @@ class MainFrame(wx.Frame):
             # Keep the dialog and its WebView. Creating a new Edge host each
             # open dies after a few cycles on Windows.
             self._reclaim_after_modal()
-
-        if result == int(ID_RUN_AI_HEALTH):
-            if not ai_features_enabled():
-                return
-            # Defer so Edge WebView teardown finishes before the next modal
-            # (otherwise Windows can appear to hang after "Run AI health check").
-            self._alt_assess_open_timer = wx.CallLater(
-                700, self._prompt_alt_assess_sample, folder
-            )
 
     def _export_alt_for_assess(self, doc_path: Path) -> Path | None:
         """Build a Fido-style export folder from *doc_path*; return it or None.
@@ -8449,26 +8440,16 @@ class MainFrame(wx.Frame):
         except Exception:
             pass
 
-        from .ai.alt_dialog import AltAssessDialog
-
-        dlg = AltAssessDialog(self, result=out)
-        self._alt_assess_dialog = dlg
-        try:
-            dlg.ShowModal()
-        finally:
-            self._alt_assess_dialog = None
-            from .ai.alt_inventory_dialog import schedule_webview_window_destroy
-
+        dlg = self._alive_inventory_dialog()
+        if dlg is not None:
             try:
-                dlg._release_webview()
+                if dlg.IsModal() and hasattr(dlg, "apply_sniff_result"):
+                    dlg.apply_sniff_result(out)
+                    return
             except RuntimeError:
                 pass
-            schedule_webview_window_destroy(dlg)
-            # Defer re-enable: EndModal + WebView2 teardown can leave the frame
-            # disabled for a tick if Enable runs in the same stack frame.
-            wx.CallAfter(self._reenable_after_alt_assess)
-            # Second pass after Edge HWND teardown (follow-up → Save → Close).
-            wx.CallLater(150, self._reenable_after_alt_assess)
+        # Sniff test now lives on the alt-text report dialog. Do not open a
+        # second modal (that path left zombie dialogs after Close).
 
     def _reenable_after_alt_assess(self) -> None:
         try:

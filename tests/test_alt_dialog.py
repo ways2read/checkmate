@@ -9,6 +9,7 @@ from checkmate.ai.markdown_html import (
     append_followup_markdown,
     followup_markdown_suffix,
     merge_followup_suffix,
+    split_followup_markdown,
 )
 
 
@@ -46,6 +47,19 @@ class FollowupSuffixTests(unittest.TestCase):
         self.assertEqual(followup_markdown_suffix("No questions here."), "")
         self.assertEqual(merge_followup_suffix("Synth.", ""), "Synth.")
 
+    def test_split_followup_markdown(self):
+        md = append_followup_markdown(
+            "Initial summary.",
+            heading="Follow-up",
+            question="Is the logo decorative?",
+            answer="Yes.",
+        )
+        synth, follow = split_followup_markdown(md)
+        self.assertEqual(synth, "Initial summary.")
+        self.assertIn("Is the logo decorative?", follow)
+        self.assertIn('class="chat-bubble chat-user"', follow)
+        self.assertNotIn("Is the logo decorative?", synth)
+
 
 class WebViewUrlMatchTests(unittest.TestCase):
     def test_stale_copy_does_not_match_current(self):
@@ -77,17 +91,20 @@ class ApplyResultPreservesFollowupsTests(unittest.TestCase):
             import wx  # noqa: F401
         except ImportError:
             raise unittest.SkipTest("wxPython is not installed")
+
     def test_apply_result_keeps_previous_questions(self):
         import wx
 
         from checkmate.ai.alt_assess import AltAssessResult, AltImageAssessment
-        from checkmate.ai.alt_dialog import AltAssessDialog
         from checkmate.ai.alt_export import AltExport, AltExportImage
+        from checkmate.ai.alt_inventory_dialog import AltTextReportDialog
 
         app = wx.GetApp() or wx.App(False)
         self.assertIsNotNone(app)
         frame = wx.Frame(None)
         tmp = Path(tempfile.mkdtemp())
+        html = tmp / "alt_text_report.html"
+        html.write_text("<html></html>", encoding="utf-8")
         img = tmp / "a.png"
         img.write_bytes(b"x")
         export = AltExport(
@@ -120,10 +137,12 @@ class ApplyResultPreservesFollowupsTests(unittest.TestCase):
         )
         dlg = None
         try:
-            dlg = AltAssessDialog(frame, result=first)
-            dlg._view = wx.Panel(dlg)
-            dlg._paint = lambda **_k: None  # type: ignore[method-assign]
-            dlg._synthesis_md = append_followup_markdown(
+            dlg = AltTextReportDialog(frame, folder=tmp, html_path=html)
+            dlg._sniff_paint = lambda **_k: None  # type: ignore[method-assign]
+            dlg._realize_sniff_view = lambda: None  # type: ignore[method-assign]
+            dlg._select_page = lambda *_a, **_k: None  # type: ignore[method-assign]
+            dlg.apply_sniff_result(first)
+            dlg._sniff_synthesis_md = append_followup_markdown(
                 first.text,
                 heading="Follow-up",
                 question="Is the logo decorative?",
@@ -135,17 +154,23 @@ class ApplyResultPreservesFollowupsTests(unittest.TestCase):
                 export=export,
                 assessments=[assessment],
             )
-            dlg.apply_result(more)
-            self.assertIn("Updated summary after more images.", dlg._synthesis_md)
-            self.assertIn("Is the logo decorative?", dlg._synthesis_md)
-            dlg._synthesis_md = append_followup_markdown(
-                dlg._synthesis_md,
+            dlg.apply_sniff_result(more)
+            self.assertIn("Updated summary after more images.", dlg._sniff_synthesis_md)
+            self.assertIn("Is the logo decorative?", dlg._sniff_synthesis_md)
+            dlg._sniff_synthesis_md = append_followup_markdown(
+                dlg._sniff_synthesis_md,
                 heading="Follow-up",
                 question="And the chart?",
                 answer="Needs a better alt.",
             )
-            self.assertIn("Is the logo decorative?", dlg._synthesis_md)
-            self.assertIn("And the chart?", dlg._synthesis_md)
+            self.assertIn("Is the logo decorative?", dlg._sniff_synthesis_md)
+            self.assertIn("And the chart?", dlg._sniff_synthesis_md)
+            dlg._sniff_result.text = dlg._sniff_synthesis_md
+            html_doc = dlg._sniff_current_html(scroll_followup=False)
+            self.assertIn('id="cm-followups"', html_doc)
+            self.assertIn('id="cm-latest-followup"', html_doc)
+            self.assertIn("Is the logo decorative?", html_doc)
+            self.assertIn("And the chart?", html_doc)
         finally:
             if dlg is not None:
                 try:
@@ -157,17 +182,22 @@ class ApplyResultPreservesFollowupsTests(unittest.TestCase):
     def test_escape_id_is_none(self):
         import wx
 
-        from checkmate.ai.alt_assess import AltAssessResult
-        from checkmate.ai.alt_dialog import AltAssessDialog
+        from checkmate.ai.alt_inventory_dialog import AltTextReportDialog
 
         app = wx.GetApp() or wx.App(False)
         self.assertIsNotNone(app)
         frame = wx.Frame(None)
+        tmp = Path(tempfile.mkdtemp())
+        html = tmp / "alt_text_report.html"
+        html.write_text("<html></html>", encoding="utf-8")
         dlg = None
         try:
-            dlg = AltAssessDialog(frame, result=AltAssessResult(ok=True, text="x"))
+            dlg = AltTextReportDialog(frame, folder=tmp, html_path=html)
             self.assertEqual(int(dlg.GetEscapeId()), int(wx.ID_NONE))
             self.assertEqual(int(dlg.GetAffirmativeId()), int(wx.ID_NONE))
+            self.assertEqual(dlg._page_keys[0], dlg._PAGE_REPORT)
+            if dlg._show_sniff:
+                self.assertIn(dlg._PAGE_SNIFF, dlg._page_keys)
         finally:
             if dlg is not None:
                 try:
