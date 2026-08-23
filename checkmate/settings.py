@@ -25,6 +25,18 @@ EPUB_CHECKERS_LABELS: dict[str, str] = {
 }
 DEFAULT_EPUB_CHECKERS = "both"
 
+# Which checkers run for HTML files / folders / URLs.
+HTML_CHECKERS: tuple[str, ...] = ("both", "vnu", "axe")
+HTML_CHECKERS_LABELS: dict[str, str] = {
+    "both": "Nu HTML Checker + axe",
+    "vnu": "Nu HTML Checker only",
+    "axe": "axe only",
+}
+DEFAULT_HTML_CHECKERS = "both"
+
+# Follow same-site links when checking HTML (capped). Off: start page only.
+DEFAULT_HTML_FOLLOW_LINKS = False
+
 # Check completion chimes (files: check-started/passed/failed-{n}.wav).
 SOUND_SCHEMES: tuple[str, ...] = ("1", "2", "off")
 SOUND_SCHEME_LABELS: dict[str, str] = {
@@ -192,3 +204,20 @@ def epub_checkers_label(mode: str | None = None) -> str:
     """Human label for an EPUB checker mode (e.g. ``EPUBCheck + Ace``)."""
     key = mode if mode is not None else epub_checkers()
     return EPUB_CHECKERS_LABELS.get(key, key)
+
+
+def html_checkers() -> str:
+    """Selected HTML checker mode (``both``, ``vnu``, or ``axe``)."""
+    value = str(read_settings().get("html_checkers", DEFAULT_HTML_CHECKERS)).strip()
+    return value if value in HTML_CHECKERS else DEFAULT_HTML_CHECKERS
+
+
+def html_checkers_label(mode: str | None = None) -> str:
+    """Human label for an HTML checker mode (e.g. ``Nu HTML Checker + axe``)."""
+    key = mode if mode is not None else html_checkers()
+    return HTML_CHECKERS_LABELS.get(key, key)
+
+
+def html_follow_links() -> bool:
+    """True when HTML checks should follow same-site links (up to the crawl cap)."""
+    return bool(read_settings().get("html_follow_links", DEFAULT_HTML_FOLLOW_LINKS))

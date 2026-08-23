@@ -263,6 +263,13 @@ def export_alt_text_report(
         )
 
     csv_path = export_path / "alt_text_export.csv"
+    pub_format = ""
+    try:
+        from checkmate.ai.alt_export import publication_format_from_backend
+
+        pub_format = publication_format_from_backend(backend) or ""
+    except Exception:
+        pub_format = ""
     with csv_path.open("w", newline="", encoding="utf-8-sig") as csvfile:
         fieldnames = [
             "Index",
@@ -274,21 +281,24 @@ def export_alt_text_report(
             "File Size",
             "Context",
         ]
+        if pub_format and pub_format != "unknown":
+            fieldnames.append("Format")
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         for item in export_data:
-            writer.writerow(
-                {
-                    "Index": item["index"],
-                    "Filename": item["filename"],
-                    "Classification": item.get("image_classification", ""),
-                    "Alt Text": item["alt_text"],
-                    "Status": item["status"],
-                    "Dimensions": item["dimensions"],
-                    "File Size": item["file_size"],
-                    "Context": item.get("context", ""),
-                }
-            )
+            row = {
+                "Index": item["index"],
+                "Filename": item["filename"],
+                "Classification": item.get("image_classification", ""),
+                "Alt Text": item["alt_text"],
+                "Status": item["status"],
+                "Dimensions": item["dimensions"],
+                "File Size": item["file_size"],
+                "Context": item.get("context", ""),
+            }
+            if pub_format and pub_format != "unknown":
+                row["Format"] = pub_format
+            writer.writerow(row)
 
     html_path = None
     if write_html and not stats["cancelled"]:
@@ -317,10 +327,19 @@ def open_document_backend(
     temp_dir: str | Path | None = None,
     dialog: Any = None,
 ) -> Any:
-    """Open an EPUB or PDF with the appropriate on-disc backend."""
+    """Open an EPUB, PDF, or HTML source with the appropriate on-disc backend."""
+    from checkmate.doc_images.html import HtmlOnDiscBackend, path_is_html_source
+
+    text = str(path).strip().strip('"')
+    td = str(temp_dir) if temp_dir else None
+    if path_is_html_source(text):
+        backend = HtmlOnDiscBackend(dialog=dialog, temp_dir=td)
+        if not backend.open_document(text):
+            raise RuntimeError(f"Could not open document: {text}")
+        return backend
+
     p = Path(path)
     suffix = p.suffix.lower()
-    td = str(temp_dir) if temp_dir else None
     if suffix in (".epub", ".ebrl"):
         from checkmate.doc_images.epub import EpubOnDiscBackend
 
@@ -348,13 +367,14 @@ def export_document_alt_text(
     status_labels: dict[str, str] | None = None,
     exported_by: str = "CheckMate",
 ) -> AltTextExportResult:
-    """Open *path* (EPUB/PDF), export alt-text report, close backend."""
+    """Open *path* (EPUB/PDF/HTML), export alt-text report, close backend."""
     backend = open_document_backend(path, temp_dir=temp_dir)
     try:
+        display = Path(path).name if not str(path).lower().startswith("http") else str(path)
         return export_alt_text_report(
             backend,
             dest_parent,
-            document_name=Path(path).name,
+            document_name=display,
             write_html=write_html,
             include_classification=include_classification,
             include_context=include_context,

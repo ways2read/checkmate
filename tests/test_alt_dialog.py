@@ -157,6 +157,7 @@ class ApplyResultPreservesFollowupsTests(unittest.TestCase):
             dlg.apply_sniff_result(more)
             self.assertIn("Updated summary after more images.", dlg._sniff_synthesis_md)
             self.assertIn("Is the logo decorative?", dlg._sniff_synthesis_md)
+            self.assertIn("Is the logo decorative?", more.text)
             dlg._sniff_synthesis_md = append_followup_markdown(
                 dlg._sniff_synthesis_md,
                 heading="Follow-up",
@@ -171,6 +172,19 @@ class ApplyResultPreservesFollowupsTests(unittest.TestCase):
             self.assertIn('id="cm-latest-followup"', html_doc)
             self.assertIn("Is the logo decorative?", html_doc)
             self.assertIn("And the chart?", html_doc)
+            from checkmate.ai.alt_report import (
+                followup_inject_script,
+                followup_section_inner_html,
+            )
+            from checkmate.ai.markdown_html import split_followup_markdown
+
+            _synth, follow = split_followup_markdown(dlg._sniff_synthesis_md)
+            inner = followup_section_inner_html(follow)
+            self.assertIn("Is the logo decorative?", inner)
+            self.assertIn("And the chart?", inner)
+            script = followup_inject_script(inner)
+            self.assertIn("cm-followups", script)
+            self.assertIn("Is the logo decorative?", script)
         finally:
             if dlg is not None:
                 try:

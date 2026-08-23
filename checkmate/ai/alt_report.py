@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import html
+import json
 import logging
 from pathlib import Path
 
@@ -779,8 +780,82 @@ _ALT_ASSESS_EXTRA_CSS = """
     .synthesis > aside.ai-note + h2 {
       margin-top: 0.75rem;
     }
+    .followups {
+      margin: 1.25rem 0 0.5rem;
+      padding: 0.85rem 1rem 1rem;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .followups > h2 {
+      margin: 0 0 0.65rem;
+    }
     .priority { margin-top: 1.5rem; }
 """
+
+
+def followup_section_inner_html(follow_md: str) -> str:
+    """Inner HTML for ``#cm-followups`` (heading + converted Q&A)."""
+    follow_body = markdown_to_body_html(follow_md or "", for_dialog=False)
+    return f"<h2>{html.escape(_('Follow-up'))}</h2>{follow_body}"
+
+
+def followup_section_html(follow_md: str) -> str:
+    """Full ``<section id="cm-followups">`` for the sniff-test report."""
+    return (
+        f'<section class="followups" id="cm-followups" '
+        f'aria-label="{html.escape(_("Follow-up"))}">'
+        f"{followup_section_inner_html(follow_md)}</section>"
+    )
+
+
+def followup_inject_script(inner_html: str, *, scroll: bool = True) -> str:
+    """JavaScript that inserts or replaces ``#cm-followups`` in a live document.
+
+    Used after Ask / Assess more so Edge does not have to navigate to a new
+    ``file://`` URL (LoadURL is often a no-op while a ProgressDialog tears down).
+    """
+    payload = json.dumps(inner_html or "").replace("<", "\\u003c")
+    label = json.dumps(_("Follow-up"))
+    do_scroll = "true" if scroll else "false"
+    return f"""
+(function () {{
+  var html = {payload};
+  var doScroll = {do_scroll};
+  var main = document.querySelector('main.alt-assess');
+  if (!main) return 'no-main';
+  var section = document.getElementById('cm-followups');
+  if (!section) {{
+    section = document.createElement('section');
+    section.id = 'cm-followups';
+    section.className = 'followups';
+    section.setAttribute('aria-label', {label});
+    var synth = document.querySelector('section.synthesis');
+    if (synth && synth.parentNode) {{
+      synth.parentNode.insertBefore(section, synth);
+    }} else {{
+      var cards = document.querySelector('.priority');
+      if (cards && cards.parentNode) {{
+        cards.parentNode.insertBefore(section, cards);
+      }} else {{
+        main.appendChild(section);
+      }}
+    }}
+  }}
+  section.innerHTML = html;
+  var el = document.getElementById('cm-latest-followup');
+  if (!el) return 'no-el';
+  if (doScroll) {{
+    try {{
+      el.scrollIntoView({{ block: 'start', inline: 'nearest', behavior: 'auto' }});
+    }} catch (e) {{
+      try {{ el.scrollIntoView(true); }} catch (e2) {{}}
+    }}
+  }}
+  return 'ok';
+}})();
+""".strip()
 
 
 def build_assessment_html(
@@ -796,27 +871,14 @@ def build_assessment_html(
 
     title = feature_title()
     synth_md, follow_md = split_followup_markdown(result.text or "")
+    follow_section = followup_section_html(follow_md) if follow_md.strip() else ""
     synth_section = ""
-    if synth_md.strip() or follow_md.strip():
-        parts_body: list[str] = []
-        if synth_md.strip():
-            parts_body.append(
-                _structure_ai_browser_body(
-                    markdown_to_body_html(synth_md, for_dialog=False)
-                )
-            )
-        if follow_md.strip():
-            follow_body = markdown_to_body_html(follow_md, for_dialog=False)
-            parts_body.append(
-                f'<section class="followups" id="cm-followups" '
-                f'aria-label="{html.escape(_("Follow-up"))}">'
-                f"<h2>{html.escape(_('Follow-up'))}</h2>"
-                f"{follow_body}</section>"
-            )
+    if synth_md.strip():
         synth_section = (
             f'<section class="synthesis" '
             f'aria-label="{html.escape(_("Assessment summary"))}">'
-            f"{''.join(parts_body)}</section>"
+            f"{_structure_ai_browser_body(markdown_to_body_html(synth_md, for_dialog=False))}"
+            f"</section>"
         )
     disclaimer = _report_disclaimer_html(result)
     lang = html.escape(get_language())
@@ -863,6 +925,7 @@ def build_assessment_html(
         '<main class="alt-assess">',
         _stats_html(export, result, title=title),
         disclaimer,
+        follow_section,
         synth_section,
         _priority_cards_html(
             export,

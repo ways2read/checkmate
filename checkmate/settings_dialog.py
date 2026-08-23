@@ -11,10 +11,13 @@ from .settings import (
     COLOR_THEMES,
     DEFAULT_COLOR_THEME,
     DEFAULT_EPUB_CHECKERS,
+    DEFAULT_HTML_CHECKERS,
     DEFAULT_SOUND_SCHEME,
     DEFAULT_VERAPDF_FLAVOUR,
     EPUB_CHECKERS,
     EPUB_CHECKERS_LABELS,
+    HTML_CHECKERS,
+    HTML_CHECKERS_LABELS,
     SOUND_SCHEME_LABELS,
     SOUND_SCHEMES,
     VERAPDF_FLAVOUR_LABELS,
@@ -23,6 +26,8 @@ from .settings import (
     ai_send_kb_article_body,
     color_theme,
     epub_checkers,
+    html_checkers,
+    html_follow_links,
     show_issues_always,
     single_instance_enabled,
     sound_scheme,
@@ -168,6 +173,46 @@ class SettingsDialog(wx.Dialog):
         epub_box.Add(self.epub_choice, 0, wx.EXPAND | wx.ALL, 6)
         root.Add(epub_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
 
+        html_box = wx.StaticBoxSizer(wx.VERTICAL, self, _("HTML"))
+        html_hint = wx.StaticText(
+            self,
+            label=_("Checkers used when checking HTML files, folders, or URLs:"),
+        )
+        html_box.Add(html_hint, 0, wx.LEFT | wx.RIGHT | wx.TOP, 6)
+        self.html_choice = wx.Choice(self)
+        self._html_values: list[str] = []
+        current_html = html_checkers()
+        select_html = 0
+        for i, code in enumerate(HTML_CHECKERS):
+            label = _(HTML_CHECKERS_LABELS.get(code, code))
+            self.html_choice.Append(label)
+            self._html_values.append(code)
+            if code == current_html:
+                select_html = i
+        self.html_choice.SetSelection(select_html)
+        self.html_choice.SetName(_("HTML checkers"))
+        self.html_choice.SetToolTip(
+            _(
+                "Nu HTML Checker + axe is the default. Choose Nu only or axe "
+                "only when you want a single tool."
+            )
+        )
+        html_box.Add(self.html_choice, 0, wx.EXPAND | wx.ALL, 6)
+        self.html_follow_links_cb = wx.CheckBox(
+            self,
+            label=_("Also check linked pages on the same site (up to 25)"),
+        )
+        self.html_follow_links_cb.SetValue(html_follow_links())
+        self.html_follow_links_cb.SetToolTip(
+            _(
+                "When checked, CheckMate follows same-site links from the "
+                "starting page (skipping mailto, files, and other sites). "
+                "When unchecked, only the page you opened is checked."
+            )
+        )
+        html_box.Add(self.html_follow_links_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+        root.Add(html_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+
         pdf_box = wx.StaticBoxSizer(wx.VERTICAL, self, _("PDF (veraPDF)"))
         pdf_hint = wx.StaticText(
             self,
@@ -228,6 +273,12 @@ class SettingsDialog(wx.Dialog):
             return self._epub_values[idx]
         return DEFAULT_EPUB_CHECKERS
 
+    def selected_html_checkers(self) -> str:
+        idx = self.html_choice.GetSelection()
+        if 0 <= idx < len(self._html_values):
+            return self._html_values[idx]
+        return DEFAULT_HTML_CHECKERS
+
     def selected_verapdf_flavour(self) -> str:
         idx = self.verapdf_choice.GetSelection()
         if 0 <= idx < len(self._verapdf_values):
@@ -242,6 +293,8 @@ class SettingsDialog(wx.Dialog):
             "ui_color_theme": self.selected_color_theme(),
             "single_instance": bool(self.single_instance_cb.GetValue()),
             "epub_checkers": self.selected_epub_checkers(),
+            "html_checkers": self.selected_html_checkers(),
+            "html_follow_links": bool(self.html_follow_links_cb.GetValue()),
             "verapdf_flavour": self.selected_verapdf_flavour(),
         }
         if fido_settings_present():

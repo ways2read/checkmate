@@ -190,6 +190,82 @@ def find_ace() -> Path | None:
     return None
 
 
+_ACE_PKG_IN_SHIM = re.compile(
+    r"node_modules[/\\]@daisy[/\\](ace(?:-cli)?)",
+    re.IGNORECASE,
+)
+
+
+def _is_ace_module_root(path: Path) -> bool:
+    """True when *path* is an Ace install we can require puppeteer / axe-core from."""
+    if not path.is_dir():
+        return False
+    nm = path / "node_modules"
+    if (nm / "puppeteer").is_dir() or (nm / "puppeteer-core").is_dir():
+        return True
+    if (nm / "@daisy" / "ace-cli").is_dir():
+        return True
+    if (nm / "@daisy" / "axe-core-for-ace").is_dir():
+        return True
+    return False
+
+
+def ace_package_from_cli(cli: Path) -> Path | None:
+    """Resolve the Ace npm package directory from an ``ace`` / ``ace-puppeteer`` shim.
+
+    Global npm on Windows puts ``ace-puppeteer.cmd`` next to
+    ``node_modules/@daisy/ace``, and puppeteer lives *inside that package*
+    (not under ``C:\\Program Files\\nodejs``).
+    """
+    try:
+        cli = cli.resolve()
+    except OSError:
+        return None
+    candidates: list[Path] = []
+
+    def add(path: Path) -> None:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        if resolved not in candidates:
+            candidates.append(resolved)
+
+    parent = cli.parent
+    add(parent / "node_modules" / "@daisy" / "ace")
+    add(parent / "node_modules" / "@daisy" / "ace-cli")
+    add(parent.parent / "lib" / "node_modules" / "@daisy" / "ace")
+    add(parent.parent / "lib" / "node_modules" / "@daisy" / "ace-cli")
+    if cli.suffix.lower() == ".js":
+        add(cli.parent.parent)
+        add(cli.parent)
+
+    if cli.suffix.lower() in {".cmd", ".bat", ".ps1"} or not cli.suffix:
+        try:
+            text = cli.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        match = _ACE_PKG_IN_SHIM.search(text)
+        if match:
+            add(parent / "node_modules" / "@daisy" / match.group(1))
+
+    for cand in candidates:
+        if _is_ace_module_root(cand):
+            return cand
+    return None
+
+
+def ace_package_dir() -> Path | None:
+    """Ace install we can require modules from (bundled copy, else user CLI)."""
+    bundled = _bundled_ace()
+    if bundled is not None:
+        return bundled[1]
+    ace = find_ace()
+    if ace is None:
+        return None
+    return ace_package_from_cli(ace)
+
+
 def ace_command() -> list[str] | None:
     """Argv prefix for running Ace, or None when Ace is unavailable.
 

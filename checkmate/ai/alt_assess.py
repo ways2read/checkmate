@@ -71,7 +71,7 @@ _FATAL_VISION_KEYS = frozenset({"no_key", "no_model", "network", "timeout"})
 _RATE_LIMIT_MAX_RETRIES = 3
 _RATE_LIMIT_BACKOFF_INITIAL_S = 2.0
 _RATE_LIMIT_BACKOFF_MAX_S = 30.0
-_VISION_PROGRESS_LINE_COUNT = 6
+_VISION_PROGRESS_LINE_COUNT = 5
 _VISION_PROGRESS_RESERVED_LINE = " "
 # PyMuPDF is not thread-safe; parallel vision workers serialize encode.
 _FITZ_ENCODE_LOCK = threading.Lock()
@@ -238,7 +238,6 @@ def vision_progress_message(
     *,
     done: int,
     total: int,
-    inflight: list[str],
     elapsed_s: float,
     verdicts: dict[str, int] | None = None,
     note: str = "",
@@ -258,24 +257,16 @@ def vision_progress_message(
         f"{_('OK with caveat')}: {int(counts.get('likely_ok_with_caveat', 0))}    "
         f"{_('Uncertain')}: {int(counts.get('uncertain', 0))}"
     )
-    if inflight:
-        shown = inflight[:4]
-        names = ", ".join(shown)
-        if len(inflight) > 4:
-            names += ", …"
-        line4 = _("In progress: {names}").format(names=names)
-    else:
-        line4 = ""
     if done > 0 and elapsed_s >= 0.5 and done < total:
         remaining = max(0, total - done)
         eta = remaining / (done / elapsed_s)
-        line5 = _("Est. time remaining: {eta}").format(eta=_humanize_eta_seconds(eta))
+        line4 = _("Est. time remaining: {eta}").format(eta=_humanize_eta_seconds(eta))
     elif done < total:
-        line5 = _("Est. time remaining: calculating…")
+        line4 = _("Est. time remaining: calculating…")
     else:
-        line5 = ""
+        line4 = ""
     return format_vision_progress_dialog(
-        "\n".join((line1, line2, line3, line4, line5, note or ""))
+        "\n".join((line1, line2, line3, line4, note or ""))
     )
 
 
@@ -549,6 +540,12 @@ def _publication_format_rules(publication_format: str) -> str:
 - Tables: use a real Word table, not a picture of a table.
 - Do not recommend MathJax or MathML alttext / alt-text attributes."""
     if key == "html":
+        common = (
+            f"Host format: HTML web page (code: html).\n"
+            "This is a web page, not a packaged publication. "
+            "Tailor teaching_note and remediation to HTML. Do not recommend "
+            "techniques that only exist in EPUB, PDF, or Word."
+        )
         return f"""{common}
 - HTML supports a short alt plus an extended description (figcaption,
   a following description, or aria-details / aria-describedby). Do not dump
@@ -571,10 +568,21 @@ def build_vision_system_prompt(publication_format: str = "") -> str:
     lang = _language_name()
     lang_code = get_language()
     format_rules = _publication_format_rules(publication_format)
+    key = infer_publication_format(explicit=publication_format)
+    if key == "html":
+        host_intro = (
+            "You review one image from a web page together with its\n"
+            "declared alt text status, any existing alt text, and optional surrounding\n"
+            "text from the page."
+        )
+    else:
+        host_intro = (
+            "You review one image from a publication together with its\n"
+            "declared alt text status, any existing alt text, and optional surrounding page\n"
+            "text from the publication."
+        )
     return f"""You are an accessibility publishing assistant inside CheckMate.
-You review one image from a publication together with its
-declared alt text status, any existing alt text, and optional surrounding page
-text from the publication.
+{host_intro}
 
 LANGUAGE (mandatory):
 - The CheckMate UI language is {lang} (code: {lang_code}).
@@ -698,9 +706,15 @@ def build_vision_user_text(
     ctx = image.context_stripped
     ctx_block = ctx if ctx else "(none provided)"
     fmt = publication_format_label(publication_format)
+    key = infer_publication_format(explicit=publication_format)
+    host_line = (
+        "- Host format: HTML web page\n"
+        if key == "html"
+        else f"- Publication format: {fmt}\n"
+    )
     return (
         "Assess this image's alt text / decorative status for document fit.\n"
-        f"- Publication format: {fmt}\n"
+        f"{host_line}"
         f"- Index: {image.index}\n"
         f"- Filename: {image.filename}\n"
         f"- Status: {image.status or '(unknown)'}\n"
@@ -873,6 +887,8 @@ def build_synthesis_system_prompt(publication_format: str = "") -> str:
     lang_code = get_language()
     h1, h2, h3, h4, h5 = _section_headings()
     format_rules = _publication_format_rules(publication_format)
+    key = infer_publication_format(explicit=publication_format)
+    host = "web page" if key == "html" else "publication"
     return f"""You are an accessibility publishing assistant inside CheckMate.
 You summarize an alt-text quality assessment for publishers and remediators who
 may not know what good alt text looks like.
@@ -910,7 +926,7 @@ Rules:
   images, encoding math as digital math for THIS format, replacing
   low-resolution rasters with sharper assets, fixing rotation when relevant,
   splitting joined/multi-panel rasters so each part can have its own alt text,
-  not repeating surrounding prose, writing alt in the same language as the publication,
+  not repeating surrounding prose, writing alt in the same language as the {host},
   and fixing spelling or grammar unless the alt quotes text from the image).
   Do not recommend MathJax or MathML alttext
   as the fix for math images. Do not recommend EPUB extended-description
@@ -1071,7 +1087,6 @@ class _VisionProgress:
         self._status_callback = status_callback
         self._lock = threading.Lock()
         self._done = 0
-        self._inflight: dict[int, str] = {}
         self._verdicts = {
             "ok": 0,
             "needs_attention": 0,
@@ -1093,7 +1108,6 @@ class _VisionProgress:
 
     def mark_start(self, image: AltExportImage) -> None:
         with self._lock:
-            self._inflight[image.index] = image.filename
             msg = self._message_locked()
         _status(self._status_callback, msg)
 
@@ -1105,7 +1119,6 @@ class _VisionProgress:
         verdict: str = "",
     ) -> None:
         with self._lock:
-            self._inflight.pop(image.index, None)
             if counted:
                 self._done += 1
                 key = (verdict or "uncertain").strip().lower()
@@ -1119,7 +1132,6 @@ class _VisionProgress:
         return vision_progress_message(
             done=self._done,
             total=self.total,
-            inflight=list(self._inflight.values()),
             elapsed_s=time.perf_counter() - self._started,
             verdicts=dict(self._verdicts),
             note=self._note,

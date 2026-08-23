@@ -77,7 +77,7 @@ from .paths import (
     images_dir,
     is_frozen,
 )
-from .publication import is_checkable_path
+from .publication import is_checkable_path, is_html_url
 from .report_export import format_text_report, report_title, save_report
 from .settings import (
     ai_features_enabled,
@@ -1421,7 +1421,14 @@ def filter_choices() -> tuple[str, ...]:
 def source_filter_choices(sources: list[str] | None = None) -> tuple[str, ...]:
     """Choices for the Source filter: combined run, then each checker name."""
     names = list(sources or [])
-    return (_("EPUBCheck + Ace"), *names)
+    names_lower = {n.lower() for n in names}
+    if names_lower >= {"epubcheck", "ace"}:
+        combined = _("EPUBCheck + Ace")
+    elif "nu html checker" in names_lower and "axe" in names_lower:
+        combined = _("Nu HTML Checker + axe")
+    else:
+        combined = _("All sources")
+    return (combined, *names)
 
 
 def _result_source_names(result: CheckResult) -> list[str]:
@@ -1608,6 +1615,9 @@ class IssueDetailDialog(wx.Dialog):
         self._ai_cancel: threading.Event | None = None
         self._ai_progress: wx.ProgressDialog | None = None
         self._ai_progress_timer: wx.Timer | None = None
+        self._closing = False
+        self._ai_focus_gen = 0
+        self._pending_later: list[wx.CallLater] = []
         self._show_ai = ai_features_enabled()
         self._show_fix = self._show_ai and self._fix_available_for_result(check_result)
         self._matching_like_this = 1
@@ -2433,6 +2443,7 @@ class IssueDetailDialog(wx.Dialog):
         # Cancel deferred WebView focus/reveal/paint chains (follow-up SetPage
         # + MoveFocus into Edge can otherwise keep the process alive after exit).
         self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
+        self._stop_pending_later()
         if self._ai_cancel is not None:
             self._ai_cancel.set()
         panel = getattr(self, "_kb_panel", None)
@@ -2449,30 +2460,67 @@ class IssueDetailDialog(wx.Dialog):
         # Never steal focus from Edge via WM_NEXTDLGCTL here — that deadlocks
         # WebView2 when Escape arrives through checkmate://close. Finish close
         # on the next idle so we are outside navigating/key handlers.
+        self._release_webview()
         wx.CallAfter(self._finish_close_dialog)
+
+    def _call_later(self, ms: int, fn) -> wx.CallLater:
+        timer = wx.CallLater(ms, fn)
+        self._pending_later.append(timer)
+        return timer
+
+    def _stop_pending_later(self) -> None:
+        for timer in list(self._pending_later):
+            try:
+                timer.Stop()
+            except Exception:
+                pass
+        self._pending_later.clear()
+
+    def _focus_dialog_chrome(self) -> None:
+        """Move keyboard focus onto a wx control (never Edge WebView2)."""
+        try:
+            close_btn = self.FindWindowById(wx.ID_CLOSE)
+            if close_btn is not None:
+                close_btn.SetFocus()
+            else:
+                self.SetFocus()
+        except RuntimeError:
+            pass
+
+    def _release_webview(self) -> None:
+        """Unbind Edge events; do not Stop/Hide the control (that hangs)."""
+        self._stop_pending_later()
+        self._focus_dialog_chrome()
+        if not getattr(self, "_ai_output_is_webview", False):
+            return
+        view = getattr(self, "ai_output", None)
+        if view is None:
+            return
+        try:
+            import wx.html2 as html2
+
+            view.Unbind(html2.EVT_WEBVIEW_LOADED)
+            view.Unbind(html2.EVT_WEBVIEW_NAVIGATING)
+        except Exception:
+            pass
 
     def _finish_close_dialog(self) -> None:
         """Complete modal teardown after Escape/close (safe for WebView2)."""
+        from .dialog_trace import dlg_trace
+
         try:
             if not self:
                 return
         except RuntimeError:
             return
-        # Soft blur: focus the dialog HWND only (no dialog-manager dance).
-        if sys.platform == "win32":
-            try:
-                import ctypes
-
-                hwnd = int(self.GetHandle() or 0)
-                if hwnd:
-                    ctypes.windll.user32.SetFocus(hwnd)
-            except Exception:
-                pass
+        self._focus_dialog_chrome()
+        dlg_trace("issue-detail finish close", self)
         try:
             if self.IsModal():
+                dlg_trace("issue-detail EndModal", self)
                 self.EndModal(wx.ID_CLOSE)
-            else:
-                self.Destroy()
+                dlg_trace("issue-detail EndModal returned", self)
+            # Caller owns Destroy — never Destroy Edge on this stack.
         except RuntimeError:
             pass
 
@@ -2728,7 +2776,7 @@ class IssueDetailDialog(wx.Dialog):
             if self._focus_ai_output_now():
                 return
             if remaining > 0:
-                wx.CallLater(200, lambda: _attempt(remaining - 1))
+                self._call_later(200, lambda: _attempt(remaining - 1))
 
         wx.CallAfter(lambda: _attempt(5))
 
@@ -2747,7 +2795,7 @@ class IssueDetailDialog(wx.Dialog):
             if self._reveal_latest_followup_now():
                 return
             if remaining > 0:
-                wx.CallLater(200, lambda: _attempt(remaining - 1))
+                self._call_later(200, lambda: _attempt(remaining - 1))
 
         wx.CallAfter(lambda: _attempt(5))
 
@@ -3997,7 +4045,7 @@ class AiOverviewDialog(wx.Dialog):
             if self._focus_output():
                 return
             if remaining > 0:
-                wx.CallLater(200, lambda: _attempt(remaining - 1))
+                self._call_later(200, lambda: _attempt(remaining - 1))
 
         wx.CallAfter(lambda: _attempt(5))
 
@@ -4015,7 +4063,7 @@ class AiOverviewDialog(wx.Dialog):
             if self._reveal_latest_followup_now():
                 return
             if remaining > 0:
-                wx.CallLater(200, lambda: _attempt(remaining - 1))
+                self._call_later(200, lambda: _attempt(remaining - 1))
 
         wx.CallAfter(lambda: _attempt(5))
 
@@ -4417,13 +4465,17 @@ class AiOverviewDialog(wx.Dialog):
                 wx.TheClipboard.Close()
 
     def _on_close_dialog(self, event: wx.Event | None = None) -> None:
+        from .dialog_trace import dlg_trace
+
         # Guard against SetEscapeId + CHAR_HOOK + checkmate://close all firing.
         # A second pass that Destroy()s while ShowModal is unwinding leaves the
         # main frame disabled/frozen.
         if getattr(self, "_closing", False):
+            dlg_trace("overview close ignored (already closing)", self)
             if isinstance(event, wx.CloseEvent):
                 event.Veto()
             return
+        dlg_trace("overview close", self)
         self._closing = True
         self._stop_pending_later()
         # Cancel deferred WebView focus/reveal/paint chains.
@@ -4433,35 +4485,57 @@ class AiOverviewDialog(wx.Dialog):
         self._close_ai_progress(reclaim_focus=False)
         if isinstance(event, wx.CloseEvent):
             event.Veto()
-        # Never steal focus from Edge via WM_NEXTDLGCTL here — that deadlocks
-        # WebView2 when Escape arrives through checkmate://close. Finish close
-        # on the next idle so we are outside navigating/key handlers.
+        self._release_webview()
         wx.CallAfter(self._finish_close_dialog)
+
+    def _focus_dialog_chrome(self) -> None:
+        """Move keyboard focus onto a wx control (never Edge WebView2)."""
+        try:
+            close_btn = self.FindWindowById(wx.ID_CLOSE)
+            if close_btn is not None:
+                close_btn.SetFocus()
+            else:
+                self.SetFocus()
+        except RuntimeError:
+            pass
+
+    def _release_webview(self) -> None:
+        """Unbind Edge events; do not Stop/Hide the control (that hangs)."""
+        from .dialog_trace import dlg_trace
+
+        self._stop_pending_later()
+        self._focus_dialog_chrome()
+        view = getattr(self, "ai_output", None)
+        if view is None or not getattr(self, "_ai_output_is_webview", False):
+            return
+        dlg_trace("overview release webview", self)
+        try:
+            import wx.html2 as html2
+
+            view.Unbind(html2.EVT_WEBVIEW_LOADED)
+            view.Unbind(html2.EVT_WEBVIEW_NAVIGATING)
+        except Exception:
+            pass
 
     def _finish_close_dialog(self) -> None:
         """Complete modal teardown after Escape/close (safe for WebView2)."""
+        from .dialog_trace import dlg_trace
+
         try:
             if not self:
                 return
         except RuntimeError:
             return
-        # Soft blur: focus the dialog HWND only (no dialog-manager dance).
-        if sys.platform == "win32":
-            try:
-                import ctypes
-
-                hwnd = int(self.GetHandle() or 0)
-                if hwnd:
-                    ctypes.windll.user32.SetFocus(hwnd)
-            except Exception:
-                pass
+        self._focus_dialog_chrome()
+        dlg_trace("overview finish close", self)
         try:
             if self.IsModal():
+                dlg_trace("overview EndModal", self)
                 self.EndModal(wx.ID_CLOSE)
-            else:
-                self.Destroy()
-        except RuntimeError:
-            pass
+                dlg_trace("overview EndModal returned", self)
+            # Caller owns Destroy — never Destroy Edge on this stack.
+        except RuntimeError as exc:
+            dlg_trace("overview EndModal failed", self, err=exc)
 
     def _ai_dialog_alive(self) -> bool:
         if getattr(self, "_closing", False):
@@ -4848,8 +4922,26 @@ class EBrailleApp(wx.App):
         if single_instance_enabled() and self._instance_checker.IsAnotherRunning():
             if self._pending_paths:
                 send_open_paths(self._pending_paths)
-            bring_checkmate_window_to_front()
-            return False
+            found = bring_checkmate_window_to_front()
+            log = logging.getLogger(__name__)
+            if found:
+                log.info(
+                    "CheckMate is already running; focusing the existing window."
+                )
+                # Avoid wx's "OnInit returned false, exiting..." which looks
+                # like a crash. Installed CheckMate.exe and `uv run` share
+                # this lock.
+                print(
+                    "CheckMate is already running. Focusing that window.\n"
+                    "Close it first if you meant to start this copy "
+                    "(for example after launching the installed app).",
+                    file=sys.stderr,
+                )
+                raise SystemExit(0)
+            log.warning(
+                "Single-instance lock is held but no CheckMate window was "
+                "found; starting a new window."
+            )
 
         init_app_telemetry(self)
 
@@ -5363,20 +5455,20 @@ class MainFrame(wx.Frame):
         self.select_file_btn = wx.Button(panel, label=_("Select &file…"))
         self.select_file_btn.SetName(_("Select file"))
         self.select_file_btn.SetToolTip(
-            _("Select a packaged publication (Ctrl+O)")
+            _("Select a packaged publication or HTML file (Ctrl+O)")
         )
         self.select_folder_btn = wx.Button(panel, label=_("Select f&older…"))
         self.select_folder_btn.SetName(_("Select folder"))
         self.select_folder_btn.SetToolTip(
-            _("Select an exploded publication folder (Ctrl+Shift+O)")
+            _("Select an exploded publication folder or HTML folder (Ctrl+Shift+O)")
         )
         self.path_ctrl = wx.TextCtrl(
             panel, style=wx.TE_PROCESS_ENTER, name=_("Publication")
         )
         self.path_ctrl.SetHint(
             _(
-                "Select or drop a .ebrl / .epub / .pdf file or folder — "
-                "checking starts automatically"
+                "Select or drop a .ebrl / .epub / .pdf / .html file or folder, "
+                "or paste an http(s) URL — checking starts automatically"
             )
         )
         # Keep visual/tab order: path → select file → select folder.
@@ -5587,7 +5679,7 @@ class MainFrame(wx.Frame):
             )
             self.menu_settings.SetHelp(
                 _(
-                    "General preferences, EPUB checkers, and PDF validation profile"
+                    "General preferences, EPUB/HTML checkers, and PDF validation profile"
                 )
             )
         menubar.Append(file_menu, _("&File"))
@@ -5646,7 +5738,7 @@ class MainFrame(wx.Frame):
             )
             self.menu_settings.SetHelp(
                 _(
-                    "General preferences, EPUB checkers, and PDF validation profile"
+                    "General preferences, EPUB/HTML checkers, and PDF validation profile"
                 )
             )
         tools_menu.AppendSeparator()
@@ -5826,8 +5918,8 @@ class MainFrame(wx.Frame):
     def _alt_text_path_ok(self) -> bool:
         from .ai.alt_build_export import supports_alt_export_path
 
-        path = self._current_path()
-        return bool(path) and supports_alt_export_path(path)
+        text = self._current_target()
+        return bool(text) and supports_alt_export_path(text)
 
     def _update_alt_text_btn_enabled(self) -> None:
         ok = (
@@ -5843,15 +5935,15 @@ class MainFrame(wx.Frame):
         elif self._last_result is not None and not self._alt_text_path_ok():
             self.alt_text_btn.SetToolTip(
                 _(
-                    "Alt text report needs a packaged .epub, .ebrl, or .pdf file "
-                    "(not an exploded folder)."
+                    "Alt text report needs a packaged .epub, .ebrl, or .pdf file, "
+                    "or HTML (file, folder, or URL) after a check."
                 )
             )
         else:
             self.alt_text_btn.SetToolTip(
                 _(
                     "View images and alt text for this publication "
-                    "(packaged EPUB, eBraille, or PDF)"
+                    "(packaged EPUB, eBraille, or PDF, or HTML after a check)"
                 )
             )
 
@@ -5913,7 +6005,9 @@ class MainFrame(wx.Frame):
 
     def _on_main_close(self, event: wx.CloseEvent) -> None:
         from .ai.alt_inventory_dialog import flush_pending_webview_destroys
+        from .dialog_trace import dlg_trace
 
+        dlg_trace("main-frame close", self)
         dlg = getattr(self, "_alt_inventory_dialog", None)
         self._alt_inventory_dialog = None
         if dlg is not None:
@@ -6493,19 +6587,19 @@ class MainFrame(wx.Frame):
         self.path_label.SetLabel(_("Path:"))
         self.path_ctrl.SetHint(
             _(
-                "Select or drop a .ebrl / .epub / .pdf file or folder — "
-                "checking starts automatically"
+                "Select or drop a .ebrl / .epub / .pdf / .html file or folder, "
+                "or paste an http(s) URL — checking starts automatically"
             )
         )
         self.select_file_btn.SetLabel(_("Select &file…"))
         self.select_file_btn.SetName(_("Select file"))
         self.select_file_btn.SetToolTip(
-            _("Select a packaged publication (Ctrl+O)")
+            _("Select a packaged publication or HTML file (Ctrl+O)")
         )
         self.select_folder_btn.SetLabel(_("Select f&older…"))
         self.select_folder_btn.SetName(_("Select folder"))
         self.select_folder_btn.SetToolTip(
-            _("Select an exploded publication folder (Ctrl+Shift+O)")
+            _("Select an exploded publication folder or HTML folder (Ctrl+Shift+O)")
         )
         self.result_box.SetLabel(_("Result"))
         self.result_label.SetName(_("Check result"))
@@ -6851,11 +6945,28 @@ class MainFrame(wx.Frame):
         if update_icon:
             self._update_result_status_icon()
 
-    def _current_path(self) -> Path | None:
+    def _current_target(self) -> str | None:
         text = self.path_ctrl.GetValue().strip().strip('"')
-        if not text:
+        return text or None
+
+    def _current_path(self) -> Path | None:
+        text = self._current_target()
+        if not text or is_html_url(text):
             return None
         return Path(text)
+
+    def _current_target_is_html(self) -> bool:
+        """True when the path field or last result is an HTML file, folder, or URL."""
+        if self._last_result is not None and self._last_result.html_pages:
+            return True
+        text = self._current_target()
+        if not text:
+            return False
+        if is_html_url(text):
+            return True
+        from .publication import PublicationKind, classify_target
+
+        return classify_target(text) == PublicationKind.HTML
 
     def open_publication_paths(
         self,
@@ -6890,8 +7001,8 @@ class MainFrame(wx.Frame):
         if chosen is None:
             wx.MessageBox(
                 _(
-                    "Drop a packaged .ebrl, .epub, or .pdf file, or an exploded "
-                    "eBraille/EPUB publication folder."
+                    "Drop a packaged .ebrl, .epub, or .pdf file, an HTML file "
+                    "or folder, or an exploded eBraille/EPUB publication folder."
                 ),
                 _("Unsupported drop"),
                 wx.OK | wx.ICON_WARNING,
@@ -7031,17 +7142,17 @@ class MainFrame(wx.Frame):
 
         result_code = dlg.ShowModal()
         pending = getattr(dlg, "applied_fix_verify", None)
+        from .ai.alt_inventory_dialog import schedule_webview_window_destroy
+        from .dialog_trace import dlg_trace
+
+        dlg_trace("issue-detail ShowModal returned", dlg, result=result_code)
         try:
-            dlg.Destroy()
+            dlg._release_webview()
         except RuntimeError:
             pass
-        # ProgressDialog / WebView modal teardown can leave the frame disabled.
-        try:
-            self.Enable(True)
-            self.Raise()
-            _win_force_foreground(self)
-        except RuntimeError:
-            pass
+        schedule_webview_window_destroy(dlg)
+        wx.CallAfter(self._reclaim_after_modal)
+        wx.CallLater(150, self._reclaim_after_modal)
         if result_code == wx.ID_APPLY:
             # Apply fix succeeded — re-scan, then confirm resolution / offer revert.
             self._pending_fix_verify = pending
@@ -7102,7 +7213,7 @@ class MainFrame(wx.Frame):
         self.source_choice.Set(list(source_filter_choices(sources)))
         # Only EPUBCheck + Ace is a multi-checker run; hide for single tools
         # (.ebrl, .pdf, DAISY/DTBook via Pipeline, EPUBCheck-only, etc.).
-        visible = "EPUBCheck" in sources and "Ace" in sources
+        visible = len(sources) >= 2
         self._set_source_filter_visible(visible)
         if not visible or reset_to_all or prefer is None:
             self.source_choice.SetSelection(0)
@@ -7160,13 +7271,15 @@ class MainFrame(wx.Frame):
     def on_browse_file(self, _event: wx.CommandEvent | None) -> None:
         with wx.FileDialog(
             self,
-            _("Select an eBraille, EPUB, or PDF publication"),
+            _("Select an eBraille, EPUB, PDF, or HTML file"),
             wildcard=_(
-                "Publications (*.ebrl;*.epub;*.pdf)|"
-                "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF|"
+                "Publications (*.ebrl;*.epub;*.pdf;*.html;*.htm;*.xhtml)|"
+                "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF;"
+                "*.html;*.HTML;*.htm;*.HTM;*.xhtml;*.XHTML|"
                 "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
                 "EPUB (*.epub)|*.epub;*.EPUB|"
                 "PDF (*.pdf)|*.pdf;*.PDF|"
+                "HTML (*.html;*.htm;*.xhtml)|*.html;*.HTML;*.htm;*.HTM;*.xhtml;*.XHTML|"
                 "All files (*.*)|*.*"
             ),
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
@@ -7179,7 +7292,7 @@ class MainFrame(wx.Frame):
     def on_browse_folder(self, _event: wx.CommandEvent) -> None:
         with wx.DirDialog(
             self,
-            _("Select an exploded eBraille or EPUB publication folder"),
+            _("Select an exploded eBraille or EPUB folder, or a folder of HTML"),
             style=wx.DD_DIR_MUST_EXIST,
         ) as dlg:
             if dlg.ShowModal() != wx.ID_OK:
@@ -7190,8 +7303,8 @@ class MainFrame(wx.Frame):
     def on_check(self, _event: wx.CommandEvent | None) -> None:
         if self._busy:
             return
-        path = self._current_path()
-        if path is None:
+        text = self._current_target()
+        if not text:
             wx.MessageBox(
                 _("Select a publication file or folder first."),
                 _("Nothing to check"),
@@ -7200,14 +7313,19 @@ class MainFrame(wx.Frame):
             )
             self._focus_select_button()
             return
-        if not path.exists():
-            wx.MessageBox(
-                _("Path not found:\n{path}", path=path),
-                _("Invalid path"),
-                wx.OK | wx.ICON_ERROR,
-                self,
-            )
-            return
+        if not is_html_url(text):
+            path = Path(text)
+            if not path.exists():
+                wx.MessageBox(
+                    _("Path not found:\n{path}", path=path),
+                    _("Invalid path"),
+                    wx.OK | wx.ICON_ERROR,
+                    self,
+                )
+                return
+            check_target: Path | str = path
+        else:
+            check_target = text
 
         self._set_busy(True)
         try:
@@ -7228,7 +7346,7 @@ class MainFrame(wx.Frame):
                     self, ProgressEvent(message=msg, announce=announce)
                 )
 
-            result = run_check(path, exploded=None, progress=progress)
+            result = run_check(check_target, exploded=None, progress=progress)
             wx.PostEvent(self, ResultEvent(result=result))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -7940,26 +8058,33 @@ class MainFrame(wx.Frame):
         # Do not create the WebView before ShowModal (blank Edge HWND), and
         # wait one idle after the generation ProgressDialog is destroyed.
         self._overview_dialog = dlg
+        from .dialog_trace import dlg_trace
+
+        dlg_trace("overview created", dlg)
         wx.CallAfter(self._run_overview_dialog)
 
     def _run_overview_dialog(self) -> None:
+        from .ai.alt_inventory_dialog import schedule_webview_window_destroy
+        from .dialog_trace import dlg_trace
+
         dlg = getattr(self, "_overview_dialog", None)
         self._overview_dialog = None
         if dlg is None:
             return
+        dlg_trace("overview ShowModal", dlg)
         try:
             dlg.ShowModal()
+            dlg_trace("overview ShowModal returned", dlg)
         finally:
             try:
-                dlg.Destroy()
+                dlg._release_webview()
             except RuntimeError:
                 pass
-            try:
-                self.Enable(True)
-                self.Raise()
-                _win_force_foreground(self)
-            except RuntimeError:
-                pass
+            # Immediate Destroy of Edge after a follow-up SetPage hangs the
+            # process (main frame stays disabled — same as Fido / alt assess).
+            schedule_webview_window_destroy(dlg)
+            wx.CallAfter(self._reclaim_after_modal)
+            wx.CallLater(150, self._reclaim_after_modal)
 
     def _close_alt_assess_progress(self) -> None:
         if self._alt_assess_progress_timer is not None:
@@ -8041,12 +8166,12 @@ class MainFrame(wx.Frame):
 
         from .ai.alt_build_export import supports_alt_export_path
 
-        current = self._current_path()
+        current = self._current_target()
         if current is None or not supports_alt_export_path(current):
             wx.MessageBox(
                 _(
-                    "Alt text report needs a packaged .epub, .ebrl, or .pdf file "
-                    "(not an exploded folder)."
+                    "Alt text report needs a packaged .epub, .ebrl, or .pdf file, "
+                    "or HTML (file, folder, or URL) after a check."
                 ),
                 _("Alt text report"),
                 wx.OK | wx.ICON_INFORMATION,
@@ -8159,7 +8284,7 @@ class MainFrame(wx.Frame):
             # open dies after a few cycles on Windows.
             self._reclaim_after_modal()
 
-    def _export_alt_for_assess(self, doc_path: Path) -> Path | None:
+    def _export_alt_for_assess(self, doc_path: Path | str) -> Path | None:
         """Build a Fido-style export folder from *doc_path*; return it or None.
 
         Reuses a prior export for the same unchanged publication file.
@@ -8173,17 +8298,21 @@ class MainFrame(wx.Frame):
         if cached is not None:
             return cached
 
+        html_source = self._current_target_is_html()
+        extracting = (
+            _("Extracting images from web page…")
+            if html_source
+            else _("Extracting images from publication…")
+        )
         cancel = threading.Event()
         progress = wx.ProgressDialog(
             _("Alt text report"),
-            _("Extracting images from publication…"),
+            extracting,
             maximum=100,
             parent=self,
             style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
         )
-        _present_progress_dialog(
-            progress, _("Extracting images from publication…")
-        )
+        _present_progress_dialog(progress, extracting)
         try:
 
             def _cb(current: int, total: int, message: str) -> bool:
@@ -8215,7 +8344,11 @@ class MainFrame(wx.Frame):
                 return None
             if result.stats.get("total", 0) == 0:
                 wx.MessageBox(
-                    _("No images found in the publication."),
+                    (
+                        _("No images found on the page.")
+                        if html_source
+                        else _("No images found in the publication.")
+                    ),
                     _("Alt text report"),
                     wx.OK | wx.ICON_INFORMATION,
                     self,
@@ -8224,9 +8357,11 @@ class MainFrame(wx.Frame):
             return Path(result.export_path)
         except Exception as exc:
             wx.MessageBox(
-                _("Could not extract images from the publication:\n{error}").format(
-                    error=exc
-                ),
+                (
+                    _("Could not extract images from the page:\n{error}")
+                    if html_source
+                    else _("Could not extract images from the publication:\n{error}")
+                ).format(error=exc),
                 _("Alt text report"),
                 wx.OK | wx.ICON_ERROR,
                 self,
@@ -8244,7 +8379,7 @@ class MainFrame(wx.Frame):
         flush_pending_webview_destroys()
         # Preflight: load CSV + confirm sample size
         try:
-            from .ai.alt_export import load_alt_export
+            from .ai.alt_export import infer_publication_format, load_alt_export
             from .ai.alt_labels import feature_title
             from .ai.alt_sample import DEFAULT_SAMPLE_PERCENT, sample_choice_labels
 
@@ -8279,7 +8414,10 @@ class MainFrame(wx.Frame):
             return
 
         counts = export.counts()
-        choice_rows = sample_choice_labels(counts["total"])
+        is_html = infer_publication_format(explicit=export.publication_format) == "html"
+        choice_rows = sample_choice_labels(
+            counts["total"], through_page=is_html
+        )
         if not choice_rows:
             return
         # Small exports only offer "assess all" — skip the redundant picker.
@@ -8296,6 +8434,11 @@ class MainFrame(wx.Frame):
             if pct == DEFAULT_SAMPLE_PERCENT:
                 default_sel = i
                 break
+        spread = (
+            _("(samples are spread through the page):")
+            if is_html
+            else _("(samples are spread through the publication):")
+        )
         choice_dlg = wx.SingleChoiceDialog(
             self,
             _(
@@ -8303,13 +8446,14 @@ class MainFrame(wx.Frame):
                 "Images: {total} — with alt: {with_alt} — decorative: {decorative} — "
                 "missing: {missing}\n\n"
                 "Choose how many images to send to the vision model "
-                "(samples are spread through the publication):"
+                "{spread}"
             ).format(
                 name=export.document_name,
                 total=counts["total"],
                 with_alt=counts["with_alt"],
                 decorative=counts["decorative"],
                 missing=counts["missing"],
+                spread=spread,
             ),
             feature_title(),
             choices,

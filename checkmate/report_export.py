@@ -19,6 +19,10 @@ def report_title(result: CheckResult) -> str:
     key = name.lower()
     if "epubcheck" in key and "ace" in key:
         return _("EPUBCheck + Ace report")
+    if "nu html" in key and "axe" in key:
+        return _("Nu HTML Checker + axe report")
+    if "nu html" in key:
+        return _("Nu HTML Checker report")
     if key == EPUBCHECK_TOOL.display_name.lower() or "epubcheck" in key:
         return _("EPUBCheck report")
     if key == EBRAILLE_TOOL.display_name.lower() or "ebraille" in key:
@@ -27,6 +31,8 @@ def report_title(result: CheckResult) -> str:
         return _("veraPDF report")
     if key == "ace" or key.startswith("ace "):
         return _("Ace report")
+    if key == "axe" or key.startswith("axe "):
+        return _("axe report")
     return _("Check report")
 
 
@@ -137,6 +143,8 @@ def _filters_html(result: CheckResult, sources: list[str], esc) -> str:
         names_lower = {s.lower() for s in sources}
         if names_lower >= {"epubcheck", "ace"}:
             all_sources_label = _("EPUBCheck + Ace")
+        elif "nu html checker" in names_lower and "axe" in names_lower:
+            all_sources_label = _("Nu HTML Checker + axe")
         else:
             all_sources_label = _("All sources")
         source_opts = [f'<option value="">{esc(all_sources_label)}</option>']
@@ -964,7 +972,7 @@ def format_html_report(
     if result.target_path:
         meta_rows.append(
             (
-                _("Publication"),
+                _("Web page") if result.html_pages else _("Publication"),
                 esc(result.target_path),
             )
         )

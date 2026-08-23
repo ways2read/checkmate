@@ -134,6 +134,58 @@ class ResourcesForIssueTests(unittest.TestCase):
         )
         self.assertIn("Landmarks", resources[0][0])
 
+    def test_html_axe_learn_more_uses_deque_not_daisy_kb(self) -> None:
+        issue = Issue(
+            Severity.ERROR,
+            "image-alt",
+            "Images must have alternate text",
+            source="axe",
+            help_url="https://dequeuniversity.com/rules/axe/4.10/image-alt",
+            help_title="Images must have alternate text",
+        )
+        primary = primary_kb_resource(issue)
+        self.assertIsNotNone(primary)
+        assert primary is not None
+        self.assertEqual(primary[1], issue.help_url)
+        self.assertNotIn("kb.daisy.org", primary[1])
+        urls = [u for _t, u in resources_for_issue(issue)]
+        self.assertEqual(urls[0], issue.help_url)
+        self.assertFalse(any("kb.daisy.org" in u for u in urls))
+        self.assertTrue(any("w3.org/WAI" in u for u in urls))
+
+    def test_html_axe_explain_is_web_not_epub(self) -> None:
+        issue = Issue(
+            Severity.ERROR,
+            "color-contrast",
+            "Elements must have sufficient color contrast",
+            source="axe",
+            help_url="https://dequeuniversity.com/rules/axe/4.10/color-contrast",
+            help_title="Elements must have sufficient color contrast",
+        )
+        guidance = authoritative_guidance_for_explain(issue)
+        self.assertIn("web page", guidance)
+        self.assertIn("dequeuniversity.com", guidance)
+        self.assertNotIn("kb.daisy.org", guidance)
+        prompt = build_system_prompt(issue)
+        self.assertIn("web accessibility", prompt)
+        self.assertIn("Do not discuss EPUB", prompt)
+        self.assertNotIn("kb.daisy.org/publishing/docs", prompt)
+
+    def test_nu_html_checker_uses_w3c_not_daisy(self) -> None:
+        issue = Issue(
+            Severity.ERROR,
+            "html5",
+            "Start tag seen without seeing a doctype first.",
+            source="Nu HTML Checker",
+        )
+        urls = [u for _t, u in resources_for_issue(issue)]
+        self.assertFalse(any("kb.daisy.org" in u for u in urls))
+        self.assertTrue(any("validator.w3.org" in u for u in urls))
+        guidance = authoritative_guidance_for_explain(issue)
+        self.assertIn("web page", guidance)
+        self.assertIn("Do not recommend OPF", guidance)
+        self.assertNotIn("kb.daisy.org", guidance)
+
     def test_prompt_lists_specific_first(self) -> None:
         issue = Issue(Severity.ERROR, "image-alt", "missing alt", source="Ace")
         block = resources_prompt_block(issue)

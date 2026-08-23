@@ -31,6 +31,34 @@ RESOURCE_MAP: dict[str, list[tuple[str, str]]] = {
             "https://daisy.github.io/ace/",
         ),
     ],
+    "axe": [
+        (
+            "axe-core",
+            "https://github.com/dequelabs/axe-core",
+        ),
+        (
+            "WCAG 2 Overview",
+            "https://www.w3.org/WAI/standards-guidelines/wcag/",
+        ),
+        (
+            "WAI Web Accessibility Tutorials",
+            "https://www.w3.org/WAI/tutorials/",
+        ),
+    ],
+    "Nu HTML Checker": [
+        (
+            "Nu HTML Checker",
+            "https://validator.w3.org/nu/about.html",
+        ),
+        (
+            "HTML Living Standard",
+            "https://html.spec.whatwg.org/multipage/",
+        ),
+        (
+            "WCAG 2 Overview",
+            "https://www.w3.org/WAI/standards-guidelines/wcag/",
+        ),
+    ],
     "EPUBCheck": [
         epubcheck_messages_resource(),
         (
@@ -88,9 +116,31 @@ _KB_URL_IN_TEXT = re.compile(
 )
 
 
+def is_web_html_issue(issue: Issue) -> bool:
+    """True for HTML-page checkers (axe, Nu HTML Checker), not EPUB Ace."""
+    source = (issue.source or "").strip().lower()
+    return source == "axe" or source.startswith("nu html") or source == "vnu"
+
+
+def _ace_family_source(source: str) -> bool:
+    """True for Ace (EPUB). HTML axe is a different host format."""
+    return (source or "").strip().lower() == "ace"
+
+
+def _looks_like_axe(issue: Issue) -> bool:
+    return (issue.source or "").strip().lower() == "axe"
+
+
+def _looks_like_nu(issue: Issue) -> bool:
+    source = (issue.source or "").strip().lower()
+    return source.startswith("nu html") or source == "vnu"
+
+
 def _looks_like_ace(issue: Issue) -> bool:
     source = (issue.source or "").strip()
-    if source == "Ace":
+    if _looks_like_axe(issue) or _looks_like_nu(issue):
+        return False
+    if _ace_family_source(source):
         return True
     if _looks_like_epubcheck(issue):
         return False
@@ -102,6 +152,9 @@ def _looks_like_ace(issue: Issue) -> bool:
     # Common axe rule ids Ace reports as dct:title.
     if kb_resource_for_ace_code(code):
         return True
+    help_url = getattr(issue, "help_url", "") or ""
+    if "kb.daisy.org" in help_url.lower():
+        return True
     return False
 
 
@@ -109,22 +162,41 @@ def _looks_like_epubcheck(issue: Issue) -> bool:
     source = (issue.source or "").strip()
     if source == "EPUBCheck":
         return True
-    if source == "Ace":
+    if _ace_family_source(source):
         return False
     return looks_like_epubcheck_code(issue.code or "")
 
 
-def _ace_specific_kb(issue: Issue) -> tuple[str, str] | None:
-    """Best specific KB article for an Ace issue (help URL, else rule-id map)."""
+def _daisy_kb_from_help_url(issue: Issue) -> tuple[str, str] | None:
+    """Use checker helpUrl when it already points at the DAISY Knowledge Base."""
     help_url = normalize_kb_url(getattr(issue, "help_url", "") or "")
-    if help_url and "kb.daisy.org" in help_url.lower():
-        title = (getattr(issue, "help_title", "") or "").strip()
-        if not title:
-            mapped = kb_resource_for_ace_code(issue.code)
-            title = mapped[0] if mapped else "DAISY Knowledge Base article"
-        elif not title.lower().startswith("daisy"):
-            title = f"DAISY KB: {title}"
-        return title, help_url
+    if not help_url or "kb.daisy.org" not in help_url.lower():
+        return None
+    title = (getattr(issue, "help_title", "") or "").strip()
+    if not title:
+        mapped = kb_resource_for_ace_code(issue.code)
+        title = mapped[0] if mapped else "DAISY Knowledge Base article"
+    elif not title.lower().startswith("daisy"):
+        title = f"DAISY KB: {title}"
+    return title, help_url
+
+
+def _axe_engine_help(issue: Issue) -> tuple[str, str] | None:
+    """axe-core Deque helpUrl (not the DAISY KB) for Learn more lists."""
+    url = (getattr(issue, "help_url", "") or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return None
+    if "kb.daisy.org" in url.lower():
+        return None
+    title = (getattr(issue, "help_title", "") or "").strip() or "axe-core rule help"
+    return title, url
+
+
+def _ace_specific_kb(issue: Issue) -> tuple[str, str] | None:
+    """Best specific KB article for an Ace (EPUB) issue (help URL, else rule-id map)."""
+    from_help = _daisy_kb_from_help_url(issue)
+    if from_help:
+        return from_help
 
     mapped = kb_resource_for_ace_code(issue.code)
     if mapped:
@@ -175,11 +247,25 @@ def resources_for_issue(issue: Issue) -> list[tuple[str, str]]:
     if _looks_like_epubcheck(issue):
         return _dedupe_resources(_epubcheck_specific_resources(issue))
 
+    if _looks_like_axe(issue):
+        head: list[tuple[str, str]] = []
+        engine_help = _axe_engine_help(issue)
+        if engine_help:
+            head.append(engine_help)
+        return _dedupe_resources([*head, *RESOURCE_MAP["axe"]])
+
+    if _looks_like_nu(issue):
+        return _dedupe_resources(list(RESOURCE_MAP["Nu HTML Checker"]))
+
     if _looks_like_ace(issue):
-        base = list(RESOURCE_MAP["Ace"])
+        source = (issue.source or "").strip()
+        base = list(RESOURCE_MAP.get(source) or RESOURCE_MAP["Ace"])
         specific = _ace_specific_kb(issue)
+        head: list[tuple[str, str]] = []
         if specific:
-            return _dedupe_resources([specific, *base])
+            head.append(specific)
+        if head:
+            return _dedupe_resources([*head, *base])
         return _dedupe_resources(base)
 
     if source in RESOURCE_MAP:
@@ -198,10 +284,18 @@ def primary_kb_resource(issue: Issue) -> tuple[str, str] | None:
     """
     Most specific authoritative reference for this issue, when known.
 
-    - Ace: rule-linked DAISY KB article (help URL or ace_kb_map)
+    - Ace: DAISY KB from checker helpUrl when it is a kb.daisy.org article,
+      else the rule-id map (Ace's axe-rules-kb-mapping).
+    - HTML axe: native axe-core / Deque helpUrl (not the DAISY publishing KB).
+    - Nu HTML Checker: W3C checker about page.
     - EPUBCheck: mapped DAISY KB article when available, else the official
       EPUBCheck message catalog (not the generic wiki homepage)
     """
+    if _looks_like_axe(issue):
+        return _axe_engine_help(issue)
+    if _looks_like_nu(issue):
+        items = RESOURCE_MAP.get("Nu HTML Checker") or []
+        return items[0] if items else None
     if _looks_like_ace(issue):
         return _ace_specific_kb(issue)
     if _looks_like_epubcheck(issue):
@@ -225,6 +319,30 @@ def resources_prompt_block(issue: Issue) -> str:
 def authoritative_guidance_for_explain(issue: Issue) -> str:
     """System-prompt block: treat the primary reference as authoritative topic guidance."""
     primary = primary_kb_resource(issue)
+    if is_web_html_issue(issue):
+        host = (
+            "- This issue is on a web page (HTML), not an EPUB, eBraille file, "
+            "DAISY talking book, or audiobook.\n"
+            "- Prefer HTML, CSS, and ARIA techniques. Do not recommend OPF, "
+            "EPUB package-document, or audiobook-only practices.\n"
+            "- Do not include an \"Applies to\" list for EPUB or audiobooks."
+        )
+        if not primary:
+            return (
+                "AUTHORITATIVE GUIDANCE:\n"
+                "- Do not invent conformance requirements. If unsure, say what to verify.\n"
+                f"{host}"
+            )
+        title, url = primary
+        return (
+            "AUTHORITATIVE GUIDANCE:\n"
+            f"- Primary reference for this issue: [{title}]({url})\n"
+            "- Align \"What this means\", \"Why it matters\", and \"How to fix\" with that "
+            "reference; do not invent requirements that conflict with it.\n"
+            f"{host}\n"
+            "- In Learn more, list that primary reference first as a markdown link; you may "
+            "add other trusted resources from the list below."
+        )
     if not primary:
         return (
             "AUTHORITATIVE GUIDANCE:\n"

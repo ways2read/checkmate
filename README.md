@@ -2,23 +2,28 @@
 
 An accessible, cross-platform desktop front-end for the
 [DAISY eBraille Checker](https://github.com/daisy/ebraille-checker),
-[W3C EPUBCheck](https://github.com/w3c/epubcheck), and
-[veraPDF](https://verapdf.org/) (PDF/UA).
+[W3C EPUBCheck](https://github.com/w3c/epubcheck),
+[veraPDF](https://verapdf.org/) (PDF/UA), the
+[W3C Nu HTML Checker](https://github.com/validator/validator), and
+[axe-core](https://github.com/dequelabs/axe-core) (via Ace’s bundled Chrome).
 
-Those checkers are Java command-line tools. This app wraps them so you can open
+Those checkers are command-line tools. This app wraps them so you can open
 a publication and see a clear result — **Passed**, **Passed with warnings**, or
 **Failed** — without typing `java -jar` commands or reading a long console log
 first. `.ebrl` files use eBraille Checker; `.epub` files use stock EPUBCheck
 plus Ace by DAISY when available; `.pdf` files use veraPDF against the PDF/UA
 profile chosen in **Tools → Settings…** (default PDF/UA-2);
-exploded folders are classified automatically.
+`.html` / `.htm` / `.xhtml` files, HTML folders, and `http(s)` URLs use the
+Nu HTML Checker plus axe (same Chromium as Ace); exploded folders are
+classified automatically.
 
 Built with [wxPython](https://wxpython.org/) for native widgets and screen reader
 support on Windows, macOS, and Linux.
 
 ## Features
 
-- Open a packaged `.ebrl`, `.epub`, or `.pdf` file, or an exploded publication
+- Open a packaged `.ebrl`, `.epub`, or `.pdf` file, an HTML file or folder, an
+  `http(s)` URL (paste into Path and press Enter / F5), or an exploded publication
   folder (**Select file…** / **Select folder…**, or drag and drop) — checking
   starts automatically with the matching engine
 - For `.epub` files, EPUBCheck always runs; [Ace by DAISY](https://daisy.github.io/ace/)
@@ -26,6 +31,10 @@ support on Windows, macOS, and Linux.
   builds bundle Ace (with its own Node runtime and Chromium); otherwise a
   user-installed CLI is used (`ace-puppeteer` preferred, or `ace`). If Ace is
   not available, EPUBCheck-only behavior is unchanged
+- For HTML, CheckMate crawls the starting page plus same-site linked pages
+  (cap 25), then runs the [Nu HTML Checker](https://github.com/validator/validator)
+  and axe-core in Ace’s Chrome (Settings: Nu + axe, Nu only, or axe only).
+  Local files are served on `127.0.0.1` so axe is not limited by `file://`
 - On Windows, right-click an `.ebrl`, `.epub`, or `.pdf` → **Validate with
   CheckMate**, or **Open with** → CheckMate (does not change the
   double-click default)
@@ -38,8 +47,9 @@ support on Windows, macOS, and Linux.
   starts collapsed)
 - Filter issues (all / errors / warnings / info); optional **Show one example
   of each issue** to collapse repeated codes with counts
-- Filter by source (**EPUBCheck + Ace**, or either tool alone) when both ran
-  (Tools → Settings… chooses EPUBCheck + Ace by default, or either tool alone)
+- Filter by source (**EPUBCheck + Ace**, **Nu HTML Checker + axe**, or either
+  tool alone) when both ran
+  (Tools → Settings… chooses EPUBCheck + Ace / Nu + axe by default, or either tool alone)
 - Ace issue details show **Impact** (critical / serious / moderate / minor) and
   **Ruleset** (e.g. WCAG 2.0 A, EPUB, Best Practice), matching the Ace app
 - Optional full checker log for advanced diagnosis
@@ -54,7 +64,7 @@ support on Windows, macOS, and Linux.
   priorities, and next steps based on the unique issue codes (not a full file
   dump). View, save, or copy the result like other AI replies. Toggle under
   **Tools → Settings…** (hidden when FIDO AI is unavailable).
-- **Alt text** (packaged EPUB / eBraille / PDF after a check): **Alt text**
+- **Alt text** (packaged EPUB / eBraille / PDF, or HTML after a check): **Alt text**
   button after AI overview opens an in-app inventory of images and alt text
   (CheckMate-branded export, cached on disk per publication). From that report, optional
   **Run AI Image Sniff Test…** samples images with vision and synthesizes
@@ -64,7 +74,7 @@ support on Windows, macOS, and Linux.
   MathML), low-resolution rasters that fail under magnification, likely wrong
   orientation, joined/multi-panel figures, alt that repeats nearby prose,
   language mismatch, and spelling or grammar. Guidance is format-specific
-  (PDF vs EPUB vs eBraille). The HTML report can be filtered, searched, and
+  (PDF vs EPUB vs eBraille vs HTML). The HTML report can be filtered, searched, and
   sorted, and names the model in the disclaimer. PDF image previews follow
   on-page crop and rotation. Several images are assessed in parallel (eight
   at a time by default; fewer after a rate limit); the
@@ -387,7 +397,11 @@ checkmate/
     accessibility.py   # Screen-reader speak helpers (accessible-output2)
     checker.py         # Run jar, parse JSON results
     cover_image.py     # EPUB cover / PDF first-page for HTML reports
-    publication.py     # Classify .ebrl / .epub / .pdf / exploded folders
+    publication.py     # Classify .ebrl / .epub / .pdf / HTML / exploded folders
+    html_crawl.py      # Same-site HTML crawl + localhost static server
+    html_check.py      # Nu HTML Checker + axe orchestration
+    vnu_check.py       # vnu.jar JSON → issues
+    axe_html.py        # Puppeteer axe runner for HTML pages
     epub_package.py    # Extract / rebuild .epub/.ebrl (Fix with AI apply)
     updater.py         # Tool download / update (GitHub + veraPDF installer)
     java_util.py       # Locate Java (bundled or PATH)
@@ -410,6 +424,9 @@ checkmate/
     jre_bundle.py            # Download Temurin JRE into runtime/
     checker_bundle.py        # Download eBraille Checker into checker/
     epubcheck_bundle.py      # Download EPUBCheck into epubcheck/
+    vnu_bundle.py            # Download Nu HTML Checker (vnu.jar) into vnu/
+    ace_bundle.py            # Download Node + Ace (Puppeteer) + Chrome
+    axe_html_runner.js       # Puppeteer axe + image inventory for HTML pages
     verapdf_bundle.py        # Download/install veraPDF into verapdf/
     build_installer.ps1      # Windows: package + Inno Setup compile + Authenticode
     build_macos.sh           # macOS: package .app + zip
@@ -537,6 +554,11 @@ Certification Kit and the USB signing token (one PIN prompt). Skip with
 `-SkipSign` or `CHECKMATE_SKIP_INSTALLER_SIGN=1`. Override the tool or TSA
 with `CHECKMATE_SIGNTOOL` / `CHECKMATE_SIGN_TIMESTAMP_URL`.
 
+After a successful sign (or `-SkipSign`), the script also copies
+`CheckMate-*-setup.exe` to the shared **development builds** folder
+(the same DAISY path as Fido). Override with `CHECKMATE_DEV_BUILDS_DIR`,
+or skip with `CHECKMATE_SKIP_DEV_BUILDS_COPY=1`.
+
 The installer:
 
 - Ships the full onedir tree (GUI + Temurin JRE 17 + eBraille Checker +
@@ -646,6 +668,8 @@ local testing. Sample publications are **not** included in the repository. See
 - PDF/UA checking is performed by [veraPDF](https://verapdf.org/).
 - When the [Ace by DAISY](https://daisy.github.io/ace/) CLI is installed, EPUB
   accessibility checks are merged with EPUBCheck results.
+- HTML validity is checked with the [Nu HTML Checker](https://github.com/validator/validator)
+  (`vnu.jar`, MIT). HTML accessibility uses axe-core in Ace’s bundled Chromium.
 - PDF first-page previews in HTML reports use
   [PyMuPDF](https://pymupdf.readthedocs.io/) (`fitz`).
 - Learn about the [eBraille standard](https://daisy.org/activities/standards/ebraille/)
@@ -656,8 +680,10 @@ local testing. Sample publications are **not** included in the repository. See
 
 This project (CheckMate) is released under the [MIT License](LICENSE).
 
-The eBraille Checker, EPUBCheck, and veraPDF tools downloaded at runtime remain
-under their own licenses; see the
+The eBraille Checker, EPUBCheck, veraPDF, Nu HTML Checker, and Ace/axe tools
+downloaded at runtime remain under their own licenses; see the
 [eBraille Checker](https://github.com/daisy/ebraille-checker),
-[EPUBCheck](https://github.com/w3c/epubcheck), and
-[veraPDF](https://verapdf.org/) projects.
+[EPUBCheck](https://github.com/w3c/epubcheck),
+[veraPDF](https://verapdf.org/),
+[Nu HTML Checker](https://github.com/validator/validator), and
+[Ace by DAISY](https://github.com/daisy/ace) projects.

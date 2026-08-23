@@ -1,4 +1,4 @@
-"""Build a Fido-style alt-text export folder from EPUB/PDF/eBraille."""
+"""Build a Fido-style alt-text export folder from EPUB/PDF/eBraille/HTML."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ _SUPPORTED = {".epub", ".ebrl", ".pdf"}
 
 # Bump when preview extraction or export layout changes so stale folders
 # are not reused after an upgrade (any packaged format).
-CACHE_FORMAT = 6
+CACHE_FORMAT = 7
 _MANIFEST_NAME = "export_manifest.json"
 _INDEX_NAME = "index.json"
 _MAX_CACHED_PUBLICATIONS = 12
@@ -31,6 +31,7 @@ class _PubFingerprint:
     resolved: str
     mtime_ns: int
     size: int
+    extra: str = ""
 
 
 @dataclass
@@ -47,8 +48,33 @@ _INDEX_LOADED = False
 
 
 def supports_alt_export_path(path: Path | str) -> bool:
-    p = Path(path)
-    return p.is_file() and p.suffix.lower() in _SUPPORTED
+    from checkmate.doc_images.html import path_is_html_source
+    from checkmate.publication import is_html_url
+
+    text = str(path).strip().strip('"')
+    if not text:
+        return False
+    if is_html_url(text) or path_is_html_source(text):
+        return True
+    try:
+        p = Path(text)
+        return p.is_file() and p.suffix.lower() in _SUPPORTED
+    except OSError:
+        return False
+
+
+def _html_cache_extra(text: str) -> str:
+    try:
+        from checkmate.html_check import last_html_session
+
+        session = last_html_session()
+    except Exception:
+        return ""
+    if session is None:
+        return ""
+    if session.target.strip().strip('"') != text:
+        return ""
+    return f"{session.crawl_cap}:{session.page_hash}"
 
 
 def alt_export_cache_dir() -> Path:
@@ -64,13 +90,20 @@ def _index_path() -> Path:
     return alt_export_cache_dir() / _INDEX_NAME
 
 
-def _fingerprint(path: Path) -> _PubFingerprint:
-    resolved = path.expanduser().resolve()
+def _fingerprint(path: Path | str) -> _PubFingerprint:
+    from checkmate.publication import is_html_url
+
+    text = str(path).strip().strip('"')
+    extra = _html_cache_extra(text)
+    if is_html_url(text):
+        return _PubFingerprint(resolved=text, mtime_ns=0, size=0, extra=extra)
+    resolved = Path(text).expanduser().resolve()
     st = resolved.stat()
     return _PubFingerprint(
         resolved=str(resolved),
         mtime_ns=int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000))),
         size=int(st.st_size),
+        extra=extra,
     )
 
 
@@ -97,6 +130,7 @@ def write_export_manifest(folder: Path, fingerprint: _PubFingerprint) -> None:
             "source": fingerprint.resolved,
             "mtime_ns": fingerprint.mtime_ns,
             "size": fingerprint.size,
+            "extra": fingerprint.extra,
         },
     )
 
@@ -144,6 +178,7 @@ def _entry_from_index_payload(payload: dict[str, Any]) -> _CachedExport | None:
             resolved=str(payload.get("resolved") or ""),
             mtime_ns=int(payload.get("mtime_ns") or 0),
             size=int(payload.get("size") or 0),
+            extra=str(payload.get("extra") or ""),
         )
         fmt = int(payload.get("format") or 0)
         saved_at = float(payload.get("saved_at") or 0.0)
@@ -201,6 +236,7 @@ def _save_index() -> None:
             "resolved": entry.fingerprint.resolved,
             "mtime_ns": entry.fingerprint.mtime_ns,
             "size": entry.fingerprint.size,
+            "extra": entry.fingerprint.extra,
             "export_path": str(entry.export_path),
             "format": entry.format,
             "saved_at": entry.saved_at,
@@ -242,11 +278,10 @@ def _evict_oldest_if_needed() -> None:
 
 def get_cached_alt_export(path: Path | str) -> Path | None:
     """Return a prior export folder for *path* if the file is unchanged."""
-    src = Path(path)
-    if not supports_alt_export_path(src):
+    if not supports_alt_export_path(path):
         return None
     try:
-        fp = _fingerprint(src)
+        fp = _fingerprint(path)
     except OSError:
         return None
     _ensure_index_loaded()
@@ -266,13 +301,11 @@ def get_cached_alt_export(path: Path | str) -> Path | None:
 
 def remember_alt_export(path: Path | str, export_path: Path | str) -> None:
     """Record *export_path* as the current export for *path* (memory + disk)."""
-    src = Path(path)
-    out = Path(export_path)
-    if not supports_alt_export_path(src):
+    if not supports_alt_export_path(path):
         return
     try:
-        fp = _fingerprint(src)
-        out = out.expanduser().resolve()
+        fp = _fingerprint(path)
+        out = Path(export_path).expanduser().resolve()
     except OSError:
         return
     try:
@@ -318,7 +351,10 @@ def clear_alt_export_cache(path: Path | str | None = None) -> None:
         _save_index()
         return
     try:
-        key = str(Path(path).expanduser().resolve())
+        from checkmate.publication import is_html_url
+
+        text = str(path).strip().strip('"')
+        key = text if is_html_url(text) else str(Path(text).expanduser().resolve())
     except OSError:
         return
     _EXPORT_CACHE.pop(key, None)
@@ -334,16 +370,17 @@ def build_alt_export_from_document(
     write_html: bool = True,
     use_cache: bool = True,
 ) -> AltTextExportResult:
-    """Export images + CSV (+ HTML) from a packaged publication.
+    """Export images + CSV (+ HTML) from a packaged publication or HTML source.
 
     Writes under *dest_parent* (default: app-data ``alt_exports``).
     When *use_cache* is True and a matching prior export still exists, returns
     that folder without re-extracting.
     """
-    src = Path(path)
+    src = str(path).strip().strip('"')
     if not supports_alt_export_path(src):
         raise ValueError(
-            f"Alt-text export needs a packaged .epub, .ebrl, or .pdf (got {src.suffix!r})."
+            "Alt-text export needs a packaged .epub, .ebrl, or .pdf, "
+            f"or an HTML file/folder/URL (got {src!r})."
         )
 
     if use_cache:

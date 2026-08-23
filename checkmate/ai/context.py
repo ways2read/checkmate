@@ -495,6 +495,11 @@ def gather_issue_context(
     if result and result.tool_name:
         ctx["tool"] = f"{result.tool_name} {result.tool_version or ''}".strip()
 
+    if result is not None and result.html_pages:
+        ctx["publication_kind"] = PublicationKind.HTML.value
+        if result.target_path:
+            ctx["target_path"] = result.target_path
+
     if path is not None and path.exists():
         ctx["target_path"] = str(path)
         kind_val = ""

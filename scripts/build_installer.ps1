@@ -14,6 +14,10 @@
 #   CHECKMATE_SIGNTOOL               — full path to signtool.exe
 #                                      (default: Windows Kits App Certification Kit)
 #   CHECKMATE_SIGN_TIMESTAMP_URL     — RFC 3161 TSA (default: GlobalSign r6 advanced)
+# Development builds copy (same folder as Fido DEV_BUILDS_DIR), after Output:
+#   CHECKMATE_DEV_BUILDS_DIR         — destination folder
+#                                      (default: D:\DAISY Consortium\Shared Projects - Documents\Exploring AI\Experimentation app\development builds)
+#   CHECKMATE_SKIP_DEV_BUILDS_COPY=1 — do not copy to that folder
 
 [CmdletBinding()]
 param(
@@ -147,6 +151,30 @@ finally {
 $setup = Get-ChildItem $outputDir -Filter "CheckMate-*-setup.exe" |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
+
+# Copy signed (or skip-signed) setup to the shared DAISY development builds folder.
+if ($env:CHECKMATE_SKIP_DEV_BUILDS_COPY -eq "1") {
+    Write-Host "Skipping development-builds copy (CHECKMATE_SKIP_DEV_BUILDS_COPY=1)" -ForegroundColor Yellow
+}
+elseif (-not $setup) {
+    Write-Error "Cannot copy to development builds: CheckMate-*-setup.exe not found in $outputDir"
+}
+else {
+    $devBuildsDir = $env:CHECKMATE_DEV_BUILDS_DIR
+    if (-not $devBuildsDir) {
+        $devBuildsDir = "D:\DAISY Consortium\Shared Projects - Documents\Exploring AI\Experimentation app\development builds"
+    }
+    if (-not (Test-Path -LiteralPath $devBuildsDir)) {
+        New-Item -ItemType Directory -Force -Path $devBuildsDir | Out-Null
+    }
+    try {
+        Copy-Item -LiteralPath $setup.FullName -Destination $devBuildsDir -Force -ErrorAction Stop
+    }
+    catch {
+        Write-Error "Failed to copy installer to `"$devBuildsDir`": $_"
+    }
+    Write-Host "Copied installer to: $devBuildsDir"
+}
 
 Write-Host ""
 Write-Host "Installer build complete." -ForegroundColor Green

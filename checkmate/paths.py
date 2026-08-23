@@ -40,6 +40,7 @@ BUNDLED_CHECKER_DIRNAME = "checker"
 BUNDLED_EPUBCHECK_DIRNAME = "epubcheck"
 BUNDLED_VERAPDF_DIRNAME = "verapdf"
 BUNDLED_ACE_DIRNAME = "ace"
+BUNDLED_VNU_DIRNAME = "vnu"
 BUNDLED_VERSION_FILE = "bundled_version.txt"
 BUNDLED_CHECKER_VERSION_FILE = BUNDLED_VERSION_FILE
 
@@ -76,6 +77,10 @@ def bundled_verapdf_dir() -> Path:
 
 def bundled_ace_dir() -> Path:
     return application_dir() / BUNDLED_ACE_DIRNAME
+
+
+def bundled_vnu_dir() -> Path:
+    return application_dir() / BUNDLED_VNU_DIRNAME
 
 
 def images_dir() -> Path:
@@ -140,6 +145,12 @@ def verapdf_dir() -> Path:
     return path
 
 
+def vnu_dir() -> Path:
+    path = app_data_dir() / "vnu"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def kb_dir() -> Path:
     """On-demand offline DAISY Publishing Knowledge Base mirror."""
     path = app_data_dir() / "kb"
@@ -157,6 +168,14 @@ def epubcheck_version_file() -> Path:
 
 def verapdf_version_file() -> Path:
     return verapdf_dir() / "installed_version.txt"
+
+
+def vnu_version_file() -> Path:
+    return vnu_dir() / "installed_version.txt"
+
+
+def bundled_vnu_version_file() -> Path:
+    return bundled_vnu_dir() / BUNDLED_VERSION_FILE
 
 
 def bundled_version_file() -> Path:
@@ -300,3 +319,27 @@ def verapdf_uses_bundled_copy() -> bool:
     return (
         find_app_data_verapdf_jar() is None and find_bundled_verapdf_jar() is not None
     )
+
+
+def find_vnu_jar_in_tree(root: Path) -> Path | None:
+    return _find_jar_in_tree(
+        root,
+        preferred_names=("vnu.jar",),
+        name_pattern=r"^vnu",
+    )
+
+
+def find_app_data_vnu_jar() -> Path | None:
+    return find_vnu_jar_in_tree(vnu_dir())
+
+
+def find_bundled_vnu_jar() -> Path | None:
+    return find_vnu_jar_in_tree(bundled_vnu_dir())
+
+
+def find_vnu_jar() -> Path | None:
+    return find_app_data_vnu_jar() or find_bundled_vnu_jar()
+
+
+def vnu_uses_bundled_copy() -> bool:
+    return find_app_data_vnu_jar() is None and find_bundled_vnu_jar() is not None

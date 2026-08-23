@@ -1,0 +1,531 @@
+"""HTML classification, crawl, Nu/axe JSON mapping, and alt-text export."""
+
+from __future__ import annotations
+
+import csv
+import ssl
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+from urllib.error import URLError
+
+from checkmate.axe_html import issues_from_axe_results, parse_axe_runner_output
+from checkmate.doc_images.export import export_document_alt_text
+from checkmate.doc_images.html import collect_image_records_from_html, materialize_image
+from checkmate.html_check import merge_vnu_and_axe, run_html_check
+from checkmate.html_crawl import (
+    DEFAULT_CRAWL_CAP,
+    LocalHtmlServer,
+    crawl_html_pages,
+    https_to_http_url,
+    is_tls_handshake_failure,
+    local_start_url,
+    pages_for_html_check,
+    prefer_working_page_url,
+    should_follow_href,
+)
+from checkmate.models import CheckResult, Severity, Verdict
+from checkmate.publication import (
+    PublicationKind,
+    classify_publication,
+    classify_target,
+    is_checkable_target,
+    is_html_url,
+)
+from checkmate.report_export import report_title
+from checkmate.vnu_check import issues_from_vnu_json, severity_from_vnu_message
+from checkmate import settings as settings_mod
+
+
+class ClassifyHtmlTests(unittest.TestCase):
+    def test_html_url(self) -> None:
+        self.assertTrue(is_html_url("https://example.com/page"))
+        self.assertTrue(is_html_url("http://127.0.0.1:8080/index.html"))
+        self.assertFalse(is_html_url("ftp://example.com/a"))
+        self.assertFalse(is_html_url(r"C:\docs\page.html"))
+        self.assertEqual(
+            classify_target("https://example.org/a.html"), PublicationKind.HTML
+        )
+        self.assertTrue(is_checkable_target("https://example.org/a.html"))
+
+    def test_html_file_and_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            page = root / "index.html"
+            page.write_text("<html><body>Hi</body></html>", encoding="utf-8")
+            nested = root / "sub"
+            nested.mkdir()
+            (nested / "other.htm").write_text("<p>x</p>", encoding="utf-8")
+            self.assertEqual(classify_publication(page), PublicationKind.HTML)
+            self.assertEqual(classify_publication(root), PublicationKind.HTML)
+            self.assertEqual(classify_target(str(page)), PublicationKind.HTML)
+            empty = root / "empty"
+            empty.mkdir()
+            self.assertEqual(classify_publication(empty), PublicationKind.UNSUPPORTED)
+
+    def test_daisy_folder_not_stolen_as_html(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "ncc.html").write_text("<html></html>", encoding="utf-8")
+            self.assertEqual(classify_publication(root), PublicationKind.DAISY202)
+
+
+class CrawlTests(unittest.TestCase):
+    def test_skips_mailto_and_binaries(self) -> None:
+        base = "http://example.com/a.html"
+        self.assertIsNone(should_follow_href(base, "mailto:x@y.z"))
+        self.assertIsNone(should_follow_href(base, "javascript:void(0)"))
+        self.assertIsNone(should_follow_href(base, "photo.png"))
+        self.assertIsNone(should_follow_href(base, "https://other.example/x"))
+        self.assertEqual(
+            should_follow_href(base, "b.html"),
+            "http://example.com/b.html",
+        )
+        self.assertEqual(
+            should_follow_href(base, "#frag"),
+            None,
+        )
+
+    def test_crawl_cap_and_same_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "start.html").write_text(
+                '<a href="a.html">A</a><a href="b.html">B</a>'
+                '<a href="https://example.com/off">off</a>',
+                encoding="utf-8",
+            )
+            (root / "a.html").write_text(
+                '<a href="c.html">C</a><a href="start.html">back</a>',
+                encoding="utf-8",
+            )
+            (root / "b.html").write_text("<p>b</p>", encoding="utf-8")
+            (root / "c.html").write_text("<p>c</p>", encoding="utf-8")
+            with LocalHtmlServer(root) as server:
+                start = local_start_url(root / "start.html", server.origin)
+                pages = crawl_html_pages(start, cap=3, local_root=root)
+            self.assertEqual(len(pages), 3)
+            self.assertTrue(pages[0].endswith("/start.html"))
+            self.assertLessEqual(len(pages), DEFAULT_CRAWL_CAP)
+            for url in pages:
+                self.assertTrue(url.startswith(server.origin))
+
+    def test_follow_links_off_is_start_page_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "start.html").write_text(
+                '<a href="a.html">A</a>', encoding="utf-8"
+            )
+            (root / "a.html").write_text("<p>a</p>", encoding="utf-8")
+            with LocalHtmlServer(root) as server:
+                start = local_start_url(root / "start.html", server.origin)
+                pages = pages_for_html_check(
+                    start, follow_links=False, cap=25, local_root=root
+                )
+            self.assertEqual(len(pages), 1)
+            self.assertTrue(pages[0].endswith("/start.html"))
+
+
+class VnuMapperTests(unittest.TestCase):
+    def test_severity_and_location(self) -> None:
+        self.assertEqual(
+            severity_from_vnu_message({"type": "error"}), Severity.ERROR
+        )
+        self.assertEqual(
+            severity_from_vnu_message({"type": "info", "subtype": "warning"}),
+            Severity.WARNING,
+        )
+        self.assertEqual(
+            severity_from_vnu_message({"type": "info"}), Severity.INFO
+        )
+        data = {
+            "messages": [
+                {
+                    "type": "error",
+                    "lastLine": 4,
+                    "lastColumn": 12,
+                    "message": "Start tag seen without seeing a doctype first.",
+                    "url": "http://127.0.0.1:9/x.html",
+                    "extract": "<html>",
+                },
+                {
+                    "type": "info",
+                    "subtype": "warning",
+                    "lastLine": 8,
+                    "lastColumn": 1,
+                    "message": "Consider adding a lang attribute.",
+                    "url": "http://127.0.0.1:9/x.html",
+                },
+            ]
+        }
+        issues = issues_from_vnu_json(data)
+        self.assertEqual(len(issues), 2)
+        self.assertEqual(issues[0].source, "Nu HTML Checker")
+        self.assertEqual(issues[0].severity, Severity.ERROR)
+        self.assertIn("4:12", issues[0].location)
+        self.assertEqual(issues[1].severity, Severity.WARNING)
+
+
+class AxeMapperTests(unittest.TestCase):
+    def test_violations_and_incomplete(self) -> None:
+        axe = {
+            "violations": [
+                {
+                    "id": "image-alt",
+                    "impact": "critical",
+                    "help": "Images must have alternate text",
+                    "helpUrl": "https://dequeuniversity.com/rules/axe/4.8/image-alt",
+                    "tags": ["wcag2a", "wcag111", "cat.text-alternatives"],
+                    "nodes": [
+                        {
+                            "html": '<img src="x.png">',
+                            "target": ["img"],
+                            "any": [{"message": "Element has no alt"}],
+                        }
+                    ],
+                }
+            ],
+            "incomplete": [
+                {
+                    "id": "color-contrast",
+                    "impact": "serious",
+                    "help": "Elements must have sufficient color contrast",
+                    "tags": ["wcag2aa"],
+                    "nodes": [{"target": [".btn"]}],
+                }
+            ],
+        }
+        issues = issues_from_axe_results(axe, page_url="http://example.com/p")
+        self.assertEqual(len(issues), 2)
+        self.assertEqual(issues[0].code, "image-alt")
+        self.assertEqual(issues[0].source, "axe")
+        self.assertEqual(issues[0].severity, Severity.ERROR)
+        self.assertEqual(issues[0].impact, "critical")
+        self.assertIn("WCAG 2.0 A", issues[0].ruleset)
+        self.assertIn("http://example.com/p", issues[0].location)
+        self.assertEqual(
+            issues[0].help_url,
+            "https://dequeuniversity.com/rules/axe/4.8/image-alt",
+        )
+        self.assertEqual(issues[0].help_title, "Images must have alternate text")
+        self.assertEqual(issues[1].severity, Severity.INFO)
+        self.assertTrue(issues[1].message.startswith("Needs review:"))
+
+    def test_runner_output_collects_images(self) -> None:
+        data = {
+            "pages": [
+                {
+                    "url": "http://example.com/p",
+                    "axe": {"violations": [], "incomplete": []},
+                    "images": [
+                        {
+                            "kind": "img",
+                            "src": "http://example.com/logo.png",
+                            "alt": "",
+                            "altPresent": True,
+                            "decorative": True,
+                            "selector": "img",
+                        }
+                    ],
+                }
+            ]
+        }
+        issues, images = parse_axe_runner_output(data)
+        self.assertEqual(issues, [])
+        self.assertEqual(len(images), 1)
+        self.assertEqual(images[0]["pageUrl"], "http://example.com/p")
+
+    def test_ssl_protocol_error_explains_http_fallback(self) -> None:
+        data = {
+            "pages": [
+                {
+                    "url": "https://daisy.org.uk",
+                    "error": "net::ERR_SSL_PROTOCOL_ERROR at https://daisy.org.uk",
+                }
+            ]
+        }
+        issues, _images = parse_axe_runner_output(data)
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "axe-error")
+        self.assertIn("TLS handshake", issues[0].message)
+        self.assertIn("http://daisy.org.uk", issues[0].message)
+
+
+class HttpsFallbackTests(unittest.TestCase):
+    def test_https_to_http_url(self) -> None:
+        self.assertEqual(
+            https_to_http_url("https://daisy.org.uk/path?q=1"),
+            "http://daisy.org.uk/path?q=1",
+        )
+        self.assertEqual(https_to_http_url("http://daisy.org.uk/"), "")
+
+    def test_tls_handshake_failure_detects_ssl_error(self) -> None:
+        wrapped = URLError(
+            ssl.SSLError("[SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error")
+        )
+        self.assertTrue(is_tls_handshake_failure(wrapped))
+        self.assertFalse(is_tls_handshake_failure(URLError("timed out")))
+
+    def test_http_and_localhost_unchanged(self) -> None:
+        url, note = prefer_working_page_url("http://daisy.org.uk/")
+        self.assertEqual(url, "http://daisy.org.uk/")
+        self.assertEqual(note, "")
+        url, note = prefer_working_page_url("https://127.0.0.1:8443/x")
+        self.assertEqual(url, "https://127.0.0.1:8443/x")
+        self.assertEqual(note, "")
+
+    def test_tls_failure_falls_back_when_http_works(self) -> None:
+        ssl_err = URLError(
+            ssl.SSLError("[SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error")
+        )
+
+        def probe(url: str, **_kwargs) -> None:
+            if url.startswith("https://"):
+                raise ssl_err
+
+        with mock.patch("checkmate.html_crawl._probe_url", side_effect=probe):
+            url, note = prefer_working_page_url("https://daisy.org.uk/")
+        self.assertEqual(url, "http://daisy.org.uk/")
+        self.assertIn("TLS handshake failed", note)
+        self.assertIn("http://daisy.org.uk/", note)
+
+    def test_keeps_https_when_http_also_fails(self) -> None:
+        ssl_err = URLError(
+            ssl.SSLError("[SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error")
+        )
+
+        def probe(_url: str, **_kwargs) -> None:
+            raise ssl_err
+
+        with mock.patch("checkmate.html_crawl._probe_url", side_effect=probe):
+            url, note = prefer_working_page_url("https://example.com/")
+        self.assertEqual(url, "https://example.com/")
+        self.assertEqual(note, "")
+
+    def test_non_tls_error_keeps_https(self) -> None:
+        def probe(_url: str, **_kwargs) -> None:
+            raise URLError("timed out")
+
+        with mock.patch("checkmate.html_crawl._probe_url", side_effect=probe):
+            url, note = prefer_working_page_url("https://example.com/")
+        self.assertEqual(url, "https://example.com/")
+        self.assertEqual(note, "")
+
+
+class MergeAndReportTests(unittest.TestCase):
+    def test_merge_sets_tool_name_and_pages(self) -> None:
+        vnu = CheckResult(
+            verdict=Verdict.FAILED,
+            errors=1,
+            issues=issues_from_vnu_json(
+                {
+                    "messages": [
+                        {"type": "error", "message": "Bad markup", "lastLine": 1}
+                    ]
+                }
+            ),
+            tool_name="Nu HTML Checker",
+        )
+        from checkmate.models import Issue
+
+        axe = CheckResult(
+            verdict=Verdict.PASSED_WITH_WARNINGS,
+            warnings=1,
+            issues=[
+                Issue(
+                    severity=Severity.WARNING,
+                    code="label",
+                    message="Need a label",
+                    source="axe",
+                )
+            ],
+            tool_name="axe",
+        )
+        merged = merge_vnu_and_axe(
+            vnu,
+            axe,
+            target="https://example.com/",
+            pages=["https://example.com/", "https://example.com/a"],
+            images=[],
+        )
+        self.assertEqual(merged.tool_name, "Nu HTML Checker + axe")
+        self.assertEqual(merged.verdict, Verdict.FAILED)
+        self.assertEqual(len(merged.source_counts), 2)
+        self.assertEqual(len(merged.html_pages), 2)
+        self.assertEqual(report_title(merged), "Nu HTML Checker + axe report")
+        self.assertTrue(
+            any(line.startswith("Web page:") for line in merged.report_meta_lines())
+        )
+
+
+class HtmlAltExportTests(unittest.TestCase):
+    def test_img_records_to_csv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            png = root / "pic.png"
+            png.write_bytes(
+                bytes.fromhex(
+                    "89504e470d0a1a0a0000000d4948445200000001000000010806"
+                    "0000001f15c4890000000a49444154789c63000100000500010d"
+                    "0a2db40000000049454e44ae426082"
+                )
+            )
+            page = root / "page.html"
+            page.write_text(
+                '<!DOCTYPE html><html lang="en"><body>'
+                f'<img src="pic.png" alt="A red pixel">'
+                '<img src="pic.png" alt="">'
+                "</body></html>",
+                encoding="utf-8",
+            )
+            dest = root / "export"
+            dest.mkdir()
+            result = export_document_alt_text(page, dest, write_html=False)
+            self.assertFalse(result.cancelled)
+            self.assertGreaterEqual(result.stats.get("total", 0), 2)
+            csv_path = result.csv_path
+            self.assertTrue(csv_path.is_file())
+            rows = list(csv.DictReader(csv_path.open(encoding="utf-8-sig")))
+            self.assertGreaterEqual(len(rows), 2)
+            formats = {row.get("Format", "") for row in rows}
+            self.assertIn("html", formats)
+            statuses = {row.get("Status", "") for row in rows}
+            self.assertTrue(any("Alt" in s or "alt" in s.lower() for s in statuses))
+            self.assertTrue(any("Decorative" in s for s in statuses))
+            contexts = " ".join(row.get("Context", "") for row in rows)
+            self.assertIn("Page:", contexts)
+
+
+class HtmlImageParseTests(unittest.TestCase):
+    def test_nearby_text_figcaption_and_srcset(self) -> None:
+        html = """
+        <!DOCTYPE html><html lang="en"><body>
+        <p>Before the photo.</p>
+        <figure>
+          <img srcset="hero.png 1x, hero-2x.png 2x" alt="Hero">
+          <figcaption>A caption here</figcaption>
+        </figure>
+        <p>After the photo.</p>
+        <img data-src="lazy.jpg" alt="Lazy">
+        </body></html>
+        """
+        recs = collect_image_records_from_html(html, "https://example.com/p.html")
+        self.assertGreaterEqual(len(recs), 2)
+        hero = recs[0]
+        self.assertTrue(hero["src"].endswith("hero.png"))
+        self.assertEqual(hero["figcaption"], "A caption here")
+        nearby = hero["nearbyText"]
+        self.assertIn("Before the photo", nearby)
+        self.assertIn("After the photo", nearby)
+        self.assertIn("A caption here", nearby)
+        lazy = recs[1]
+        self.assertTrue(lazy["src"].endswith("lazy.jpg"))
+
+    def test_materialize_inline_svg_markup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp)
+            path, note = materialize_image(
+                {
+                    "kind": "svg",
+                    "src": "",
+                    "svgMarkup": '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+                },
+                dest,
+                0,
+            )
+            self.assertEqual(note, "")
+            self.assertTrue(path.endswith(".svg"))
+            self.assertTrue(Path(path).is_file())
+
+
+class HtmlSettingsTests(unittest.TestCase):
+    def test_defaults_to_both(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            with mock.patch.object(settings_mod, "settings_path", return_value=path):
+                self.assertEqual(settings_mod.html_checkers(), "both")
+                self.assertFalse(settings_mod.html_follow_links())
+                settings_mod.update_settings(html_checkers="vnu")
+                self.assertEqual(settings_mod.html_checkers(), "vnu")
+                settings_mod.update_settings(html_checkers="axe")
+                self.assertEqual(settings_mod.html_checkers(), "axe")
+                settings_mod.update_settings(html_checkers="nope")
+                self.assertEqual(settings_mod.html_checkers(), "both")
+                settings_mod.update_settings(html_follow_links=True)
+                self.assertTrue(settings_mod.html_follow_links())
+
+
+class RunHtmlCheckAxeTests(unittest.TestCase):
+    def test_both_mode_runs_axe_even_if_preflight_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            page = Path(tmp) / "x.html"
+            page.write_text(
+                "<!DOCTYPE html><html><body><p>hi</p></body></html>",
+                encoding="utf-8",
+            )
+            fake_vnu = CheckResult(verdict=Verdict.PASSED, tool_name="Nu HTML Checker")
+            fake_axe = CheckResult(verdict=Verdict.PASSED, tool_name="axe")
+            with (
+                mock.patch("checkmate.html_check.html_checkers", return_value="both"),
+                mock.patch(
+                    "checkmate.html_check.html_follow_links", return_value=False
+                ),
+                mock.patch(
+                    "checkmate.html_check.html_axe_available", return_value=False
+                ),
+                mock.patch(
+                    "checkmate.html_check.run_vnu_on_urls", return_value=fake_vnu
+                ),
+                mock.patch(
+                    "checkmate.html_check.run_axe_on_urls",
+                    return_value=(fake_axe, []),
+                ) as axe_run,
+            ):
+                result = run_html_check(str(page))
+            axe_run.assert_called_once()
+            self.assertEqual(result.tool_name, "Nu HTML Checker + axe")
+            self.assertEqual(len(result.html_pages), 1)
+
+
+class AcePackageRootTests(unittest.TestCase):
+    def test_resolves_npm_global_ace_next_to_cmd(self) -> None:
+        from checkmate.ace_check import ace_package_from_cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            prefix = Path(tmp)
+            ace_pkg = prefix / "node_modules" / "@daisy" / "ace"
+            (ace_pkg / "node_modules" / "puppeteer").mkdir(parents=True)
+            (ace_pkg / "bin").mkdir(parents=True)
+            (ace_pkg / "bin" / "ace-puppeteer.js").write_text(
+                "// shim", encoding="utf-8"
+            )
+            cmd = prefix / "ace-puppeteer.cmd"
+            cmd.write_text(
+                r'"%_prog%" "%dp0%\node_modules\@daisy\ace\bin\ace-puppeteer.js" %*',
+                encoding="utf-8",
+            )
+            resolved = ace_package_from_cli(cmd)
+            self.assertIsNotNone(resolved)
+            self.assertEqual(resolved.resolve(), ace_pkg.resolve())
+
+    def test_system_chrome_is_a_real_file_when_present(self) -> None:
+        from checkmate.axe_html import find_system_chrome
+
+        found = find_system_chrome()
+        if found is None:
+            return
+        self.assertTrue(found.is_file())
+        self.assertIn("chrome", found.name.lower())
+
+    def test_ignores_system_nodejs_dir(self) -> None:
+        from checkmate.ace_check import ace_package_from_cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            nodejs = Path(tmp) / "nodejs"
+            nodejs.mkdir()
+            (nodejs / "node.exe").write_bytes(b"")
+            self.assertIsNone(ace_package_from_cli(nodejs / "node.exe"))
+
+
+if __name__ == "__main__":
+    unittest.main()

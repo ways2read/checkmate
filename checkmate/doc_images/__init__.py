@@ -26,6 +26,7 @@ from checkmate.doc_images.export import (
     export_document_alt_text,
     open_document_backend,
 )
+from checkmate.doc_images.html import HtmlOnDiscBackend
 from checkmate.doc_images.pdf import PdfOnDiscBackend
 
 __all__ = [
@@ -44,6 +45,7 @@ __all__ = [
     "DEFAULT_CAPABILITIES",
     "DocumentImageBackend",
     "EpubOnDiscBackend",
+    "HtmlOnDiscBackend",
     "PdfOnDiscBackend",
     "export_alt_text_report",
     "export_document_alt_text",

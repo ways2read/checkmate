@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from checkmate.ai.litellm_client import cost_and_usage_from_response
 
@@ -36,6 +37,27 @@ class CostAndUsageTests(unittest.TestCase):
         self.assertTrue(
             metrics["cost_usd"] is None or isinstance(metrics["cost_usd"], float)
         )
+
+    def test_unmapped_model_cost_does_not_raise(self) -> None:
+        def boom(**_kwargs):
+            raise Exception(
+                "This model isn't mapped yet. Add it here - "
+                "https://github.com/BerriAI/litellm/blob/main/"
+                "model_prices_and_context_window.json"
+            )
+
+        response = SimpleNamespace(
+            usage=_FakeUsage(10, 5),
+            _hidden_params={},
+        )
+        with mock.patch(
+            "checkmate.ai.litellm_client._get_litellm"
+        ) as get_mod:
+            get_mod.return_value = SimpleNamespace(completion_cost=boom)
+            metrics = cost_and_usage_from_response(response)
+        self.assertIsNone(metrics["cost_usd"])
+        self.assertEqual(metrics["prompt_tokens"], 10)
+        self.assertEqual(metrics["completion_tokens"], 5)
 
     def test_none_response(self) -> None:
         metrics = cost_and_usage_from_response(None)

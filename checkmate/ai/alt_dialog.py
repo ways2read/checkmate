@@ -17,7 +17,12 @@ import wx.lib.newevent
 from ..i18n import _
 from .alt_assess import AltAssessResult, ask_alt_assess_followup
 from .alt_labels import FEATURE_FILENAME_STEM, feature_html_basenames, feature_title
-from .alt_report import assessment_markdown_export, build_assessment_html
+from .alt_report import (
+    assessment_markdown_export,
+    build_assessment_html,
+    followup_inject_script,
+    followup_section_inner_html,
+)
 from .alt_sample import assess_more_choice_labels
 from .explain import ExplainResult, error_message_for_key
 from .litellm_client import ai_libraries_status_message
@@ -26,6 +31,7 @@ from .markdown_html import (
     append_followup_markdown,
     followup_markdown_suffix,
     merge_followup_suffix,
+    split_followup_markdown,
 )
 
 logger = logging.getLogger(__name__)
@@ -129,11 +135,23 @@ class AltSniffTestMixin:
         self._sniff_result = result
         self._sniff_session = result.session
         self._sniff_synthesis_md = merge_followup_suffix(result.text or "", suffix)
+        self._sniff_result.text = self._sniff_synthesis_md
         self._set_sniff_busy(False)
         self._select_page(self._PAGE_SNIFF)
         self._realize_sniff_view()
-        self._sniff_paint(scroll_followup=False)
         self._sync_assess_more_enabled()
+        keep_followups = bool(suffix.strip())
+
+        def _paint() -> None:
+            if not self._alive() or self._sniff_result is None:
+                return
+            self._sniff_persist_html()
+            self._sniff_paint(scroll_followup=keep_followups)
+            self._sniff_inject_followups(scroll=keep_followups)
+
+        wx.CallAfter(_paint)
+        self._call_later(200, lambda: self._sniff_inject_followups(scroll=keep_followups))
+        self._call_later(500, _paint)
 
     def _remaining_count(self) -> int:
         result = self._sniff_result
@@ -256,6 +274,35 @@ class AltSniffTestMixin:
             result, for_dialog=True, scroll_followup=scroll_followup
         )
 
+    def _sniff_persist_html(self) -> None:
+        """Write the current report beside the export (Save / View in browser)."""
+        result = self._sniff_result
+        if result is None or result.export is None or not result.export.folder:
+            return
+        html_doc = self._sniff_current_html(scroll_followup=False)
+        try:
+            canonical = Path(result.export.folder) / f"{FEATURE_FILENAME_STEM}.html"
+            canonical.write_text(html_doc, encoding="utf-8")
+        except OSError:
+            logger.exception("Could not write inspector HTML")
+
+    def _sniff_inject_followups(self, *, scroll: bool = True) -> bool:
+        """Patch Q&A into the live Edge document without navigating.
+
+        Full ``LoadURL`` after Ask / Assess more is often ignored while
+        ProgressDialog teardown is still running; the already-shown report
+        stays on screen unless we patch it in place.
+        """
+        if not self._alive() or not self._sniff_is_webview or self._sniff_view is None:
+            return False
+        _synth, follow_md = split_followup_markdown(self._sniff_synthesis_md)
+        if not follow_md.strip():
+            return False
+        script = followup_inject_script(
+            followup_section_inner_html(follow_md), scroll=scroll
+        )
+        return bool(self._main_mod()._webview_run_script(self._sniff_view, script))
+
     def _realize_sniff_view(self) -> None:
         if self._closing or self._sniff_view is not None:
             return
@@ -356,6 +403,7 @@ class AltSniffTestMixin:
                 self._sniff_reload_if_needed()
             return
         self._cleanup_stale_view_html()
+        self._sniff_inject_followups(scroll=self._sniff_scroll_followup)
         if self._sniff_scroll_followup:
             self._schedule_scroll_followup()
 
@@ -399,6 +447,8 @@ class AltSniffTestMixin:
         prev = self._sniff_html_tmp
         self._sniff_html_tmp = path
         self._sniff_load_retries = 0
+        # Keep the previously displayed file until Edge commits the new
+        # LoadURL — deleting it first leaves the old document on screen.
         if prev is not None and prev != path:
             self._sniff_html_tmp_prev.append(prev)
         uri = webview_file_uri(path)
@@ -853,16 +903,34 @@ class AltSniffTestMixin:
         )
         if self._sniff_result is not None:
             self._sniff_result.text = self._sniff_synthesis_md
-        self._realize_sniff_view()
-        self._sniff_paint(scroll_followup=True)
         if self.followup_ctrl is not None:
             self.followup_ctrl.SetValue("")
         self._set_sniff_busy(False)
-        try:
-            if self.followup_ctrl is not None:
-                self.followup_ctrl.SetFocus()
-        except RuntimeError:
-            pass
+        # Inject Q&A into the document already on screen. LoadURL of a new
+        # file:// copy is often a no-op while ProgressDialog is tearing down.
+
+        def _inject() -> None:
+            if not self._alive():
+                return
+            self._realize_sniff_view()
+            if self._sniff_view is None:
+                return
+            self._sniff_persist_html()
+            self._sniff_inject_followups(scroll=True)
+            try:
+                if self.followup_ctrl is not None:
+                    self.followup_ctrl.SetFocus()
+            except RuntimeError:
+                pass
+
+        def _fallback_load() -> None:
+            if not self._alive() or self._sniff_view is None:
+                return
+            self._sniff_paint(scroll_followup=True)
+
+        wx.CallAfter(_inject)
+        self._call_later(200, _inject)
+        self._call_later(500, _fallback_load)
         try:
             from ..telemetry import log_ai_alt_assess
 

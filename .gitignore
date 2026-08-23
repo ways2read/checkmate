@@ -26,11 +26,13 @@ installer/Output/
 #   epubcheck/ = bundled or locally fetched W3C EPUBCheck
 #   verapdf/   = bundled or locally fetched veraPDF CLI
 #   ace/       = bundled Ace by DAISY (Node + Chromium)
+#   vnu/       = bundled Nu HTML Checker (vnu.jar)
 runtime/
 checker/
 epubcheck/
 verapdf/
 ace/
+vnu/
 
 # Local IDE / OS
 .idea/

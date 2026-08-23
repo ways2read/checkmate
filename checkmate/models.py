@@ -116,6 +116,9 @@ class CheckResult:
     # Per-tool severity totals for merged runs (e.g. EPUBCheck + Ace):
     # (source name, counts dict with fatals/errors/warnings/infos/usages).
     source_counts: list[tuple[str, dict[str, int]]] = field(default_factory=list)
+    # HTML checks: crawled page URLs and rendered-DOM image records for alt export.
+    html_pages: list[str] = field(default_factory=list)
+    html_images: list[dict] = field(default_factory=list)
 
     @property
     def headline(self) -> str:
@@ -178,7 +181,10 @@ class CheckResult:
         """Metadata lines for copy/save reports (publication, checker, date)."""
         lines: list[str] = []
         if self.target_path:
-            lines.append(_("Publication: {path}", path=self.target_path))
+            if self.html_pages:
+                lines.append(_("Web page: {path}", path=self.target_path))
+            else:
+                lines.append(_("Publication: {path}", path=self.target_path))
         if self.tool_name:
             if self.tool_version:
                 lines.append(

@@ -322,7 +322,9 @@ def describe_sample_plan(plan: SamplePlan, model_name: str = "") -> str:
     )
 
 
-def sample_choice_labels(total: int) -> list[tuple[str, str, int | None]]:
+def sample_choice_labels(
+    total: int, *, through_page: bool = False
+) -> list[tuple[str, str, int | None]]:
     """Return ``(label, mode, percent)`` rows for the preflight dialog.
 
     ``percent`` is None when mode is ``all``.
@@ -335,13 +337,18 @@ def sample_choice_labels(total: int) -> list[tuple[str, str, int | None]]:
                 None,
             )
         ]
+    through = (
+        _("stratified through the page")
+        if through_page
+        else _("stratified through the publication")
+    )
     rows: list[tuple[str, str, int | None]] = []
     for pct in SAMPLE_PERCENTS:
         n = count_for_percent(total, pct)
         rows.append(
             (
-                _("Assess {pct}% ({n} of {total}, stratified through the publication)").format(
-                    pct=pct, n=n, total=total
+                _("Assess {pct}% ({n} of {total}, {through})").format(
+                    pct=pct, n=n, total=total, through=through
                 ),
                 "percent",
                 pct,

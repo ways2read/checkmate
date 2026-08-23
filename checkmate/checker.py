@@ -16,7 +16,7 @@ from .paths import (
     epubcheck_uses_bundled_copy,
     verapdf_uses_bundled_copy,
 )
-from .publication import PublicationKind, classify_publication
+from .publication import PublicationKind, classify_publication, classify_target, is_html_url
 from .settings import (
     epub_checkers,
     verapdf_flavour,
@@ -65,15 +65,15 @@ def tool_for_kind(kind: PublicationKind) -> ToolSpec | None:
 
 
 _UNSUPPORTED_PATH_MESSAGE = (
-    "Choose a packaged .ebrl, .epub, or .pdf file, or an exploded "
-    "eBraille/EPUB publication folder."
+    "Choose a packaged .ebrl, .epub, or .pdf file, an HTML file or folder, "
+    "an http(s) URL, or an exploded eBraille/EPUB publication folder."
 )
 
 
 def _stamp_result(
     result: CheckResult,
     *,
-    target: Path,
+    target: Path | str,
     tool: ToolSpec | None = None,
     checked_at: datetime | None = None,
 ) -> CheckResult:
@@ -970,13 +970,24 @@ def _run_verapdf_once(
 
 
 def run_check(
-    target: Path,
+    target: Path | str,
     *,
     exploded: bool | None = None,
     progress=None,
 ) -> CheckResult:
-    target = target.expanduser().resolve()
+    raw = str(target).strip().strip('"')
     checked_at = datetime.now().astimezone()
+    if is_html_url(raw) or classify_target(raw) == PublicationKind.HTML:
+        from .html_check import run_html_check
+
+        result = run_html_check(raw, progress=progress)
+        if result.checked_at is None:
+            result.checked_at = checked_at
+        if not result.target_path:
+            result.target_path = raw
+        return result
+
+    target = Path(raw).expanduser().resolve()
     if not target.exists():
         return _stamp_result(
             CheckResult(
@@ -1575,6 +1586,14 @@ def checker_status_text() -> str:
             parts.append(_("Ace {version} (bundled)", version=ace_version))
         else:
             parts.append(_("Ace {version}", version=ace_version))
+    try:
+        from .vnu_check import vnu_status_part
+
+        vnu_part = vnu_status_part()
+        if vnu_part:
+            parts.append(vnu_part)
+    except Exception:
+        pass
     pipeline = probe_pipeline_for_status()
     if pipeline is not None:
         if pipeline.version:

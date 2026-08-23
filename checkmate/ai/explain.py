@@ -13,6 +13,7 @@ from .context import gather_issue_context
 from .litellm_client import ensure_credentials_ready, litellm_available
 from .resources import (
     authoritative_guidance_for_explain,
+    is_web_html_issue,
     kb_article_body_for_prompt,
     kb_article_body_prompt_block,
     resources_prompt_block,
@@ -53,8 +54,24 @@ def build_system_prompt(issue: Issue) -> str:
     resources = resources_prompt_block(issue)
     guidance = authoritative_guidance_for_explain(issue)
     h1, h2, h3, h4, h5 = _section_headings()
-    return f"""You are an accessibility publishing assistant inside CheckMate, a validation tool.
-Explain checker messages clearly to publishers and remediators. Be accurate and practical.
+    if is_web_html_issue(issue):
+        role = (
+            "You are a web accessibility assistant inside CheckMate. "
+            "Explain checker messages clearly to people remediating HTML web pages."
+        )
+        scope = (
+            '- This issue is on a web page. Do not discuss EPUB, eBraille, '
+            "DAISY talking books, or audiobooks.\n"
+            '- Do not offer to rewrite the whole site; focus on this issue.'
+        )
+    else:
+        role = (
+            "You are an accessibility publishing assistant inside CheckMate, "
+            "a validation tool. Explain checker messages clearly to publishers "
+            "and remediators."
+        )
+        scope = "- Do not offer to rewrite the whole book; focus on this issue."
+    return f"""{role} Be accurate and practical.
 
 LANGUAGE (mandatory):
 - The CheckMate UI language is {lang} (code: {lang_code}).
@@ -75,7 +92,7 @@ Structure your reply with these exact markdown headings (and no others as top-le
 Rules:
 - In "{h5}", use only the trusted resources listed below (you may omit irrelevant ones).
 - In "{h5}", write each resource as a markdown link: `[Title](https://example.com/)`.
-- Do not offer to rewrite the whole book; focus on this issue.
+{scope}
 - Keep each section concise (a short paragraph or a few bullets).
 - Use markdown (headings, lists, links, fenced code) so the reply can be shown as HTML.
 
@@ -94,7 +111,11 @@ def build_user_prompt(ctx: dict[str, str], *, kb_body: str = "") -> str:
         f"- Message: {ctx.get('message', '')}",
     ]
     if ctx.get("publication_kind"):
-        lines.append(f"- Publication kind: {ctx['publication_kind']}")
+        kind = ctx["publication_kind"]
+        if kind == "html":
+            lines.append("- Host: HTML web page (not a packaged publication)")
+        else:
+            lines.append(f"- Publication kind: {kind}")
     if ctx.get("tool"):
         lines.append(f"- Checker: {ctx['tool']}")
     if ctx.get("file_member"):

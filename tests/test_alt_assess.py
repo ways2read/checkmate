@@ -421,6 +421,28 @@ def test_vision_prompt_epub_recommends_extended_descriptions() -> None:
     assert "MathML in the EPUB" in prompt
 
 
+def test_vision_prompt_html_treats_as_web_page() -> None:
+    from checkmate.ai.alt_assess import build_vision_system_prompt, build_vision_user_text
+    from checkmate.ai.alt_export import AltExportImage
+
+    prompt = build_vision_system_prompt(publication_format="html")
+    assert "web page" in prompt
+    assert "Host format: HTML web page" in prompt
+    assert "not a packaged publication" in prompt
+    image = AltExportImage(
+        index=1,
+        filename="fig.png",
+        classification="Photograph",
+        alt_text="A lake.",
+        status="Has Alt Text",
+    )
+    text = build_vision_user_text(
+        image, heuristic_flags=[], publication_format="html"
+    )
+    assert "Host format: HTML web page" in text
+    assert "Publication format:" not in text
+
+
 def test_vision_prompt_ebraille_uses_epub_style_techniques() -> None:
     from checkmate.ai.alt_assess import build_vision_system_prompt
 
@@ -874,11 +896,36 @@ def test_inspector_html_scrolls_followup_only_when_requested(tmp_path: Path) -> 
     assert 'id="cm-latest-followup"' in idle
     assert 'id="cm-followups"' in idle
     assert "What about the logo?" in idle
+    assert idle.find('id="cm-followups"') < idle.find('class="synthesis"')
     assert "scrollLatestFollowup" not in idle
     assert "scrollLatestFollowup" in asked
     assert "el.focus(" not in asked
     browser = build_assessment_html(result, for_dialog=False, scroll_followup=True)
     assert "scrollLatestFollowup" not in browser
+
+
+def test_followup_inject_script_embeds_question_and_answer() -> None:
+    from checkmate.ai.markdown_html import append_followup_markdown, split_followup_markdown
+    from checkmate.ai.alt_report import followup_inject_script, followup_section_inner_html
+
+    md = append_followup_markdown(
+        "Overall the sample looks fine.",
+        heading="Follow-up",
+        question="What about the logo?",
+        answer="It is decorative.",
+    )
+    _synth, follow = split_followup_markdown(md)
+    inner = followup_section_inner_html(follow)
+    assert "What about the logo?" in inner
+    assert "It is decorative." in inner
+    assert 'id="cm-latest-followup"' in inner
+    script = followup_inject_script(inner)
+    assert "cm-followups" in script
+    assert "What about the logo?" in script
+    assert "It is decorative." in script
+    assert "insertBefore" in script
+    assert "\\u003c" in script
+    assert "<div" not in script
 
 
 def test_pass_a_low_resolution_is_merged_into_comment() -> None:
@@ -964,24 +1011,21 @@ def test_is_rate_limit_error() -> None:
     assert not _is_rate_limit_error("timeout", "the request timed out")
 
 
-def test_vision_progress_message_includes_verdicts_inflight_and_eta() -> None:
+def test_vision_progress_message_includes_verdicts_and_eta() -> None:
     from checkmate.ai.alt_assess import vision_progress_message
 
-    start = vision_progress_message(
-        done=0, total=20, inflight=["a.jpg", "b.jpg"], elapsed_s=0.1
-    )
+    start = vision_progress_message(done=0, total=20, elapsed_s=0.1)
     assert "20" in start
     assert "Likely OK: 0" in start
     assert "Needs attention: 0" in start
     assert "OK with caveat: 0" in start
     assert "Uncertain: 0" in start
-    assert "a.jpg" in start
+    assert "In progress:" not in start
     assert "Parallel workers" not in start
-    assert start.count("\n") >= 5
+    assert start.count("\n") >= 4
     mid = vision_progress_message(
         done=5,
         total=20,
-        inflight=["c.jpg"],
         elapsed_s=10.0,
         verdicts={"ok": 2, "needs_attention": 3},
     )
@@ -989,7 +1033,7 @@ def test_vision_progress_message_includes_verdicts_inflight_and_eta() -> None:
     assert "Likely OK: 2" in mid
     assert "Needs attention: 3" in mid
     assert "Est. time remaining:" in mid
-    assert "c.jpg" in mid
+    assert "In progress:" not in mid
 
 
 def test_vision_batch_runs_in_parallel(monkeypatch: pytest.MonkeyPatch) -> None:

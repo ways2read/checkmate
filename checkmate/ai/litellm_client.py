@@ -377,8 +377,8 @@ def cost_and_usage_from_response(response: Any) -> dict[str, Any]:
                 estimated = completion_cost(completion_response=response)
                 if estimated is not None:
                     cost = float(estimated)
-        except Exception:
-            logger.debug("LiteLLM completion_cost unavailable", exc_info=True)
+        except Exception as exc:
+            logger.debug("LiteLLM completion_cost unavailable: %s", exc)
 
     out["cost_usd"] = cost
     return out

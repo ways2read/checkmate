@@ -263,6 +263,15 @@ def _ace_dir_for_output(output: Path) -> Path:
     return output.parent / "ace"
 
 
+def _vnu_dir_for_output(output: Path) -> Path:
+    output = output.resolve()
+    if sys.platform == "darwin" and output.suffix == ".app":
+        return output / "Contents" / "vnu"
+    if output.is_dir():
+        return output / "vnu"
+    return output.parent / "vnu"
+
+
 def _load_info_plist(app_bundle: Path) -> tuple[Path, dict] | None:
     info_plist = app_bundle / "Contents" / "Info.plist"
     if not info_plist.is_file():
@@ -358,6 +367,7 @@ def build(
     bundle_epubcheck: bool,
     bundle_verapdf: bool,
     bundle_ace: bool,
+    bundle_vnu: bool,
     build_number: int | None = None,
 ) -> Path:
     _ensure_pyinstaller()
@@ -496,6 +506,17 @@ def build(
     else:
         print(
             f"Warning: UI locales folder not found ({locales})",
+            file=sys.stderr,
+        )
+
+    runner = ROOT / "scripts" / "axe_html_runner.js"
+    if runner.is_file():
+        sep = ";" if sys.platform == "win32" else ":"
+        cmd.extend(["--add-data", f"{runner}{sep}scripts"])
+        print(f"Bundling HTML axe runner from {runner}")
+    else:
+        print(
+            f"Warning: HTML axe runner not found ({runner})",
             file=sys.stderr,
         )
 
@@ -642,6 +663,27 @@ def build(
                 check=True,
             )
 
+    if bundle_vnu:
+        if onefile:
+            print(
+                "Warning: --onefile with bundled Nu HTML Checker is not "
+                "supported; use onedir (default).",
+                file=sys.stderr,
+            )
+        else:
+            vnu_dir = _vnu_dir_for_output(output)
+            print()
+            print(f"Bundling Nu HTML Checker into {vnu_dir}…")
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "vnu_bundle.py"),
+                    str(vnu_dir),
+                ],
+                cwd=ROOT,
+                check=True,
+            )
+
     return output
 
 
@@ -688,6 +730,13 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--no-bundle-vnu",
+        action="store_true",
+        help=(
+            "Skip bundling the Nu HTML Checker (downloaded on first HTML check)."
+        ),
+    )
+    parser.add_argument(
         "--build-number",
         type=int,
         metavar="N",
@@ -707,6 +756,7 @@ def main() -> None:
             bundle_epubcheck=not args.no_bundle_epubcheck,
             bundle_verapdf=not args.no_bundle_verapdf,
             bundle_ace=not args.no_bundle_ace,
+            bundle_vnu=not args.no_bundle_vnu,
             build_number=args.build_number,
         )
     except subprocess.CalledProcessError as exc:
