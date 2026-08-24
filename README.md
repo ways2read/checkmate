@@ -43,7 +43,7 @@ support on Windows, macOS, and Linux.
 - Result-first UI: multi-line verdict with counts; colour cues (green / orange /
   red) reinforce the text; a status icon beside the result (click to select a
   file); action column for **Copy summary**, **Report…**, **AI overview**,
-  **Alt text**, and **Show/Hide issues**; issues listed by severity (panel
+  **Images**, and **Show/Hide issues**; issues listed by severity (panel
   starts collapsed)
 - Filter issues (all / errors / warnings / info); optional **Show one example
   of each issue** to collapse repeated codes with counts
@@ -64,23 +64,15 @@ support on Windows, macOS, and Linux.
   priorities, and next steps based on the unique issue codes (not a full file
   dump). View, save, or copy the result like other AI replies. Toggle under
   **Tools → Settings…** (hidden when FIDO AI is unavailable).
-- **Alt text** (packaged EPUB / eBraille / PDF, or HTML after a check): **Alt text**
-  button after AI overview opens an in-app inventory of images and alt text
-  (CheckMate-branded export, cached on disk per publication). From that report, optional
-  **Run AI Image Sniff Test…** samples images with vision and synthesizes
-  findings (same FIDO AI credentials) — including alt quality, decorative vs
-  content, images of tables (prefer real table markup), images of math (prefer
-  digital math such as LaTeX/MathML/OMML, or PDF equation images tagged with
-  MathML), low-resolution rasters that fail under magnification, likely wrong
-  orientation, joined/multi-panel figures, alt that repeats nearby prose,
-  language mismatch, and spelling or grammar. Guidance is format-specific
-  (PDF vs EPUB vs eBraille vs HTML). The HTML report can be filtered, searched, and
-  sorted, and names the model in the disclaimer. PDF image previews follow
-  on-page crop and rotation. Several images are assessed in parallel (eight
-  at a time by default; fewer after a rate limit); the
-  progress dialog shows how many are done, running Likely OK / Needs
-  attention counts, which files are in flight, and an
-  estimated time remaining, can be cancelled, and is spoken to screen readers.
+- **Images** (packaged EPUB or PDF, when a Fido install with the
+  `image-report` CLI is present): **Images**
+  button after a check asks whether to build an image report or an
+  image report with AI analysis, then runs the installed Fido app
+  (`image-report` CLI; inventory is cached under CheckMate app data). The
+  HTML report opens in-app with Fido’s coloured assessment pills. When AI
+  analysis ran, you can chat about the JSON report in the same window.
+  HTML, eBraille, DAISY, folders, and URLs do not offer image reports.
+  Older Fido builds that lack this CLI leave **Images** disabled.
 - **Suggest fix with AI** (EPUB and eBraille only, when FIDO AI settings are present):
   from the same issue details dialog, ask for a minimal suggested markup patch,
   preview before/after, then **Apply fix and validate** to the exploded folder or packaged

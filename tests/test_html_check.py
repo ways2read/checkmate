@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import csv
 import ssl
 import tempfile
 import unittest
@@ -11,8 +10,6 @@ from unittest import mock
 from urllib.error import URLError
 
 from checkmate.axe_html import issues_from_axe_results, parse_axe_runner_output
-from checkmate.doc_images.export import export_document_alt_text
-from checkmate.doc_images.html import collect_image_records_from_html, materialize_image
 from checkmate.html_check import merge_vnu_and_axe, run_html_check
 from checkmate.html_crawl import (
     DEFAULT_CRAWL_CAP,
@@ -356,86 +353,6 @@ class MergeAndReportTests(unittest.TestCase):
         self.assertTrue(
             any(line.startswith("Web page:") for line in merged.report_meta_lines())
         )
-
-
-class HtmlAltExportTests(unittest.TestCase):
-    def test_img_records_to_csv(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            png = root / "pic.png"
-            png.write_bytes(
-                bytes.fromhex(
-                    "89504e470d0a1a0a0000000d4948445200000001000000010806"
-                    "0000001f15c4890000000a49444154789c63000100000500010d"
-                    "0a2db40000000049454e44ae426082"
-                )
-            )
-            page = root / "page.html"
-            page.write_text(
-                '<!DOCTYPE html><html lang="en"><body>'
-                f'<img src="pic.png" alt="A red pixel">'
-                '<img src="pic.png" alt="">'
-                "</body></html>",
-                encoding="utf-8",
-            )
-            dest = root / "export"
-            dest.mkdir()
-            result = export_document_alt_text(page, dest, write_html=False)
-            self.assertFalse(result.cancelled)
-            self.assertGreaterEqual(result.stats.get("total", 0), 2)
-            csv_path = result.csv_path
-            self.assertTrue(csv_path.is_file())
-            rows = list(csv.DictReader(csv_path.open(encoding="utf-8-sig")))
-            self.assertGreaterEqual(len(rows), 2)
-            formats = {row.get("Format", "") for row in rows}
-            self.assertIn("html", formats)
-            statuses = {row.get("Status", "") for row in rows}
-            self.assertTrue(any("Alt" in s or "alt" in s.lower() for s in statuses))
-            self.assertTrue(any("Decorative" in s for s in statuses))
-            contexts = " ".join(row.get("Context", "") for row in rows)
-            self.assertIn("Page:", contexts)
-
-
-class HtmlImageParseTests(unittest.TestCase):
-    def test_nearby_text_figcaption_and_srcset(self) -> None:
-        html = """
-        <!DOCTYPE html><html lang="en"><body>
-        <p>Before the photo.</p>
-        <figure>
-          <img srcset="hero.png 1x, hero-2x.png 2x" alt="Hero">
-          <figcaption>A caption here</figcaption>
-        </figure>
-        <p>After the photo.</p>
-        <img data-src="lazy.jpg" alt="Lazy">
-        </body></html>
-        """
-        recs = collect_image_records_from_html(html, "https://example.com/p.html")
-        self.assertGreaterEqual(len(recs), 2)
-        hero = recs[0]
-        self.assertTrue(hero["src"].endswith("hero.png"))
-        self.assertEqual(hero["figcaption"], "A caption here")
-        nearby = hero["nearbyText"]
-        self.assertIn("Before the photo", nearby)
-        self.assertIn("After the photo", nearby)
-        self.assertIn("A caption here", nearby)
-        lazy = recs[1]
-        self.assertTrue(lazy["src"].endswith("lazy.jpg"))
-
-    def test_materialize_inline_svg_markup(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            dest = Path(tmp)
-            path, note = materialize_image(
-                {
-                    "kind": "svg",
-                    "src": "",
-                    "svgMarkup": '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
-                },
-                dest,
-                0,
-            )
-            self.assertEqual(note, "")
-            self.assertTrue(path.endswith(".svg"))
-            self.assertTrue(Path(path).is_file())
 
 
 class HtmlSettingsTests(unittest.TestCase):

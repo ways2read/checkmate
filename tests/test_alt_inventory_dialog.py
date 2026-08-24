@@ -114,12 +114,13 @@ class PreviewUrlTests(unittest.TestCase):
 
 
 class UniqueViewHtmlTests(unittest.TestCase):
-    def test_webview_file_uri_adds_token(self):
+    def test_webview_file_uri_has_no_query(self):
         from checkmate.ai.alt_inventory_dialog import webview_file_uri
 
         uri = webview_file_uri(Path("C:/tmp/export/alt_text_report.html"), token="abc123")
         self.assertIn("alt_text_report.html", uri)
-        self.assertIn("cm=abc123", uri)
+        self.assertNotIn("cm=abc123", uri)
+        self.assertTrue(uri.startswith("file:"))
 
     def test_unique_view_copy_is_distinct_path(self):
         import tempfile
@@ -142,6 +143,188 @@ class UniqueViewHtmlTests(unittest.TestCase):
             cleanup_view_html(folder)
             self.assertFalse(copy.exists())
             self.assertTrue(src.exists())
+
+    def test_load_unique_does_not_mark_navigated_until_loaded(self):
+        import tempfile
+
+        from checkmate.ai.alt_inventory_dialog import load_unique_file_in_webview
+
+        class FakeView:
+            def __init__(self) -> None:
+                self.urls: list[str] = []
+
+            def LoadURL(self, uri: str) -> None:
+                self.urls.append(uri)
+
+        with tempfile.TemporaryDirectory() as raw:
+            folder = Path(raw)
+            src = folder / "alt_text_report.html"
+            src.write_text("<html><body>ok</body></html>", encoding="utf-8")
+            view = FakeView()
+            dest = load_unique_file_in_webview(view, src)
+            self.assertIsNotNone(dest)
+            self.assertTrue(dest.is_file())
+            self.assertFalse(getattr(view, "_cm_ever_navigated", False))
+            self.assertEqual(len(view.urls), 1)
+            self.assertNotIn("cm=", view.urls[0])
+            self.assertNotIn("?", Path(dest.name).name)
+            self.assertIn(dest.name, view.urls[0])
+
+    def test_reload_writes_html_into_existing_document(self):
+        import tempfile
+
+        from checkmate.ai import alt_inventory_dialog as mod
+
+        scripts: list[str] = []
+
+        def fake_run(_view, script: str) -> bool:
+            scripts.append(script)
+            return True
+
+        class FakeView:
+            def __init__(self) -> None:
+                self.urls: list[str] = []
+                self._cm_ever_navigated = True
+
+            def LoadURL(self, uri: str) -> None:
+                self.urls.append(uri)
+
+        original = mod._webview_run_script
+        mod._webview_run_script = fake_run
+        try:
+            with tempfile.TemporaryDirectory() as raw:
+                folder = Path(raw)
+                src = folder / "alt_text_report.html"
+                src.write_text("<html><body>rebuilt</body></html>", encoding="utf-8")
+                view = FakeView()
+                dest = mod.load_unique_file_in_webview(view, src)
+                self.assertEqual(dest.resolve(), src.resolve())
+                self.assertEqual(view.urls, [])
+                self.assertTrue(any("document.write" in text for text in scripts))
+                self.assertTrue(any("rebuilt" in text for text in scripts))
+        finally:
+            mod._webview_run_script = original
+
+    def test_html_with_folder_base_pins_relative_urls(self):
+        import tempfile
+
+        from checkmate.ai.alt_inventory_dialog import html_with_folder_base
+
+        with tempfile.TemporaryDirectory() as raw:
+            folder = Path(raw)
+            out = html_with_folder_base(
+                "<html><head><title>x</title></head><body>"
+                '<img src="images/a.png"></body></html>',
+                folder,
+            )
+            base = folder.resolve().as_uri()
+            if not base.endswith("/"):
+                base += "/"
+            self.assertIn(f'<base href="{base}">', out)
+            self.assertIn('<img src="images/a.png">', out)
+            replaced = html_with_folder_base(
+                '<html><head><base href="file:///old/"></head></html>',
+                folder,
+            )
+            self.assertIn(f'<base href="{base}">', replaced)
+            self.assertNotIn("file:///old/", replaced)
+
+    def test_reload_writes_when_report_folder_changes(self):
+        import tempfile
+
+        from checkmate.ai import alt_inventory_dialog as mod
+
+        scripts: list[str] = []
+
+        def fake_run(_view, script: str) -> bool:
+            scripts.append(script)
+            return True
+
+        class FakeView:
+            def __init__(self) -> None:
+                self.urls: list[str] = []
+                self._cm_ever_navigated = True
+
+            def LoadURL(self, uri: str) -> None:
+                self.urls.append(uri)
+
+        original = mod._webview_run_script
+        mod._webview_run_script = fake_run
+        try:
+            with tempfile.TemporaryDirectory() as raw:
+                first = Path(raw) / "first"
+                second = Path(raw) / "second"
+                first.mkdir()
+                second.mkdir()
+                prev = first / "alt_text_report.html"
+                prev.write_text("<html><body>old</body></html>", encoding="utf-8")
+                src = second / "alt_text_report.html"
+                src.write_text(
+                    "<html><head></head><body>new doc"
+                    '<img src="images/photo.png"></body></html>',
+                    encoding="utf-8",
+                )
+                view = FakeView()
+                dest = mod.load_unique_file_in_webview(
+                    view, src, previous_doc=prev
+                )
+                self.assertIsNotNone(dest)
+                self.assertEqual(dest.parent.resolve(), second.resolve())
+                self.assertTrue(any("document.write" in text for text in scripts))
+                self.assertTrue(any("new doc" in text for text in scripts))
+                self.assertFalse(any("location.replace" in text for text in scripts))
+                self.assertEqual(view.urls, [])
+                second_uri = second.resolve().as_uri()
+                if not second_uri.endswith("/"):
+                    second_uri += "/"
+                self.assertTrue(any(second_uri in text for text in scripts))
+        finally:
+            mod._webview_run_script = original
+
+    def test_cleanup_keeps_listed_unique_copies(self):
+        import tempfile
+
+        from checkmate.ai.alt_inventory_dialog import (
+            cleanup_view_html,
+            write_unique_view_html,
+        )
+
+        with tempfile.TemporaryDirectory() as raw:
+            folder = Path(raw)
+            src = folder / "alt_text_report.html"
+            src.write_text("<html>report</html>", encoding="utf-8")
+            report_copy = write_unique_view_html(src)
+            sniff_src = folder / "alt_assess.html"
+            sniff_src.write_text("<html>sniff</html>", encoding="utf-8")
+            sniff_copy = write_unique_view_html(sniff_src)
+            extra = write_unique_view_html(src)
+            cleanup_view_html(folder, keep=[report_copy, sniff_copy])
+            self.assertTrue(report_copy.exists())
+            self.assertTrue(sniff_copy.exists())
+            self.assertFalse(extra.exists())
+            self.assertTrue(src.exists())
+
+
+    def test_image_report_uses_native_conversation_pane(self):
+        import inspect
+
+        from checkmate.ai.alt_inventory_dialog import AltTextReportDialog
+        from checkmate.main import AiOverviewDialog
+
+        report_src = inspect.getsource(AltTextReportDialog.__init__)
+        self.assertIn("ConversationScroller", report_src)
+        self.assertIn("make_chat_splitter", report_src)
+        overview_src = inspect.getsource(AiOverviewDialog.__init__)
+        self.assertIn("ConversationScroller", overview_src)
+        self.assertIn("on_toggle_chat", overview_src)
+        follow_src = inspect.getsource(AltTextReportDialog._build_sniff_followup)
+        self.assertIn("Include chat in HTML report", follow_src)
+        actions_src = inspect.getsource(AltTextReportDialog._build_report_actions)
+        self.assertIn("chat_toggle_btn", actions_src)
+        self.assertIn("&Close", actions_src)
+        self.assertNotIn("_path_label", report_src)
+        open_src = inspect.getsource(AltTextReportDialog._on_open_browser)
+        self.assertIn("_html_report_for_export", open_src)
 
 
 class PrepareReuseTests(unittest.TestCase):
@@ -168,6 +351,70 @@ class PrepareReuseTests(unittest.TestCase):
             self.assertFalse(dlg._closing)
             self.assertIsNone(dlg._dialog_html_cache)
             self.assertGreater(dlg._load_gen, gen)
+            dlg._modal_session = 4
+            dlg._close_dialog_if_session(3)
+            self.assertFalse(dlg._closing)
+        finally:
+            if dlg is not None:
+                try:
+                    dlg.Destroy()
+                except RuntimeError:
+                    pass
+            frame.Destroy()
+
+    def test_prepare_same_folder_keeps_chat(self):
+        import tempfile
+
+        import wx
+
+        from checkmate.ai.alt_inventory_dialog import AltTextReportDialog
+
+        app = wx.GetApp() or wx.App(False)
+        self.assertIsNotNone(app)
+        frame = wx.Frame(None)
+        tmp = Path(tempfile.mkdtemp())
+        html = tmp / "alt_text_report.html"
+        html.write_text("<html></html>", encoding="utf-8")
+        dlg = None
+        try:
+            dlg = AltTextReportDialog(frame, folder=tmp, html_path=html)
+            marker = object()
+            dlg._sniff_synthesis_md = "live chat"
+            dlg._sniff_session = marker
+            dlg.prepare(tmp, html)
+            self.assertEqual(dlg._sniff_synthesis_md, "live chat")
+            self.assertIs(dlg._sniff_session, marker)
+        finally:
+            if dlg is not None:
+                try:
+                    dlg.Destroy()
+                except RuntimeError:
+                    pass
+            frame.Destroy()
+
+    def test_prepare_other_folder_clears_chat(self):
+        import tempfile
+
+        import wx
+
+        from checkmate.ai.alt_inventory_dialog import AltTextReportDialog
+
+        app = wx.GetApp() or wx.App(False)
+        self.assertIsNotNone(app)
+        frame = wx.Frame(None)
+        tmp = Path(tempfile.mkdtemp())
+        html = tmp / "alt_text_report.html"
+        html.write_text("<html></html>", encoding="utf-8")
+        other = Path(tempfile.mkdtemp())
+        html2 = other / "alt_text_report.html"
+        html2.write_text("<html></html>", encoding="utf-8")
+        dlg = None
+        try:
+            dlg = AltTextReportDialog(frame, folder=tmp, html_path=html)
+            dlg._sniff_synthesis_md = "live chat"
+            dlg.prepare(other, html2)
+            self.assertEqual(dlg._sniff_synthesis_md, "")
+            self.assertIsNone(dlg._sniff_session)
         finally:
             if dlg is not None:
                 try:
@@ -194,9 +441,92 @@ class ReclaimAfterModalTests(unittest.TestCase):
             frame.Enable(True)
             frame.Raise()
             self.assertTrue(frame.IsEnabled())
-            self.assertTrue(hasattr(MainFrame, "_reclaim_after_modal"))
+            self.assertTrue(hasattr(MainFrame, "_retire_inventory_dialog"))
+            self.assertTrue(hasattr(MainFrame, "_reopen_inventory_when_idle"))
+            self.assertTrue(hasattr(MainFrame, "_reveal_inventory_dialog"))
+            self.assertTrue(hasattr(MainFrame, "_park_inventory_host"))
+            self.assertTrue(hasattr(MainFrame, "_reschedule_inventory_after_park"))
+            self.assertTrue(hasattr(MainFrame, "_inventory_dialog_dismissed"))
+            self.assertTrue(hasattr(MainFrame, "_finish_app_exit"))
         finally:
             frame.Destroy()
+
+    def test_escape_exit_can_be_suppressed(self):
+        from checkmate.main import MainFrame
+
+        class Stub:
+            _suppress_escape_exit_until = 0.0
+            _suppress_escape_exit = MainFrame._suppress_escape_exit
+            _escape_exit_suppressed = MainFrame._escape_exit_suppressed
+
+        stub = Stub()
+        self.assertFalse(stub._escape_exit_suppressed())
+        stub._suppress_escape_exit(30)
+        self.assertTrue(stub._escape_exit_suppressed())
+        stub._suppress_escape_exit_until = 0.0
+        self.assertFalse(stub._escape_exit_suppressed())
+
+
+class InventoryLifecycleSourceTests(unittest.TestCase):
+    def test_close_keeps_webview_bindings_for_reuse(self):
+        import inspect
+
+        from checkmate.ai.alt_dialog import AltSniffTestMixin
+
+        close_src = inspect.getsource(AltSniffTestMixin._on_close_dialog)
+        self.assertNotIn("release_inventory", close_src)
+        self.assertNotIn("_release_sniff_webview()", close_src)
+        self.assertIn("_ensure_end_modal", close_src)
+        destroy_src = inspect.getsource(AltSniffTestMixin._on_window_destroy)
+        self.assertIn("_release_sniff_webview()", destroy_src)
+
+    def test_leftover_modal_ends_then_reopens(self):
+        import inspect
+
+        from checkmate.main import MainFrame
+
+        src = inspect.getsource(MainFrame._present_alt_inventory_report)
+        self.assertIn("_ensure_end_modal", src)
+        self.assertIn("_unpark_inventory_dialog", src)
+        self.assertNotIn("dlg.ShowModal()", src)
+        self.assertNotIn("_reveal_inventory_dialog", src)
+        self.assertNotIn("hidden-modal, wait for EndModal", src)
+
+    def test_rebuild_uses_the_publication_now_in_the_path_field(self):
+        import inspect
+
+        from checkmate.main import MainFrame
+
+        src = inspect.getsource(MainFrame._rebuild_image_report)
+        current_at = src.find("self._current_target()")
+        source_at = src.find("self._alt_report_source")
+        self.assertGreater(current_at, 0)
+        self.assertGreater(source_at, current_at)
+
+    def test_quit_exits_mainloop_immediately(self):
+        import inspect
+
+        from checkmate.main import MainFrame
+
+        src = inspect.getsource(MainFrame._on_main_close)
+        self.assertIn("_finish_app_exit", src)
+        self.assertIn("_end_inventory_modal", src)
+        self.assertNotIn("dlg.Destroy()", src)
+        self.assertNotIn("flush_pending_webview_destroys", src)
+        self.assertNotIn("schedule_webview_window_destroy", src)
+        self.assertNotIn("CallLater", src)
+        self.assertIn("ExitMainLoop", inspect.getsource(MainFrame._finish_app_exit))
+        self.assertIn("os._exit", inspect.getsource(MainFrame._finish_app_exit))
+
+    def test_after_shown_swallows_deleted_host(self):
+        import inspect
+
+        from checkmate.ai.alt_inventory_dialog import AltTextReportDialog
+
+        src = inspect.getsource(AltTextReportDialog._after_shown)
+        self.assertIn("except RuntimeError", src)
+        sync = inspect.getsource(AltTextReportDialog._sync_chat_chrome)
+        self.assertIn("except RuntimeError", sync)
 
 
 class ScheduleDestroyTests(unittest.TestCase):

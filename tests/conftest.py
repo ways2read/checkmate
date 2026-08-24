@@ -8,14 +8,11 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _isolate_alt_export_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep export-cache index writes out of the user's AppData during tests."""
-    cache = tmp_path / "_alt_export_cache"
+def _isolate_image_report_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep Fido image-report cache writes out of the user's AppData during tests."""
+    cache = tmp_path / "_image_report_cache"
     cache.mkdir()
     monkeypatch.setattr(
-        "checkmate.ai.alt_build_export.alt_export_cache_dir",
+        "checkmate.ai.fido_image_report.image_report_cache_dir",
         lambda: cache,
     )
-    from checkmate.ai.alt_build_export import reset_alt_export_cache_state
-
-    reset_alt_export_cache_state()

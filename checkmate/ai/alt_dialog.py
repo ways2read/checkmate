@@ -15,23 +15,17 @@ import wx
 import wx.lib.newevent
 
 from ..i18n import _
-from .alt_assess import AltAssessResult, ask_alt_assess_followup
+from ..settings import ai_features_enabled
 from .alt_labels import FEATURE_FILENAME_STEM, feature_html_basenames, feature_title
-from .alt_report import (
-    assessment_markdown_export,
-    build_assessment_html,
-    followup_inject_script,
-    followup_section_inner_html,
-)
-from .alt_sample import assess_more_choice_labels
 from .explain import ExplainResult, error_message_for_key
+from .fido_image_report import ImageReport
 from .litellm_client import ai_libraries_status_message
 from .markdown_html import (
     _WEBVIEW_SCROLL_LATEST_FOLLOWUP_JS,
     append_followup_markdown,
+    compose_sniff_chat_markdown,
     followup_markdown_suffix,
-    merge_followup_suffix,
-    split_followup_markdown,
+    markdown_to_browser_page,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,8 +82,9 @@ class AltSniffTestMixin:
     """
 
     def _init_sniff_state(self) -> None:
-        self._sniff_result: AltAssessResult | None = None
+        self._sniff_result: ImageReport | None = None
         self._sniff_session = None
+        self._modal_session = int(getattr(self, "_modal_session", 0) or 0)
         self._sniff_synthesis_md = ""
         self._sniff_busy = False
         self._sniff_scroll_followup = False
@@ -129,18 +124,52 @@ class AltSniffTestMixin:
         if getattr(self, "_sniff_view_realized", False) and self._sniff_view is not None:
             self._sniff_show_idle()
 
-    def apply_sniff_result(self, result: AltAssessResult) -> None:
-        """Show a completed assessment on the sniff tab (keeps prior follow-ups)."""
-        suffix = followup_markdown_suffix(self._sniff_synthesis_md)
+    def _persist_qa_markdown(self) -> None:
+        """Write follow-up Q&A into image_report.json so close/reopen keeps chat."""
+        folder = Path(getattr(self, "folder", "") or "")
+        if not folder:
+            return
+        suffix = followup_markdown_suffix(
+            getattr(self, "_sniff_synthesis_md", "") or ""
+        )
+        if not suffix.strip():
+            return
+        try:
+            from .fido_image_report import save_image_report_qa
+
+            save_image_report_qa(folder, suffix)
+        except Exception:
+            logger.debug("Could not persist image-report chat", exc_info=True)
+        for report in (
+            getattr(self, "_report", None),
+            getattr(self, "_sniff_result", None),
+        ):
+            if report is not None:
+                try:
+                    report.qa_markdown = suffix
+                except Exception:
+                    pass
+
+    def apply_sniff_result(self, result: ImageReport) -> None:
+        """Show a completed sniff (keeps prior follow-ups) on this page."""
         self._sniff_result = result
-        self._sniff_session = result.session
-        self._sniff_synthesis_md = merge_followup_suffix(result.text or "", suffix)
-        self._sniff_result.text = self._sniff_synthesis_md
+        self._sniff_synthesis_md = compose_sniff_chat_markdown(
+            result.synthesis_markdown or "",
+            result.qa_markdown or "",
+            self._sniff_synthesis_md,
+        )
+        self._persist_qa_markdown()
         self._set_sniff_busy(False)
-        self._select_page(self._PAGE_SNIFF)
-        self._realize_sniff_view()
+        keep_followups = bool(followup_markdown_suffix(self._sniff_synthesis_md))
+        sync = getattr(self, "_sync_chat_chrome", None)
+        try:
+            if callable(sync):
+                sync()
+            elif keep_followups:
+                self._realize_sniff_view()
+        except RuntimeError:
+            return
         self._sync_assess_more_enabled()
-        keep_followups = bool(suffix.strip())
 
         def _paint() -> None:
             if not self._alive() or self._sniff_result is None:
@@ -155,9 +184,11 @@ class AltSniffTestMixin:
 
     def _remaining_count(self) -> int:
         result = self._sniff_result
-        if result is None or result.export is None:
+        if result is None:
             return 0
-        return max(0, result.export.total - len(result.assessments))
+        if not result.sample_is_partial():
+            return 0
+        return sum(1 for im in result.images if not im.has_ai)
 
     def _sync_assess_more_enabled(self) -> None:
         btn = getattr(self, "assess_more_btn", None)
@@ -194,9 +225,15 @@ class AltSniffTestMixin:
             self._cycle_notebook_page(delta)
             return
         if event.GetKeyCode() == wx.WXK_ESCAPE:
-            wx.CallAfter(self._on_close_dialog, None)
+            # Direct close — CallAfter stops running after a few Edge cycles.
+            self._on_close_dialog(None)
             return
         event.Skip()
+
+    def _close_dialog_if_session(self, session: int) -> None:
+        if int(getattr(self, "_modal_session", 0)) != int(session):
+            return
+        self._on_close_dialog(None)
 
     def _call_later(self, ms: int, fn) -> wx.CallLater:
         timer = wx.CallLater(ms, fn)
@@ -243,6 +280,10 @@ class AltSniffTestMixin:
         view = self._sniff_view
         if view is None:
             return
+        paint = getattr(self, "_paint_native_chat", None)
+        if callable(paint):
+            paint()
+            return
         html_doc = self._sniff_idle_html()
         if self._sniff_is_webview:
             try:
@@ -266,45 +307,40 @@ class AltSniffTestMixin:
             self._sniff_show_idle()
 
     def _sniff_current_html(self, *, scroll_followup: bool = False) -> str:
-        result = self._sniff_result
-        if result is None:
+        md = (self._sniff_synthesis_md or "").strip()
+        if not md:
             return self._sniff_idle_html()
-        result.text = self._sniff_synthesis_md
-        return build_assessment_html(
-            result, for_dialog=True, scroll_followup=scroll_followup
+        return markdown_to_browser_page(
+            md, title=feature_title(), tab_exit=True
         )
 
     def _sniff_persist_html(self) -> None:
-        """Write the current report beside the export (Save / View in browser)."""
-        result = self._sniff_result
-        if result is None or result.export is None or not result.export.folder:
+        """Write the sniff HTML beside the report (Save / View in browser)."""
+        folder = Path(getattr(self, "folder", "") or "")
+        if not folder:
             return
         html_doc = self._sniff_current_html(scroll_followup=False)
         try:
-            canonical = Path(result.export.folder) / f"{FEATURE_FILENAME_STEM}.html"
+            canonical = folder / f"{FEATURE_FILENAME_STEM}.html"
             canonical.write_text(html_doc, encoding="utf-8")
         except OSError:
             logger.exception("Could not write inspector HTML")
 
     def _sniff_inject_followups(self, *, scroll: bool = True) -> bool:
-        """Patch Q&A into the live Edge document without navigating.
-
-        Full ``LoadURL`` after Ask / Assess more is often ignored while
-        ProgressDialog teardown is still running; the already-shown report
-        stays on screen unless we patch it in place.
-        """
-        if not self._alive() or not self._sniff_is_webview or self._sniff_view is None:
-            return False
-        _synth, follow_md = split_followup_markdown(self._sniff_synthesis_md)
-        if not follow_md.strip():
-            return False
-        script = followup_inject_script(
-            followup_section_inner_html(follow_md), scroll=scroll
-        )
-        return bool(self._main_mod()._webview_run_script(self._sniff_view, script))
+        """Follow-ups live in the markdown page; a full repaint is enough."""
+        return False
 
     def _realize_sniff_view(self) -> None:
-        if self._closing or self._sniff_view is not None:
+        if self._closing:
+            return
+        if callable(getattr(self._sniff_view, "set_content", None)):
+            paint = getattr(self, "_paint_native_chat", None)
+            if callable(paint):
+                paint()
+            else:
+                self._sniff_paint_or_idle()
+            return
+        if self._sniff_view is not None:
             return
         host = self._sniff_host
         if host is None:
@@ -344,7 +380,8 @@ class AltSniffTestMixin:
         action = self._main_mod()._webview_host_action(url)
         if action == "close":
             event.Veto()
-            wx.CallAfter(self._on_close_dialog, None)
+            session = int(getattr(self, "_modal_session", 0))
+            wx.CallAfter(self._close_dialog_if_session, session)
             return
         if action in ("next", "prev"):
             event.Veto()
@@ -402,6 +439,11 @@ class AltSniffTestMixin:
             if url:
                 self._sniff_reload_if_needed()
             return
+        try:
+            if self._sniff_view is not None:
+                self._sniff_view._cm_ever_navigated = True  # type: ignore[attr-defined]
+        except Exception:
+            pass
         self._cleanup_stale_view_html()
         self._sniff_inject_followups(scroll=self._sniff_scroll_followup)
         if self._sniff_scroll_followup:
@@ -412,33 +454,31 @@ class AltSniffTestMixin:
 
         Edge WebView2 ``SetPage`` / NavigateToString silently shows a blank
         document once the HTML (embedded image data-URIs) exceeds ~1–2 MB.
-        Loading a temp file matches “View in browser”, which already works.
+        Loading a temp file matches “Open in browser”, which already works.
         """
         view = self._sniff_view
-        result = self._sniff_result
-        if view is None or result is None:
+        if view is None:
             return
-        from .alt_inventory_dialog import webview_file_uri, write_unique_view_html
+        from .alt_inventory_dialog import load_unique_file_in_webview
 
-        export = result.export
+        folder = Path(getattr(self, "folder", "") or "")
         try:
-            if export is not None and export.folder:
-                folder = Path(export.folder)
+            if folder:
                 canonical = folder / f"{FEATURE_FILENAME_STEM}.html"
                 canonical.write_text(html_doc, encoding="utf-8")
                 for leftover in feature_html_basenames() - {canonical.name}:
                     _unlink_quietly(folder / leftover)
-                # Keep the currently displayed .cm_view_*.html until the new
-                # file has loaded — deleting it first leaves Edge showing a
-                # stale in-memory document.
-                path = write_unique_view_html(canonical)
+                path = load_unique_file_in_webview(view, canonical)
             else:
                 tmp_dir = Path(tempfile.gettempdir()) / "checkmate_alt_assess"
                 tmp_dir.mkdir(parents=True, exist_ok=True)
-                path = tmp_dir / f"assess_{os.getpid()}_{uuid.uuid4().hex}.html"
-                path.write_text(html_doc, encoding="utf-8")
+                canonical = tmp_dir / f"assess_{os.getpid()}_{uuid.uuid4().hex}.html"
+                canonical.write_text(html_doc, encoding="utf-8")
+                path = load_unique_file_in_webview(view, canonical)
         except OSError:
             logger.exception("Could not write inspector HTML for WebView")
+            path = None
+        if path is None:
             try:
                 view.SetPage(html_doc, "about:blank")
             except Exception:
@@ -448,21 +488,12 @@ class AltSniffTestMixin:
         self._sniff_html_tmp = path
         self._sniff_load_retries = 0
         # Keep the previously displayed file until Edge commits the new
-        # LoadURL — deleting it first leaves the old document on screen.
+        # navigation — deleting it first leaves the old document on screen.
         if prev is not None and prev != path:
             self._sniff_html_tmp_prev.append(prev)
-        uri = webview_file_uri(path)
         logger.debug(
-            "Inspector WebView LoadURL %s (%s bytes)", uri, path.stat().st_size
+            "Inspector WebView load %s (%s bytes)", path, path.stat().st_size
         )
-        try:
-            view.LoadURL(uri)
-        except Exception:
-            logger.exception("LoadURL failed for inspector HTML")
-            try:
-                view.SetPage(html_doc, uri)
-            except Exception:
-                logger.exception("SetPage fallback failed for inspector HTML")
         gen = self._sniff_paint_gen
         self._call_later(350, lambda: self._reload_if_gen(gen))
         self._call_later(900, lambda: self._reload_if_gen(gen))
@@ -490,22 +521,28 @@ class AltSniffTestMixin:
             return
         if current:
             self._sniff_load_retries += 1
-        from .alt_inventory_dialog import webview_file_uri
+        from .alt_inventory_dialog import webview_file_uri, webview_location_replace
 
+        uri = webview_file_uri(self._sniff_html_tmp)
+        if getattr(view, "_cm_ever_navigated", False):
+            if webview_location_replace(view, uri):
+                return
         try:
-            view.LoadURL(webview_file_uri(self._sniff_html_tmp))
+            view.LoadURL(uri)
         except Exception:
             logger.debug("Inspector WebView reload failed", exc_info=True)
 
     def _cleanup_stale_view_html(self) -> None:
         """Remove previous unique HTML copies once the current file is showing."""
+        keep_fn = getattr(self, "_cm_view_keep_paths", None)
+        keep_list = keep_fn() if callable(keep_fn) else [self._sniff_html_tmp]
+        keep_list = [path for path in keep_list if path is not None]
         keep = self._sniff_html_tmp
-        result = self._sniff_result
-        export = result.export if result is not None else None
-        if export is not None and export.folder:
+        folder = Path(getattr(self, "folder", "") or "")
+        if folder:
             from .alt_inventory_dialog import cleanup_view_html
 
-            cleanup_view_html(Path(export.folder), keep=keep)
+            cleanup_view_html(folder, keep=keep_list)
         kept: list[Path] = []
         for leftover in list(self._sniff_html_tmp_prev):
             if keep is not None and leftover == keep:
@@ -583,7 +620,15 @@ class AltSniffTestMixin:
     def _sniff_paint(self, *, scroll_followup: bool = False) -> None:
         if not self._alive() or self._sniff_view is None:
             return
-        if self._sniff_result is None:
+        paint = getattr(self, "_paint_native_chat", None)
+        if callable(paint):
+            paint()
+            if scroll_followup:
+                focus = getattr(self._sniff_view, "focus_latest", None)
+                if callable(focus):
+                    focus()
+            return
+        if not (self._sniff_synthesis_md or "").strip():
             self._sniff_show_idle()
             return
         self._sniff_paint_gen += 1
@@ -605,7 +650,7 @@ class AltSniffTestMixin:
 
     def _set_sniff_busy(self, busy: bool) -> None:
         self._sniff_busy = busy
-        ok = (not busy) and self._sniff_session is not None
+        ok = (not busy) and ai_features_enabled()
         for ctrl in (getattr(self, "ask_btn", None), getattr(self, "followup_ctrl", None)):
             if ctrl is None:
                 continue
@@ -625,59 +670,76 @@ class AltSniffTestMixin:
         """Top-of-page action: sample images and run the sniff test in this dialog."""
         if self._sniff_busy or self._closing:
             return
-        self._select_page(self._PAGE_SNIFF)
-        self._prompt_and_start_sniff(prior=None)
+        self._select_page(self._PAGE_REPORT)
+        self._prompt_and_start_sniff(assess_all=False)
 
-    def _prompt_and_start_sniff(self, *, prior) -> None:
-        from .alt_sample import DEFAULT_SAMPLE_PERCENT, sample_choice_labels
-        from .explain import error_message_for_key
-
-        folder = Path(self.folder)
+    def _current_image_report(self) -> ImageReport | None:
+        report = getattr(self, "_report", None)
+        if report is not None:
+            return report
         try:
-            from .alt_export import load_alt_export
+            from .fido_image_report import load_image_report
 
-            export = load_alt_export(folder)
-        except FileNotFoundError as exc:
+            return load_image_report(self.folder)
+        except Exception:
+            return None
+
+    def _source_publication_path(self) -> Path | None:
+        raw = getattr(self, "source_path", None)
+        if raw:
+            path = Path(raw)
+            if path.is_file():
+                return path
+        from .fido_image_report import source_path_from_folder
+
+        return source_path_from_folder(self.folder)
+
+    def _ensure_qa_session(self):
+        if self._sniff_session is not None:
+            return self._sniff_session
+        from .session import ExplainSession
+
+        try:
+            self._sniff_session = ExplainSession.create()
+        except Exception:
+            logger.exception("Could not start an image-report Q&A session")
+            self._sniff_session = None
+        return self._sniff_session
+
+    def _prompt_and_start_sniff(self, *, assess_all: bool) -> None:
+        from .explain import error_message_for_key
+        from .fido_image_report import sample_percent_choices
+
+        report = self._current_image_report()
+        source = self._source_publication_path()
+        if report is None or source is None:
             wx.MessageBox(
-                error_message_for_key("bad_export", detail=str(exc)),
+                error_message_for_key(
+                    "bad_export",
+                    detail=_("Image reports need Fido and a packaged EPUB or PDF."),
+                ),
                 feature_title(),
                 wx.OK | wx.ICON_ERROR,
                 self,
             )
             return
-        except ValueError as exc:
-            wx.MessageBox(
-                error_message_for_key("bad_export", detail=str(exc)),
-                feature_title(),
-                wx.OK | wx.ICON_ERROR,
-                self,
-            )
-            return
-        except Exception as exc:
-            wx.MessageBox(
-                _("Could not read the export folder:\n{error}").format(error=exc),
-                feature_title(),
-                wx.OK | wx.ICON_ERROR,
-                self,
-            )
+        if assess_all:
+            self._start_fido_sniff(source, percent=None)
             return
 
-        counts = export.counts()
-        choice_rows = sample_choice_labels(counts["total"])
+        counts = report.counts()
+        choice_rows = sample_percent_choices(counts["total"])
         if not choice_rows:
             return
         if len(choice_rows) == 1:
-            _label, mode, percent = choice_rows[0]
-            percent = percent if percent is not None else 100
-            self._start_sniff_assess(
-                folder, mode=mode, percent=percent, prior=prior
-            )
+            _label, percent = choice_rows[0]
+            self._start_fido_sniff(source, percent=percent)
             return
 
-        choices = [label for label, _mode, _pct in choice_rows]
+        choices = [label for label, _pct in choice_rows]
         default_sel = 0
-        for i, (_label, _mode, pct) in enumerate(choice_rows):
-            if pct == DEFAULT_SAMPLE_PERCENT:
+        for i, (_label, pct) in enumerate(choice_rows):
+            if pct == 25:
                 default_sel = i
                 break
         choice_dlg = wx.SingleChoiceDialog(
@@ -689,7 +751,7 @@ class AltSniffTestMixin:
                 "Choose how many images to send to the vision model "
                 "(samples are spread through the publication):"
             ).format(
-                name=export.document_name,
+                name=report.document_name,
                 total=counts["total"],
                 with_alt=counts["with_alt"],
                 decorative=counts["decorative"],
@@ -702,30 +764,28 @@ class AltSniffTestMixin:
             choice_dlg.SetSelection(default_sel)
             if choice_dlg.ShowModal() != wx.ID_OK:
                 return
-            _label, mode, percent = choice_rows[choice_dlg.GetSelection()]
-            percent = percent if percent is not None else 100
+            _label, percent = choice_rows[choice_dlg.GetSelection()]
         finally:
             choice_dlg.Destroy()
-        self._start_sniff_assess(folder, mode=mode, percent=percent, prior=prior)
+        self._start_fido_sniff(source, percent=percent)
 
-    def _start_sniff_assess(
-        self, folder: Path, *, mode: str, percent: int, prior
-    ) -> None:
+    def _start_fido_sniff(self, source: Path, *, percent: int | None) -> None:
         if self._sniff_busy:
             return
-        if prior is None:
-            self._sniff_synthesis_md = ""
-            self._sniff_result = None
+        from .fido_image_report import (
+            FidoImageReportError,
+            make_progress_dialog,
+            run_fido_image_report,
+        )
+        from .image_report_qa import enrich_qa_session_with_sniff
+
+        folder = Path(self.folder)
+        self._sniff_synthesis_md = ""
+        self._sniff_result = None
         cancel = threading.Event()
         self._ai_cancel = cancel
         start_msg = _progress_body(ai_libraries_status_message())
-        self._ai_progress = wx.ProgressDialog(
-            feature_title(),
-            start_msg,
-            maximum=100,
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
-        )
+        self._ai_progress = make_progress_dialog(feature_title(), start_msg, self)
         _present_progress(self._ai_progress, start_msg)
         self._ai_progress_timer = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, self._on_progress_timer, self._ai_progress_timer)
@@ -747,48 +807,44 @@ class AltSniffTestMixin:
             wx.CallAfter(update)
 
         def work() -> None:
-            from .alt_assess import AltAssessResult, assess_alt_export
-            from .litellm_client import preload_litellm
-
-            ok, detail = preload_litellm()
-            if not ok:
-                out = AltAssessResult(
-                    ok=False, error_key="no_litellm", detail=detail or ""
+            error: Exception | None = None
+            run = None
+            try:
+                run = run_fido_image_report(
+                    source,
+                    assess=True,
+                    percent=percent,
+                    dest=folder,
+                    use_cache=False,
+                    cancel_event=cancel,
+                    progress=status,
                 )
-            elif cancel.is_set():
-                out = AltAssessResult(ok=False, error_key="cancelled")
-            else:
-                try:
-                    out = assess_alt_export(
-                        folder,
-                        mode=mode,
-                        percent=percent,
-                        prior=prior,
-                        cancel_event=cancel,
-                        status_callback=status,
-                    )
-                except Exception as exc:
-                    out = AltAssessResult(
-                        ok=False, error_key="provider_error", detail=str(exc)
-                    )
+            except Exception as exc:
+                error = exc
 
             def done() -> None:
                 self._close_progress()
                 if self._closing:
                     return
-                if not out.ok:
-                    if out.error_key != "cancelled":
-                        wx.MessageBox(
-                            error_message_for_key(
-                                out.error_key, detail=out.detail or out.text or ""
-                            ),
-                            feature_title(),
-                            wx.OK | wx.ICON_ERROR,
-                            self,
-                        )
+                if error is not None:
+                    if isinstance(error, FidoImageReportError) and "cancel" in str(error).lower():
+                        self._set_sniff_busy(False)
+                        return
+                    wx.MessageBox(
+                        str(error),
+                        feature_title(),
+                        wx.OK | wx.ICON_ERROR,
+                        self,
+                    )
                     self._set_sniff_busy(False)
                     return
-                self.apply_sniff_result(out)
+                report = run.report
+                reload_fn = getattr(self, "_reload_after_sniff", None)
+                if callable(reload_fn):
+                    reload_fn()
+                    report = getattr(self, "_report", None) or report
+                enrich_qa_session_with_sniff(self._sniff_session, report)
+                self.apply_sniff_result(report)
                 try:
                     from ..telemetry import log_ai_alt_assess
 
@@ -828,13 +884,33 @@ class AltSniffTestMixin:
             self._close_progress()
 
     def _on_ask(self, _event: wx.Event) -> None:
-        if self._sniff_busy or self._sniff_session is None:
+        if self._sniff_busy:
             return
         if self.followup_ctrl is None:
             return
         question = self.followup_ctrl.GetValue().strip()
         if not question:
             return
+        report = self._current_image_report()
+        if report is None:
+            wx.MessageBox(
+                _("Open an image report before asking a question."),
+                feature_title(),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        session = self._ensure_qa_session()
+        if session is None:
+            wx.MessageBox(
+                error_message_for_key("no_key"),
+                feature_title(),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+        from .image_report_qa import ask_report_qa
+
         cancel = threading.Event()
         self._ai_cancel = cancel
         self._ai_progress = wx.ProgressDialog(
@@ -849,12 +925,11 @@ class AltSniffTestMixin:
         self.Bind(wx.EVT_TIMER, self._on_progress_timer, self._ai_progress_timer)
         self._ai_progress_timer.Start(200)
         self._set_sniff_busy(True)
-        session = self._sniff_session
 
         def work() -> None:
             try:
-                out = ask_alt_assess_followup(
-                    session, question, cancel_event=cancel
+                out = ask_report_qa(
+                    session, report, question, cancel_event=cancel
                 )
             except Exception as exc:
                 out = ExplainResult(
@@ -901,11 +976,13 @@ class AltSniffTestMixin:
             question=getattr(event, "question", "") or "",
             answer=out.text or "",
         )
-        if self._sniff_result is not None:
-            self._sniff_result.text = self._sniff_synthesis_md
+        self._persist_qa_markdown()
         if self.followup_ctrl is not None:
             self.followup_ctrl.SetValue("")
         self._set_sniff_busy(False)
+        sync = getattr(self, "_sync_chat_chrome", None)
+        if callable(sync):
+            sync()
         # Inject Q&A into the document already on screen. LoadURL of a new
         # file:// copy is often a no-op while ProgressDialog is tearing down.
 
@@ -939,57 +1016,44 @@ class AltSniffTestMixin:
             pass
 
     def _on_assess_more(self, _event: wx.Event) -> None:
-        if self._sniff_busy or self._sniff_result is None or self._sniff_result.export is None:
+        if self._sniff_busy:
             return
-        total = self._sniff_result.export.total
-        already = len(self._sniff_result.assessments)
-        rows = assess_more_choice_labels(total, already)
-        if not rows:
+        report = self._current_image_report()
+        if report is None or not report.sample_is_partial():
             wx.MessageBox(
-                _("All images in this export have already been assessed."),
+                _("All images in this report have already been assessed."),
                 feature_title(),
                 wx.OK | wx.ICON_INFORMATION,
                 self,
             )
             return
-        if len(rows) == 1:
-            _label, mode, percent = rows[0]
-            percent = percent if percent is not None else 100
-        else:
-            choices = [label for label, _mode, _pct in rows]
-            dlg = wx.SingleChoiceDialog(
-                self,
-                _(
-                    "Already assessed: {already} of {total}.\n"
-                    "Choose additional coverage (previous results are kept):"
-                ).format(already=already, total=total),
-                _("Assess more"),
-                choices,
-            )
-            try:
-                if dlg.ShowModal() != wx.ID_OK:
-                    return
-                _label, mode, percent = rows[dlg.GetSelection()]
-                percent = percent if percent is not None else 100
-            finally:
-                dlg.Destroy()
+        self._prompt_and_start_sniff(assess_all=True)
 
-        self._start_sniff_assess(
-            self._sniff_result.export.folder,
-            mode=mode,
-            percent=percent,
-            prior=self._sniff_result,
-        )
+    def _sniff_export_markdown(self) -> str:
+        report = self._current_image_report()
+        parts = []
+        if report is not None:
+            synth = (report.synthesis_markdown or "").strip()
+            qa = (report.qa_markdown or "").strip()
+            if synth:
+                parts.append(synth)
+            if qa and qa not in synth:
+                parts.append(qa)
+        live = (self._sniff_synthesis_md or "").strip()
+        if live:
+            parts = [live]
+        return "\n\n".join(parts).strip()
 
     def _on_view_browser(self, _event: wx.Event) -> None:
-        if self._sniff_result is None:
+        md = self._sniff_export_markdown()
+        if not md:
             return
         try:
             fd, name = tempfile.mkstemp(
                 prefix="checkmate-alt-assess-", suffix=".html", text=True
             )
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(build_assessment_html(self._sniff_result, for_dialog=False))
+                fh.write(markdown_to_browser_page(md, title=feature_title()))
             webbrowser.open(Path(name).as_uri())
         except OSError as exc:
             wx.MessageBox(
@@ -1002,7 +1066,8 @@ class AltSniffTestMixin:
             )
 
     def _on_save_html(self, _event: wx.Event) -> None:
-        if self._sniff_result is None:
+        md = self._sniff_export_markdown()
+        if not md:
             return
         # Nested FileDialog + Edge WebView can leave focus inside the browser
         # HWND; reclaim wx chrome before/after so Close/EndModal stays responsive.
@@ -1022,7 +1087,7 @@ class AltSniffTestMixin:
                 path = path.with_suffix(".html")
             try:
                 path.write_text(
-                    build_assessment_html(self._sniff_result, for_dialog=False),
+                    markdown_to_browser_page(md, title=feature_title()),
                     encoding="utf-8",
                 )
             except OSError as exc:
@@ -1035,7 +1100,8 @@ class AltSniffTestMixin:
         self._focus_dialog_chrome()
 
     def _on_save_md(self, _event: wx.Event) -> None:
-        if self._sniff_result is None:
+        md = self._sniff_export_markdown()
+        if not md:
             return
         self._focus_dialog_chrome()
         with wx.FileDialog(
@@ -1052,9 +1118,7 @@ class AltSniffTestMixin:
             if not path.suffix:
                 path = path.with_suffix(".md")
             try:
-                path.write_text(
-                    assessment_markdown_export(self._sniff_result), encoding="utf-8"
-                )
+                path.write_text(md, encoding="utf-8")
             except OSError as exc:
                 wx.MessageBox(
                     _("Could not save the file:\n{error}").format(error=exc),
@@ -1065,9 +1129,9 @@ class AltSniffTestMixin:
         self._focus_dialog_chrome()
 
     def _on_copy(self, _event: wx.Event) -> None:
-        if self._sniff_result is None:
+        text = self._sniff_export_markdown()
+        if not text:
             return
-        text = assessment_markdown_export(self._sniff_result)
         if wx.TheClipboard.Open():
             try:
                 wx.TheClipboard.SetData(wx.TextDataObject(text))
@@ -1084,16 +1148,35 @@ class AltSniffTestMixin:
         except RuntimeError:
             pass
 
+    def _ensure_end_modal(self, code: int) -> None:
+        """EndModal if wx still thinks this dialog is modal. Safe to call twice."""
+        try:
+            if self.IsModal():
+                self.exit_code = int(code)
+                self.EndModal(self.exit_code)
+        except RuntimeError:
+            pass
+
     def _on_close_dialog(self, event: wx.Event | None = None) -> None:
         if self._closing:
+            # Idle CallAfter(_finish_close_dialog) can be dropped after Edge
+            # cycles; a second Close (or Images) must still unblock ShowModal.
             if isinstance(event, wx.CloseEvent):
-                if self.IsModal():
-                    event.Veto()
-                else:
-                    # ShowModal already returned; allow the caller's Destroy().
-                    event.Skip()
+                event.Veto()
+            self._ensure_end_modal(int(wx.ID_CLOSE))
+            dismissed = getattr(self.GetParent(), "_inventory_dialog_dismissed", None)
+            if callable(dismissed):
+                dismissed(self)
             return
         self._closing = True
+        self._persist_qa_markdown()
+        try:
+            from .conversation_pane import remember_chat_pane_width
+
+            remember_chat_pane_width(getattr(self, "_splitter", None))
+        except Exception:
+            pass
+        close_session = int(getattr(self, "_modal_session", 0))
         self._load_gen = int(getattr(self, "_load_gen", 0)) + 1
         self._sniff_paint_gen += 1
         self._sniff_scroll_followup = False
@@ -1104,14 +1187,16 @@ class AltSniffTestMixin:
         cleanup = getattr(self, "_cleanup_view_copy", None)
         if callable(cleanup):
             cleanup()
-        release_inventory = getattr(self, "_release_webview", None)
-        if callable(release_inventory):
-            release_inventory()
-        self._release_sniff_webview()
+        # Keep Edge NAVIGATING/LOADED bindings while this host is reused.
+        # Unbinding here is why Escape (checkmate://close) only worked once.
         if isinstance(event, wx.CloseEvent):
             event.Veto()
-        # Finish on the next idle so we are outside navigating/key handlers.
-        wx.CallAfter(self._finish_close_dialog)
+        self._ensure_end_modal(int(wx.ID_CLOSE))
+        dismissed = getattr(self.GetParent(), "_inventory_dialog_dismissed", None)
+        if callable(dismissed):
+            dismissed(self)
+            return
+        wx.CallAfter(self._finish_close_dialog, close_session)
 
     def _on_close(self, event: wx.Event | None = None) -> None:
         self._on_close_dialog(event)
@@ -1143,6 +1228,10 @@ class AltSniffTestMixin:
         if event.GetEventObject() is not self:
             return
         self._cleanup_sniff_html_tmp()
+        release_inventory = getattr(self, "_release_webview", None)
+        if callable(release_inventory):
+            release_inventory()
+        self._release_sniff_webview()
 
     def _blur_webview_for_close(self) -> None:
         """Move Win32 focus off Edge without WM_NEXTDLGCTL (that deadlocks WebView2)."""
@@ -1161,16 +1250,21 @@ class AltSniffTestMixin:
         except RuntimeError:
             pass
 
-    def _finish_close_dialog(self) -> None:
+    def _finish_close_dialog(self, session: int | None = None) -> None:
         try:
             if not self:
                 return
         except RuntimeError:
             return
+        if session is not None and int(session) != int(getattr(self, "_modal_session", 0)):
+            return
+        if not getattr(self, "_closing", False):
+            return
         self._blur_webview_for_close()
-        try:
-            if self.IsModal():
-                self.exit_code = int(wx.ID_CLOSE)
-                self.EndModal(self.exit_code)
-        except RuntimeError:
-            pass
+        if getattr(self, "_rebuild_requested", False):
+            from .alt_inventory_dialog import ID_REBUILD_REPORT
+
+            code = int(ID_REBUILD_REPORT)
+        else:
+            code = int(wx.ID_CLOSE)
+        self._ensure_end_modal(code)

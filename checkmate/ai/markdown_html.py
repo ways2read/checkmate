@@ -246,6 +246,47 @@ def markdown_to_body_html(text: str, *, for_dialog: bool = True) -> str:
     return linkify_html(fragment)
 
 
+_QA_SECTION_RE = re.compile(
+    r'<section\b[^>]*\bclass="[^"]*\bqa-section\b[^"]*"[^>]*>.*?</section>',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def html_report_with_chat(html_doc: str, chat_markdown: str, *, include: bool) -> str:
+    """Insert or strip the conversation section in Fido image-report HTML.
+
+    The in-app view never shows this block. Open-in-browser and Save as HTML
+    use it so the exported page can include the chat.
+    """
+    text = _QA_SECTION_RE.sub("", html_doc or "")
+    if not include:
+        return text
+    md = (chat_markdown or "").strip()
+    if not md:
+        return text
+    from ..i18n import _
+
+    body = markdown_to_body_html(md, for_dialog=False)
+    title = html.escape(_("Questions and Answers"))
+    section = (
+        f'<section class="synthesis qa-section" aria-labelledby="qa-heading">'
+        f'<h2 id="qa-heading">{title}</h2>{body}</section>\n'
+    )
+    marker = '<div class="filters">'
+    idx = text.find(marker)
+    if idx >= 0:
+        return text[:idx] + section + text[idx:]
+    credit = text.find('class="fido-credit"')
+    if credit >= 0:
+        start = text.rfind("<", 0, credit)
+        if start >= 0:
+            return text[:start] + section + text[start:]
+    end = text.lower().rfind("</body>")
+    if end >= 0:
+        return text[:end] + section + text[end:]
+    return text + section
+
+
 def markdown_to_page(text: str, *, plain: bool = False) -> str:
     """
     Full HTML page suitable for ``HtmlWindow.SetPage`` (limited HTML subset).
@@ -779,8 +820,11 @@ def markdown_to_browser_page(
 # Raw JS for WebView.RunScript (no <script> wrapper).
 _WEBVIEW_TAB_EXIT_JS = """
 (function () {
-  if (window.__cmTabExitWired) return;
-  window.__cmTabExitWired = true;
+  // Guard on the document, not window. document.write / document.open
+  // replace the document but keep the same window, so a window flag
+  // would skip re-binding Escape after the first report load.
+  if (document.__cmTabExitWired) return;
+  document.__cmTabExitWired = true;
   function focusables() {
     return Array.prototype.slice.call(document.querySelectorAll(
       'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
@@ -1047,6 +1091,186 @@ def merge_followup_suffix(synthesis: str, suffix: str) -> str:
     if not base:
         return extra.lstrip()
     return base + extra
+
+
+def compose_sniff_chat_markdown(
+    synthesis: str,
+    qa_markdown: str = "",
+    live_markdown: str = "",
+) -> str:
+    """Join sniff synthesis with follow-up Q&A.
+
+    Live chat wins over stored ``qa_markdown``. Synthesis comes from the
+    current report so a rebuild can replace the summary while keeping questions.
+    """
+    live_suffix = followup_markdown_suffix(live_markdown)
+    stored = (qa_markdown or "").strip()
+    stored_suffix = followup_markdown_suffix(stored)
+    suffix = live_suffix or stored_suffix or stored
+    synth = (synthesis or "").strip()
+    if not synth and stored and not stored_suffix:
+        return merge_followup_suffix(stored, live_suffix)
+    return merge_followup_suffix(synth, suffix)
+
+
+_CHAT_BUBBLE_RE = re.compile(
+    r'<div\b([^>]*\bclass="[^"]*\bchat-bubble\b[^"]*"[^>]*)>(.*?)</div>',
+    re.IGNORECASE | re.DOTALL,
+)
+
+_CONVERSATION_CHROME_COLORS = {
+    "light": {
+        "paper": "#eef5fb",
+        "ink": "#0f172a",
+        "muted": "#475569",
+        "card": "#ffffff",
+        "line": "#8aa0b8",
+        "user_bg": "#dbeafe",
+        "user_fg": "#0f172a",
+        "user_border": "#93c5fd",
+        "assistant_bg": "#f1f5f9",
+        "assistant_fg": "#0f172a",
+        "assistant_border": "#cbd5e1",
+    },
+    "dark": {
+        "paper": "#0f172a",
+        "ink": "#f1f5f9",
+        "muted": "#94a3b8",
+        "card": "#1e293b",
+        "line": "#64748b",
+        "user_bg": "#1e3a5f",
+        "user_fg": "#eff6ff",
+        "user_border": "#3b82f6",
+        "assistant_bg": "#1e293b",
+        "assistant_fg": "#e2e8f0",
+        "assistant_border": "#475569",
+    },
+}
+
+
+def conversation_chrome_colors() -> dict[str, str]:
+    """Baked Q&A colours for native wx cards (same tokens as the HTML bubbles)."""
+    kind = "light"
+    try:
+        from ..ui_appearance import window_background_colour
+
+        colour = window_background_colour()
+        if colour.IsOk() and (colour.Red() + colour.Green() + colour.Blue()) / 3 < 96:
+            kind = "dark"
+    except Exception:
+        kind = "light"
+    return _CONVERSATION_CHROME_COLORS[kind]
+
+
+def conversation_card_page(fragment: str, *, bg: str, fg: str) -> str:
+    """HTML 3.2 page for ``wx.html.HtmlWindow`` inside a native chat card."""
+    body = fragment or ""
+    return (
+        "<html><head><meta charset='utf-8'></head>"
+        f"<body bgcolor='{bg}' text='{fg}'>"
+        f"<font size='3' color='{fg}'>{body}</font>"
+        "</body></html>"
+    )
+
+
+def conversation_idle_prompt(*, overview: bool = False) -> str:
+    from ..i18n import _
+
+    if overview:
+        return _("What questions do you have about this overview?")
+    return _("What questions do you have about the image report?")
+
+
+def _plain_from_html(fragment: str) -> str:
+    text = fragment or ""
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</p>\s*", "\n", text)
+    text = re.sub(r"(?i)</li>\s*", "\n", text)
+    text = re.sub(r"(?i)<li[^>]*>", "• ", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = html.unescape(text)
+    lines = [ln.strip() for ln in text.splitlines()]
+    return "\n".join(ln for ln in lines if ln).strip()
+
+
+def _strip_hr_lines(text: str) -> str:
+    """Drop markdown ``---`` rules; do not strip list markers."""
+    lines = (text or "").strip().splitlines()
+    while lines and re.fullmatch(r"-{3,}", lines[0].strip()):
+        lines.pop(0)
+    while lines and re.fullmatch(r"-{3,}", lines[-1].strip()):
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
+def conversation_turns_from_qa(text: str) -> list[tuple[str, str, str, str]]:
+    """Parse Q&A markdown/HTML into ``(kind, label, plain, html)`` turns.
+
+    Follow-up answers are stored as markdown *after* the user bubble, not
+    inside a ``chat-assistant`` div. Pair each user bubble with that answer
+    so the native pane shows the model reply.
+    """
+    md = (text or "").strip()
+    if not md:
+        return []
+    from ..i18n import _
+
+    default_user = _("You asked")
+    default_assistant = _("CheckMate")
+    matches = list(_CHAT_BUBBLE_RE.finditer(md))
+    if not matches:
+        html_body = markdown_to_body_html(md, for_dialog=True)
+        plain = _plain_from_html(html_body)
+        return [("note", "", plain, html_body)] if plain else []
+
+    turns: list[tuple[str, str, str, str]] = []
+    pre = _strip_hr_lines(md[: matches[0].start()])
+    if pre:
+        html_body = markdown_to_body_html(pre, for_dialog=True)
+        plain = _plain_from_html(html_body)
+        if plain:
+            turns.append(("note", "", plain, html_body))
+
+    for i, match in enumerate(matches):
+        attrs, inner = match.group(1), match.group(2)
+        kind = "user" if re.search(r"\bchat-user\b", attrs, re.I) else "assistant"
+        label_m = re.search(
+            r'<span class="chat-(?:user|assistant)-label">(.*?)</span>',
+            inner,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        label = (
+            _plain_from_html(label_m.group(1))
+            if label_m
+            else (default_user if kind == "user" else default_assistant)
+        )
+        rest = inner
+        if label_m:
+            rest = inner[: label_m.start()] + inner[label_m.end() :]
+        html_body = rest.strip()
+        plain = _plain_from_html(html_body)
+        if plain:
+            turns.append((kind, label, plain, html_body))
+        after_start = match.end()
+        after_end = matches[i + 1].start() if i + 1 < len(matches) else len(md)
+        between = _strip_hr_lines(md[after_start:after_end])
+        if between and kind == "user":
+            ans_html = markdown_to_body_html(between, for_dialog=True)
+            ans_plain = _plain_from_html(ans_html)
+            if ans_plain:
+                turns.append(("assistant", default_assistant, ans_plain, ans_html))
+    return turns
+
+
+def conversation_turns_from_report_md(md: str) -> list[tuple[str, str, str, str]]:
+    """Synthesis plus follow-up bubbles as native conversation turns."""
+    synth, suffix = split_followup_markdown(md or "")
+    turns: list[tuple[str, str, str, str]] = []
+    if synth.strip():
+        turns.extend(conversation_turns_from_qa(synth))
+    if suffix.strip():
+        turns.extend(conversation_turns_from_qa(suffix))
+    return turns
 
 
 def explanation_filename_stem(issue_code: str) -> str:

@@ -383,7 +383,8 @@ def _add_followup_question_row(
     *,
     on_ask,
     ask_enabled: bool = False,
-) -> tuple[wx.TextCtrl, wx.Button]:
+    on_toggle_chat=None,
+) -> tuple[wx.TextCtrl, wx.Button, wx.Button | None]:
     """
     Follow-up edit + Ask, with a real StaticText label for screen readers.
 
@@ -391,10 +392,24 @@ def _add_followup_question_row(
     static label is what Narrator/NVDA announce when the edit is focused.
     """
     label_text = _("Ask a follow-up question…")
+    chat_hint = ""
+    if on_toggle_chat is not None:
+        # Chat pane (overview / image report): there may not be a prior question.
+        label_text = _("Ask a question…")
+        chat_hint = _("Type a message about this report")
+    label_row = wx.BoxSizer(wx.HORIZONTAL)
     label = wx.StaticText(parent, label=label_text)
+    if chat_hint:
+        label.SetToolTip(chat_hint)
     # Keep the label out of the Tab cycle; it is the accessible name buddy.
     _win_clear_tab_stop(label)
-    sizer.Add(label, 0, wx.TOP, 4)
+    label_row.Add(label, 1, wx.ALIGN_CENTER_VERTICAL)
+    toggle = None
+    if callable(on_toggle_chat):
+        toggle = wx.Button(parent, label=_("Show chat"))
+        toggle.Bind(wx.EVT_BUTTON, on_toggle_chat)
+        label_row.Add(toggle, 0)
+    sizer.Add(label_row, 0, wx.EXPAND | wx.TOP, 4)
 
     follow_row = wx.BoxSizer(wx.HORIZONTAL)
     # Create the edit immediately after the static so MSW treats it as the label.
@@ -405,6 +420,8 @@ def _add_followup_question_row(
         name=label_text,
     )
     ctrl.SetName(label_text)
+    if chat_hint:
+        ctrl.SetToolTip(chat_hint)
     if hasattr(ctrl, "SetAccessibleName"):
         try:
             ctrl.SetAccessibleName(label_text)
@@ -418,7 +435,7 @@ def _add_followup_question_row(
     sizer.Add(follow_row, 0, wx.EXPAND | wx.BOTTOM, 4)
     ask_btn.Bind(wx.EVT_BUTTON, on_ask)
     ctrl.Bind(wx.EVT_TEXT_ENTER, on_ask)
-    return ctrl, ask_btn
+    return ctrl, ask_btn, toggle
 
 
 def _popup_menu_below(window: wx.Window, menu: wx.Menu, anchor: wx.Window) -> None:
@@ -519,9 +536,9 @@ def _announce_progress_status(dlg: wx.Window | None, message: str) -> None:
 
 def _alt_assess_progress_body(message: str) -> str:
     """Pad inspector status so wx.ProgressDialog keeps a stable multiline height."""
-    from .ai.alt_assess import format_vision_progress_dialog
+    from .ai.fido_image_report import pad_progress_message
 
-    return format_vision_progress_dialog(message)
+    return pad_progress_message(message)
 
 
 def _ai_libraries_status_message() -> str:
@@ -2000,7 +2017,7 @@ class IssueDetailDialog(wx.Dialog):
         _win_clear_tab_stop(panel)
         _win_ensure_control_parent(panel)
         sizer = wx.BoxSizer(wx.VERTICAL)
-        self.followup_ctrl, self.ask_btn = _add_followup_question_row(
+        self.followup_ctrl, self.ask_btn, _ = _add_followup_question_row(
             panel,
             sizer,
             on_ask=self._on_ask_followup,
@@ -2064,7 +2081,7 @@ class IssueDetailDialog(wx.Dialog):
         row.Add(self.apply_fix_btn, 0, wx.ALIGN_CENTER_VERTICAL)
         sizer.Add(row, 0, wx.EXPAND | wx.TOP | wx.BOTTOM, 4)
 
-        self.fix_followup_ctrl, self.fix_ask_btn = _add_followup_question_row(
+        self.fix_followup_ctrl, self.fix_ask_btn, _ = _add_followup_question_row(
             panel,
             sizer,
             on_ask=self._on_ask_followup,
@@ -3829,6 +3846,12 @@ class AiOverviewDialog(wx.Dialog):
         self._pending_later: list[wx.CallLater] = []
         self._dialog_html_cache: str | None = None
         from .ai.markdown_html import with_ai_disclaimer
+        from .ai.conversation_pane import (
+            ConversationScroller,
+            bind_chat_sash_persist,
+            make_chat_splitter,
+        )
+        from .settings import chat_pane_shown as chat_pane_pref
 
         self._ai_markdown = with_ai_disclaimer(markdown_text or "")
 
@@ -3840,8 +3863,9 @@ class AiOverviewDialog(wx.Dialog):
             heading.SetFont(heading_font)
         root.Add(heading, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
 
-        self._ai_output_host = _AiHtmlHostPanel(self, name=_("AI overview"))
-        self._ai_output_host.SetMinSize((-1, 360))
+        self._splitter = make_chat_splitter(self)
+        self._ai_output_host = _AiHtmlHostPanel(self._splitter, name=_("AI overview"))
+        self._ai_output_host.SetMinSize((-1, 280))
         host_sizer = wx.BoxSizer(wx.VERTICAL)
         self._ai_loading_label = wx.StaticText(
             self._ai_output_host, label=_("Loading AI view…")
@@ -3850,14 +3874,27 @@ class AiOverviewDialog(wx.Dialog):
         self._ai_output_host.SetSizer(host_sizer)
         _win_clear_tab_stop(self._ai_output_host)
         self.ai_output = self._ai_output_host
-        root.Add(self._ai_output_host, 1, wx.EXPAND | wx.ALL, 12)
+
+        self._chat_host = wx.Panel(self._splitter, name=_("Conversation"))
+        self._chat_host.SetMinSize((240, 200))
+        chat_sizer = wx.BoxSizer(wx.VERTICAL)
+        self._chat_view = ConversationScroller(self._chat_host)
+        chat_sizer.Add(self._chat_view, 1, wx.EXPAND)
+        self._chat_host.SetSizer(chat_sizer)
+        self._chat_pane_shown = bool(chat_pane_pref())
+        self._splitter.SplitVertically(self._ai_output_host, self._chat_host, 480)
+        bind_chat_sash_persist(self._splitter)
+        root.Add(self._splitter, 1, wx.EXPAND | wx.ALL, 12)
 
         follow_sizer = wx.BoxSizer(wx.VERTICAL)
-        self.followup_ctrl, self.ask_btn = _add_followup_question_row(
-            self,
-            follow_sizer,
-            on_ask=self._on_ask_followup,
-            ask_enabled=self._session is not None,
+        self.followup_ctrl, self.ask_btn, self.chat_toggle_btn = (
+            _add_followup_question_row(
+                self,
+                follow_sizer,
+                on_ask=self._on_ask_followup,
+                ask_enabled=self._session is not None,
+                on_toggle_chat=self._on_toggle_chat,
+            )
         )
         root.Add(follow_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
 
@@ -3896,6 +3933,46 @@ class AiOverviewDialog(wx.Dialog):
         self.Bind(wx.EVT_CHAR_HOOK, self._on_dialog_char_hook)
         self.Bind(wx.EVT_SHOW, self._on_show)
         close_btn.SetDefault()
+        self._apply_chat_pane_shown(self._chat_pane_shown, persist=False)
+        self._paint_overview_chat()
+
+    def _on_toggle_chat(self, _event: wx.Event) -> None:
+        self._apply_chat_pane_shown(not getattr(self, "_chat_pane_shown", False))
+
+    def _apply_chat_pane_shown(self, shown: bool, *, persist: bool = True) -> None:
+        from .ai.conversation_pane import set_chat_pane_shown
+        from .settings import set_chat_pane_shown as persist_chat
+
+        self._chat_pane_shown = bool(shown)
+        set_chat_pane_shown(
+            self._splitter,
+            self._ai_output_host,
+            self._chat_host,
+            shown=self._chat_pane_shown,
+            toggle=getattr(self, "chat_toggle_btn", None),
+        )
+        try:
+            self.Layout()
+        except RuntimeError:
+            pass
+        if persist:
+            persist_chat(self._chat_pane_shown)
+
+    def _paint_overview_chat(self) -> None:
+        from .ai.markdown_html import (
+            conversation_idle_prompt,
+            conversation_turns_from_qa,
+            followup_markdown_suffix,
+        )
+
+        view = getattr(self, "_chat_view", None)
+        if view is None:
+            return
+        suffix = followup_markdown_suffix(getattr(self, "_ai_markdown", "") or "")
+        turns = conversation_turns_from_qa(suffix)
+        view.set_content(turns, idle=conversation_idle_prompt(overview=True))
+        if turns:
+            view.focus_latest()
 
     def _call_later(self, ms: int, fn) -> wx.CallLater:
         timer = wx.CallLater(ms, fn)
@@ -3951,6 +4028,9 @@ class AiOverviewDialog(wx.Dialog):
         _wire_ai_html_host(host, view, is_webview=is_webview)
         host.Layout()
         self.Layout()
+        self._apply_chat_pane_shown(
+            getattr(self, "_chat_pane_shown", False), persist=False
+        )
         if is_webview:
             self._call_later(
                 100,
@@ -4136,10 +4216,11 @@ class AiOverviewDialog(wx.Dialog):
         cached = getattr(self, "_dialog_html_cache", None)
         if cached is not None:
             return cached
-        from .ai.markdown_html import markdown_to_browser_page
+        from .ai.markdown_html import markdown_to_browser_page, split_followup_markdown
 
+        synth, _suffix = split_followup_markdown(self._ai_markdown or "")
         html_doc = markdown_to_browser_page(
-            self._ai_markdown or "",
+            synth,
             title=_("AI overview"),
             plain=self._ai_plain,
             tab_exit=True,
@@ -4370,6 +4451,7 @@ class AiOverviewDialog(wx.Dialog):
             except RuntimeError:
                 return
             self._paint_content(focus=True)
+            self._paint_overview_chat()
             self.followup_ctrl.SetValue("")
             self._set_busy(False)
 
@@ -4477,6 +4559,12 @@ class AiOverviewDialog(wx.Dialog):
             return
         dlg_trace("overview close", self)
         self._closing = True
+        try:
+            from .ai.conversation_pane import remember_chat_pane_width
+
+            remember_chat_pane_width(getattr(self, "_splitter", None))
+        except Exception:
+            pass
         self._stop_pending_later()
         # Cancel deferred WebView focus/reveal/paint chains.
         self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
@@ -5035,6 +5123,12 @@ class MainFrame(wx.Frame):
         self._alt_inventory_dialog = None
         self._alt_inventory_open_timer = None
         self._pending_alt_inventory: tuple[Path, Path] | None = None
+        self._alt_inventory_recreate_count = 0
+        self._exiting = False
+        self._alt_report_source: Path | None = None
+        self._alt_report_folder: Path | None = None
+        self._alt_report_mode: tuple[bool, int | None] | None = None
+        self._suppress_escape_exit_until = 0.0
         self.menu_ai_overview: wx.MenuItem | None = None
         self.menu_settings: wx.MenuItem | None = None
         self._lang_menu_items: dict[str, wx.MenuItem] = {}
@@ -5534,11 +5628,11 @@ class MainFrame(wx.Frame):
             self.ai_overview_btn.SetToolTip(
                 _("Generate an AI overview of this report (Ctrl+Shift+A)")
             )
-        self.alt_text_btn = wx.Button(panel, label=_("&Alt text"))
+        self.alt_text_btn = wx.Button(panel, label=_("&Images"))
         self.alt_text_btn.SetToolTip(
             _(
-                "View images and alt text for this publication "
-                "(packaged EPUB, eBraille, or PDF)"
+                "Build an image report for this publication "
+                "(needs Fido and a packaged EPUB or PDF)"
             )
         )
         self.show_issues_btn = wx.Button(panel, label=_("Show &issues"))
@@ -5550,7 +5644,7 @@ class MainFrame(wx.Frame):
         self.result_btns = result_btns
         self._size_result_action_buttons()
         self._set_ai_overview_btn_visible(ai_features_enabled())
-        self.alt_text_btn.Enable(False)
+        self._update_alt_text_btn_enabled()
         self.result_row = result_row
         result_row.Add(
             self.result_icon_sizer, 0, wx.EXPAND | wx.RIGHT, 10
@@ -5916,34 +6010,60 @@ class MainFrame(wx.Frame):
             menubar.EnableTop(idx, enabled or changelog_ok)
 
     def _alt_text_path_ok(self) -> bool:
-        from .ai.alt_build_export import supports_alt_export_path
+        from .ai.fido_image_report import supports_image_report_path
+        from .fido_launch import fido_image_report_status
 
         text = self._current_target()
-        return bool(text) and supports_alt_export_path(text)
+        return (
+            bool(text)
+            and fido_image_report_status() == "ok"
+            and supports_image_report_path(text)
+        )
 
     def _update_alt_text_btn_enabled(self) -> None:
+        from .fido_launch import fido_image_report_status
+
+        status = fido_image_report_status()
+        visible = status != "missing"
+        try:
+            shown = self.alt_text_btn.IsShown()
+        except RuntimeError:
+            return
+        if visible != shown:
+            self.result_btns.Show(self.alt_text_btn, visible)
+            if visible:
+                self.alt_text_btn.Show()
+            else:
+                self.alt_text_btn.Hide()
+            self._size_result_action_buttons()
+            panel = getattr(self, "panel", None)
+            if panel is not None:
+                try:
+                    panel.Layout()
+                except RuntimeError:
+                    pass
         ok = (
-            self._last_result is not None
+            visible
+            and self._last_result is not None
             and (not self._busy)
             and self._alt_text_path_ok()
         )
         self.alt_text_btn.Enable(ok)
         if ok:
             self.alt_text_btn.SetToolTip(
-                _("View images and alt text for this publication")
+                _("Build an image report for this publication")
             )
-        elif self._last_result is not None and not self._alt_text_path_ok():
+        elif status == "unsupported":
             self.alt_text_btn.SetToolTip(
                 _(
-                    "Alt text report needs a packaged .epub, .ebrl, or .pdf file, "
-                    "or HTML (file, folder, or URL) after a check."
+                    "This copy of Fido cannot build image reports. "
+                    "Update Fido, then try again."
                 )
             )
         else:
             self.alt_text_btn.SetToolTip(
                 _(
-                    "View images and alt text for this publication "
-                    "(packaged EPUB, eBraille, or PDF, or HTML after a check)"
+                    "Image reports need Fido and a packaged EPUB or PDF."
                 )
             )
 
@@ -5996,27 +6116,66 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_about, self.menu_about)
         self.Bind(wx.EVT_MENU, self.on_add_language, self.menu_add_language)
         self.Bind(wx.EVT_MENU, self.on_import_language, self.menu_import_language)
-        self.Bind(wx.EVT_MENU, lambda _e: self.Close(), id=wx.ID_EXIT)
+        self.Bind(wx.EVT_MENU, self._on_file_exit, id=wx.ID_EXIT)
         self.SetAcceleratorTable(
             wx.AcceleratorTable(
                 [(wx.ACCEL_NORMAL, wx.WXK_ESCAPE, wx.ID_EXIT)]
             )
         )
 
+    def _suppress_escape_exit(self, seconds: float = 0.8) -> None:
+        """Ignore Escape→Exit after a modal so a leftover Esc cannot quit the app."""
+        self._suppress_escape_exit_until = time.monotonic() + max(0.0, seconds)
+
+    def _escape_exit_suppressed(self) -> bool:
+        return time.monotonic() < float(getattr(self, "_suppress_escape_exit_until", 0) or 0)
+
+    def _on_file_exit(self, _event: wx.CommandEvent) -> None:
+        if self._escape_exit_suppressed():
+            return
+        self.Close()
+
+    def _finish_app_exit(self) -> None:
+        """Leave the process without Destroying an Edge host on this stack."""
+        self._exiting = True
+        try:
+            self.Enable(True)
+        except RuntimeError:
+            pass
+        app = wx.GetApp()
+        if app is not None:
+            app.ExitMainLoop()
+        if sys.platform == "win32":
+            # Nested Edge ShowModal can return in Python while C++ never
+            # unwinds; ExitMainLoop then never reaches the terminal.
+            os._exit(0)
+
+    def _end_inventory_modal(self) -> None:
+        dlg = getattr(self, "_alt_inventory_dialog", None)
+        if dlg is None:
+            return
+        ensure = getattr(dlg, "_ensure_end_modal", None)
+        try:
+            if callable(ensure):
+                ensure(int(wx.ID_CANCEL))
+            elif dlg.IsModal():
+                dlg.EndModal(int(wx.ID_CANCEL))
+        except Exception:
+            pass
+
     def _on_main_close(self, event: wx.CloseEvent) -> None:
-        from .ai.alt_inventory_dialog import flush_pending_webview_destroys
         from .dialog_trace import dlg_trace
 
         dlg_trace("main-frame close", self)
-        dlg = getattr(self, "_alt_inventory_dialog", None)
-        self._alt_inventory_dialog = None
-        if dlg is not None:
-            try:
-                dlg.Destroy()
-            except RuntimeError:
-                pass
-        flush_pending_webview_destroys()
-        event.Skip()
+        # Title bar close must always quit. Esc→Exit is filtered in _on_file_exit.
+        self._exiting = True
+        self._stop_alt_inventory_open_timer()
+        self._pending_alt_inventory = None
+        self._end_inventory_modal()
+        self._park_inventory_dialog(getattr(self, "_alt_inventory_dialog", None))
+        self._finish_app_exit()
+        if event.CanVeto():
+            event.Veto()
 
     def on_language_selected(self, lang: str) -> None:
         if lang == get_language():
@@ -6635,7 +6794,7 @@ class MainFrame(wx.Frame):
             self.ai_overview_btn.SetToolTip(
                 _("Generate an AI overview of this report (Ctrl+Shift+A)")
             )
-        self.alt_text_btn.SetLabel(_("&Alt text"))
+        self.alt_text_btn.SetLabel(_("&Images"))
         self._update_alt_text_btn_enabled()
         self._update_show_issues_button()
         self.copy_btn.SetLabel(_("&Copy summary"))
@@ -6893,12 +7052,14 @@ class MainFrame(wx.Frame):
 
     # --- Helpers ---
 
-    def _reclaim_after_modal(self) -> None:
+    def _reclaim_after_modal(self, *, raise_frame: bool = True) -> None:
         """WebView2 / ProgressDialog teardown can leave this frame disabled."""
+        self._suppress_escape_exit()
         try:
             self.Enable(True)
-            self.Raise()
-            _win_force_foreground(self)
+            if raise_frame:
+                self.Raise()
+                _win_force_foreground(self)
         except RuntimeError:
             pass
         try:
@@ -8150,7 +8311,7 @@ class MainFrame(wx.Frame):
             self._close_alt_assess_progress()
 
     def on_alt_text_report(self, _event: wx.CommandEvent) -> None:
-        """Export current publication and show the in-app alt-text inventory report."""
+        """Ask Fido for an image report (inventory or with AI) and show it."""
         if self._busy:
             wx.MessageBox(
                 _("A check is already running. Wait for it to finish, then try again."),
@@ -8164,45 +8325,143 @@ class MainFrame(wx.Frame):
         if self._last_result is None:
             return
 
-        from .ai.alt_build_export import supports_alt_export_path
+        from .ai.fido_image_report import peek_cached_image_report, supports_image_report_path
+        from .fido_launch import fido_image_report_status
 
         current = self._current_target()
-        if current is None or not supports_alt_export_path(current):
+        status = fido_image_report_status()
+        if current is None or not supports_image_report_path(current):
+            wx.MessageBox(
+                _("Image reports need Fido and a packaged EPUB or PDF."),
+                _("Image report"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        if status == "missing":
+            wx.MessageBox(
+                _("Image reports need Fido. Install Fido, then try again."),
+                _("Image report"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        if status == "unsupported":
             wx.MessageBox(
                 _(
-                    "Alt text report needs a packaged .epub, .ebrl, or .pdf file, "
-                    "or HTML (file, folder, or URL) after a check."
+                    "This copy of Fido cannot build image reports. "
+                    "Update Fido, then try again."
                 ),
-                _("Alt text report"),
+                _("Image report"),
                 wx.OK | wx.ICON_INFORMATION,
                 self,
             )
             return
 
-        folder = self._export_alt_for_assess(current)
+        cached = peek_cached_image_report(current)
+        if cached is not None:
+            self._alt_report_source = Path(current)
+            self._alt_report_folder = cached.folder
+            self._show_alt_inventory_report(cached.folder)
+            return
+
+        mode = self._prompt_image_report_mode()
+        if mode is None:
+            return
+        assess, percent = mode
+        self._alt_report_mode = (assess, percent)
+        folder = self._export_alt_for_assess(
+            current, assess=assess, percent=percent
+        )
         if folder is None:
             return
+        self._alt_report_source = Path(current)
+        self._alt_report_folder = Path(folder)
         self._show_alt_inventory_report(folder)
+
+    def _prompt_image_report_mode(
+        self, parent: wx.Window | None = None
+    ) -> tuple[bool, int | None] | None:
+        """Return ``(assess, percent)``, or ``None`` if the user cancelled."""
+        from .ai.fido_image_report import (
+            image_report_ai_sample_choices,
+            image_report_mode_choices,
+        )
+        from .settings import ai_features_enabled
+
+        host = parent or self
+        if not ai_features_enabled():
+            return (False, None)
+        rows = image_report_mode_choices()
+        labels = [label for label, _ai in rows]
+        dlg = wx.SingleChoiceDialog(
+            host,
+            _("Do you want an image report, or an image report with AI analysis?"),
+            _("Images"),
+            labels,
+        )
+        try:
+            dlg.SetSelection(0)
+            if dlg.ShowModal() != wx.ID_OK:
+                return None
+            sel = dlg.GetSelection()
+            if sel < 0 or sel >= len(rows):
+                return None
+            _label, with_ai = rows[sel]
+        finally:
+            dlg.Destroy()
+        if not with_ai:
+            return (False, None)
+        samples = image_report_ai_sample_choices()
+        sample_dlg = wx.SingleChoiceDialog(
+            host,
+            _(
+                "How many images should Fido send to the vision model? "
+                "Samples are spread through the publication."
+            ),
+            _("Image report with AI analysis"),
+            [label for label, _pct in samples],
+        )
+        try:
+            default_sel = 0
+            for i, (_label, pct) in enumerate(samples):
+                if pct == 25:
+                    default_sel = i
+                    break
+            sample_dlg.SetSelection(default_sel)
+            if sample_dlg.ShowModal() != wx.ID_OK:
+                return None
+            sel = sample_dlg.GetSelection()
+            if sel < 0 or sel >= len(samples):
+                return None
+            _label, percent = samples[sel]
+            return (True, percent)
+        finally:
+            sample_dlg.Destroy()
 
     def _show_alt_inventory_report(self, folder: Path) -> None:
         """Open the inventory HTML dialog; optionally continue to AI health check."""
         try:
-            from .ai.alt_export import ensure_alt_report_html
             from .ai.alt_inventory_dialog import flush_pending_webview_destroys
+            from .ai.fido_image_report import HTML_NAME
 
-            html_path = ensure_alt_report_html(folder)
+            html_path = Path(folder) / HTML_NAME
+            if not html_path.is_file():
+                raise FileNotFoundError(html_path)
         except Exception as exc:
             wx.MessageBox(
-                _("Could not open the alt text report:\n{error}").format(error=exc),
-                _("Alt text report"),
+                _("Could not open the image report:\n{error}").format(error=exc),
+                _("Image report"),
                 wx.OK | wx.ICON_ERROR,
                 self,
             )
             return
 
         self._stop_alt_inventory_open_timer()
-        flush_pending_webview_destroys()
-        self._reclaim_after_modal()
+        self._suppress_escape_exit()
+        if not getattr(self, "_alt_inventory_busy", False):
+            flush_pending_webview_destroys()
+            self._reclaim_after_modal(raise_frame=False)
         # Open now (not CallAfter). After a few Edge create/destroy cycles
         # idle callbacks stop running and Alt text looks dead.
         self._present_alt_inventory_report(folder, html_path)
@@ -8229,6 +8488,103 @@ class MainFrame(wx.Frame):
         self._alt_inventory_dialog = None
         return None
 
+    def _retire_inventory_dialog(self) -> None:
+        """End a leftover modal session. Never Destroy while ShowModal is running."""
+        from .dialog_trace import dlg_trace
+
+        dlg = getattr(self, "_alt_inventory_dialog", None)
+        if dlg is None:
+            return
+        dlg_trace("image-report end-modal", dlg)
+        try:
+            if dlg.IsModal():
+                dlg.EndModal(int(wx.ID_CLOSE))
+        except Exception:
+            pass
+
+    def _inventory_dialog_is_parked(self, dlg) -> bool:
+        try:
+            if dlg is None or getattr(dlg, "_parked", False):
+                return True
+            return int(dlg.GetPosition().x) < -5000
+        except RuntimeError:
+            return True
+
+    def _park_inventory_dialog(self, dlg) -> None:
+        """Move the Edge host off-screen. Do not Hide/Destroy (those hang WebView2)."""
+        if dlg is None:
+            return
+        from .dialog_trace import dlg_trace
+
+        dlg_trace("image-report park", dlg)
+        try:
+            pos = dlg.GetPosition()
+            if int(pos.x) > -5000:
+                dlg._unpark_pos = (int(pos.x), int(pos.y))
+            dlg._parked = True
+            dlg.Move(-20000, -20000)
+        except Exception:
+            try:
+                dlg.Iconize(True)
+                dlg._parked = True
+            except Exception:
+                pass
+
+    def _unpark_inventory_dialog(self, dlg) -> bool:
+        from .dialog_trace import dlg_trace
+
+        try:
+            if not dlg:
+                return False
+            dlg._closing = False
+            dlg._parked = False
+            pos = getattr(dlg, "_unpark_pos", None)
+            if pos is not None:
+                dlg.Move(int(pos[0]), int(pos[1]))
+            else:
+                dlg.CentreOnParent()
+            dlg.Show(True)
+            dlg.Enable(True)
+            dlg.Iconize(False)
+            dlg.Raise()
+            dlg_trace("image-report unpark", dlg)
+            return True
+        except RuntimeError:
+            return False
+
+    def _inventory_dialog_dismissed(self, dlg) -> None:
+        """Close/Escape on the image report — park it, keep Edge alive."""
+        from .dialog_trace import dlg_trace
+
+        dlg_trace("image-report dismissed", dlg)
+        self._alt_inventory_busy = False
+        self._park_inventory_dialog(dlg)
+        try:
+            self.Enable(True)
+        except RuntimeError:
+            pass
+        if getattr(self, "_exiting", False):
+            self._finish_app_exit()
+            return
+        self._reclaim_after_modal()
+        pending = getattr(self, "_pending_alt_inventory", None)
+        if pending is not None:
+            self._pending_alt_inventory = None
+            self._present_alt_inventory_report(pending[0], pending[1])
+
+    def _reveal_inventory_dialog(self, dlg) -> bool:
+        return self._unpark_inventory_dialog(dlg)
+
+    def _park_inventory_host(self) -> None:
+        self._park_inventory_dialog(getattr(self, "_alt_inventory_dialog", None))
+
+    def _reschedule_inventory_after_park(self, folder: Path, html_path: Path) -> None:
+        self._pending_alt_inventory = (Path(folder), Path(html_path))
+        self._present_pending_alt_inventory()
+
+    def _reopen_inventory_when_idle(self, folder: Path, html_path: Path) -> None:
+        self._present_alt_inventory_report(folder, html_path)
+
     def _present_pending_alt_inventory(self) -> None:
         self._alt_inventory_open_timer = None
         pending = getattr(self, "_pending_alt_inventory", None)
@@ -8240,360 +8596,236 @@ class MainFrame(wx.Frame):
 
     def _present_alt_inventory_report(self, folder: Path, html_path: Path) -> None:
         from .ai.alt_inventory_dialog import AltTextReportDialog
+        from .dialog_trace import dlg_trace
 
+        if getattr(self, "_exiting", False):
+            return
+        self._suppress_escape_exit()
+        source = getattr(self, "_alt_report_source", None)
+        folder = Path(folder)
+        html_path = Path(html_path)
         dlg = self._alive_inventory_dialog()
+
+        if dlg is not None:
+            try:
+                if dlg.IsModal():
+                    dlg_trace("image-report leftover modal", dlg)
+                    ensure = getattr(dlg, "_ensure_end_modal", None)
+                    if callable(ensure):
+                        ensure(int(wx.ID_CLOSE))
+            except RuntimeError:
+                dlg = None
+                self._alt_inventory_dialog = None
+
         try:
-            if dlg is not None and dlg.IsModal():
-                dlg.Raise()
+            if not self:
                 return
         except RuntimeError:
-            dlg = None
-            self._alt_inventory_dialog = None
+            return
 
-        if getattr(self, "_alt_inventory_busy", False):
-            try:
-                live = dlg is not None and dlg.IsModal()
-            except RuntimeError:
-                live = False
-            if live:
-                return
-            self._alt_inventory_busy = False
-
-        self._reclaim_after_modal()
+        created = False
         if dlg is None:
-            dlg = AltTextReportDialog(self, folder=folder, html_path=html_path)
+            try:
+                dlg = AltTextReportDialog(
+                    self, folder=folder, html_path=html_path, source_path=source
+                )
+            except RuntimeError:
+                logger.exception("Could not create the image report dialog")
+                return
             self._alt_inventory_dialog = dlg
+            created = True
         else:
-            dlg.prepare(folder, html_path)
+            dlg.prepare(folder, html_path, source_path=source)
 
         self._alt_inventory_busy = True
-        result = wx.ID_CANCEL
+        dlg_trace("image-report show", dlg)
+        if not self._unpark_inventory_dialog(dlg):
+            self._alt_inventory_dialog = None
+            self._alt_inventory_busy = False
+            self._reclaim_after_modal()
+            return
+        if not created:
+            after = getattr(dlg, "_after_shown", None)
+            if callable(after):
+                try:
+                    after(int(getattr(dlg, "_load_gen", 0)))
+                except RuntimeError:
+                    pass
+
+    def _rebuild_image_report(self) -> None:
+        current = self._current_target() or getattr(self, "_alt_report_source", None)
+        if current is None:
+            return
+        live = self._alive_inventory_dialog()
+        prompt_parent = live if live is not None else self
+        mode = self._prompt_image_report_mode(parent=prompt_parent)
+        if mode is None:
+            return
+        assess, percent = mode
+        self._alt_report_mode = (assess, percent)
+        rebuild_btn = getattr(live, "rebuild_btn", None) if live is not None else None
+        if rebuild_btn is not None:
+            try:
+                rebuild_btn.Enable(False)
+            except RuntimeError:
+                pass
         try:
-            result = dlg.ShowModal()
-            result = getattr(dlg, "exit_code", result) or result
-        except Exception as exc:
-            wx.MessageBox(
-                _("Could not open the alt text report:\n{error}").format(error=exc),
-                _("Alt text report"),
-                wx.OK | wx.ICON_ERROR,
-                self,
+            folder = self._export_alt_for_assess(
+                current,
+                assess=assess,
+                percent=percent,
+                use_cache=False,
+                progress_parent=prompt_parent,
             )
         finally:
-            self._alt_inventory_busy = False
-            # Keep the dialog and its WebView. Creating a new Edge host each
-            # open dies after a few cycles on Windows.
-            self._reclaim_after_modal()
+            if rebuild_btn is not None:
+                try:
+                    rebuild_btn.Enable(True)
+                except RuntimeError:
+                    pass
+        if folder is None:
+            return
+        self._alt_report_source = Path(current)
+        self._alt_report_folder = Path(folder)
+        from .ai.fido_image_report import HTML_NAME
 
-    def _export_alt_for_assess(self, doc_path: Path | str) -> Path | None:
-        """Build a Fido-style export folder from *doc_path*; return it or None.
+        html_path = Path(folder) / HTML_NAME
+        if live is not None:
+            try:
+                if live:
+                    live.Enable(True)
+                    live.Show(True)
+                    live.Raise()
+                    live.prepare(folder, html_path, source_path=self._alt_report_source)
+                    reload_fn = getattr(live, "reload_report", None)
+                    if callable(reload_fn):
+                        reload_fn()
+                    return
+            except RuntimeError:
+                pass
+        self._show_alt_inventory_report(folder)
 
-        Reuses a prior export for the same unchanged publication file.
-        """
-        from .ai.alt_build_export import (
-            build_alt_export_from_document,
-            get_cached_alt_export,
+    def _export_alt_for_assess(
+        self,
+        doc_path: Path | str,
+        *,
+        assess: bool = False,
+        percent: int | None = None,
+        use_cache: bool = True,
+        progress_parent: wx.Window | None = None,
+    ) -> Path | None:
+        """Run Fido ``image-report`` and return the report folder, or None."""
+        from .ai.fido_image_report import (
+            FidoImageReportError,
+            make_progress_dialog,
+            pad_progress_message,
+            peek_cached_image_report,
+            progress_speech_text,
+            run_fido_image_report,
         )
 
-        cached = get_cached_alt_export(doc_path)
-        if cached is not None:
-            return cached
+        if use_cache and not assess and percent is None:
+            cached = peek_cached_image_report(doc_path)
+            if cached is not None:
+                return cached.folder
 
-        html_source = self._current_target_is_html()
-        extracting = (
-            _("Extracting images from web page…")
-            if html_source
-            else _("Extracting images from publication…")
-        )
+        extracting = _("Asking Fido to build the image report…")
         cancel = threading.Event()
-        progress = wx.ProgressDialog(
-            _("Alt text report"),
-            extracting,
-            maximum=100,
-            parent=self,
-            style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
-        )
-        _present_progress_dialog(progress, extracting)
-        try:
+        host = progress_parent or self
+        progress = make_progress_dialog(_("Image report"), extracting, host)
+        _present_progress_dialog(progress, pad_progress_message(extracting))
+        result_holder: dict[str, object] = {}
 
-            def _cb(current: int, total: int, message: str) -> bool:
+        def _on_progress(message: str) -> None:
+            def update() -> None:
                 if cancel.is_set():
-                    return False
+                    return
                 try:
                     if progress.WasCancelled():
                         cancel.set()
-                        return False
+                        return
                 except RuntimeError:
                     cancel.set()
-                    return False
-                pct = int((current / total) * 100) if total else 0
+                    return
+                text = pad_progress_message(message)
                 try:
-                    cont, _skip = progress.Update(min(99, max(1, pct)), message)
+                    cont, _skip = progress.Pulse(text)
                 except RuntimeError:
                     cancel.set()
-                    return False
-                _announce_progress_status(progress, message)
+                    return
+                _announce_progress_status(
+                    progress, progress_speech_text(message) or message
+                )
                 if not cont:
                     cancel.set()
-                    return False
-                return True
 
-            result = build_alt_export_from_document(
-                doc_path, progress_callback=_cb, use_cache=False
-            )
-            if result.cancelled or cancel.is_set():
-                return None
-            if result.stats.get("total", 0) == 0:
-                wx.MessageBox(
-                    (
-                        _("No images found on the page.")
-                        if html_source
-                        else _("No images found in the publication.")
-                    ),
-                    _("Alt text report"),
-                    wx.OK | wx.ICON_INFORMATION,
-                    self,
-                )
-                return None
-            return Path(result.export_path)
-        except Exception as exc:
-            wx.MessageBox(
-                (
-                    _("Could not extract images from the page:\n{error}")
-                    if html_source
-                    else _("Could not extract images from the publication:\n{error}")
-                ).format(error=exc),
-                _("Alt text report"),
-                wx.OK | wx.ICON_ERROR,
-                self,
-            )
-            return None
-        finally:
-            try:
-                progress.Destroy()
-            except Exception:
-                pass
-
-    def _prompt_alt_assess_sample(self, folder: Path) -> None:
-        from .ai.alt_inventory_dialog import flush_pending_webview_destroys
-
-        flush_pending_webview_destroys()
-        # Preflight: load CSV + confirm sample size
-        try:
-            from .ai.alt_export import infer_publication_format, load_alt_export
-            from .ai.alt_labels import feature_title
-            from .ai.alt_sample import DEFAULT_SAMPLE_PERCENT, sample_choice_labels
-
-            export = load_alt_export(folder)
-        except FileNotFoundError as exc:
-            from .ai.explain import error_message_for_key
-
-            wx.MessageBox(
-                error_message_for_key("bad_export", detail=str(exc)),
-                feature_title(),
-                wx.OK | wx.ICON_ERROR,
-                self,
-            )
-            return
-        except ValueError as exc:
-            from .ai.explain import error_message_for_key
-
-            wx.MessageBox(
-                error_message_for_key("bad_export", detail=str(exc)),
-                feature_title(),
-                wx.OK | wx.ICON_ERROR,
-                self,
-            )
-            return
-        except Exception as exc:
-            wx.MessageBox(
-                _("Could not read the export folder:\n{error}").format(error=exc),
-                feature_title(),
-                wx.OK | wx.ICON_ERROR,
-                self,
-            )
-            return
-
-        counts = export.counts()
-        is_html = infer_publication_format(explicit=export.publication_format) == "html"
-        choice_rows = sample_choice_labels(
-            counts["total"], through_page=is_html
-        )
-        if not choice_rows:
-            return
-        # Small exports only offer "assess all" — skip the redundant picker.
-        if len(choice_rows) == 1:
-            _label, mode, percent = choice_rows[0]
-            percent = percent if percent is not None else 100
-            self._start_alt_assess(folder, mode=mode, percent=percent, prior=None)
-            return
-
-        choices = [label for label, _mode, _pct in choice_rows]
-        # Prefer 25% as the default selection when available.
-        default_sel = 0
-        for i, (_label, _mode, pct) in enumerate(choice_rows):
-            if pct == DEFAULT_SAMPLE_PERCENT:
-                default_sel = i
-                break
-        spread = (
-            _("(samples are spread through the page):")
-            if is_html
-            else _("(samples are spread through the publication):")
-        )
-        choice_dlg = wx.SingleChoiceDialog(
-            self,
-            _(
-                "Document: {name}\n"
-                "Images: {total} — with alt: {with_alt} — decorative: {decorative} — "
-                "missing: {missing}\n\n"
-                "Choose how many images to send to the vision model "
-                "{spread}"
-            ).format(
-                name=export.document_name,
-                total=counts["total"],
-                with_alt=counts["with_alt"],
-                decorative=counts["decorative"],
-                missing=counts["missing"],
-                spread=spread,
-            ),
-            feature_title(),
-            choices,
-        )
-        try:
-            choice_dlg.SetSelection(default_sel)
-            if choice_dlg.ShowModal() != wx.ID_OK:
-                return
-            sel = choice_dlg.GetSelection()
-            _label, mode, percent = choice_rows[sel]
-            percent = percent if percent is not None else 100
-        finally:
-            choice_dlg.Destroy()
-
-        self._start_alt_assess(folder, mode=mode, percent=percent, prior=None)
-
-    def _start_alt_assess(
-        self,
-        folder: Path,
-        *,
-        mode: str,
-        percent: int,
-        prior,
-        parent: wx.Window | None = None,
-    ) -> None:
-        """Run alt assessment on a worker thread and show/update the dialog."""
-        from .ai.alt_labels import feature_title
-
-        if self._alt_assess_progress_is_live():
-            return
-        cancel = threading.Event()
-        self._alt_assess_cancel = cancel
-        start_msg = _alt_assess_progress_body(_ai_libraries_status_message())
-        self._alt_assess_progress = wx.ProgressDialog(
-            feature_title(),
-            start_msg,
-            maximum=100,
-            parent=parent or self,
-            style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT,
-        )
-        _present_progress_dialog(self._alt_assess_progress, start_msg)
-        self._alt_assess_progress_timer = wx.Timer(self)
-        self.Bind(
-            wx.EVT_TIMER,
-            self._on_alt_assess_progress_timer,
-            self._alt_assess_progress_timer,
-        )
-        self._alt_assess_progress_timer.Start(200)
-        status_cb = self._alt_assess_status_callback
+            wx.CallAfter(update)
 
         def work() -> None:
-            from .ai.alt_assess import AltAssessResult, assess_alt_export
-            from .ai.alt_labels import feature_title
-            from .ai.explain import error_message_for_key
-            from .ai.litellm_client import preload_litellm
-
-            posted = False
             try:
-                ok, detail = preload_litellm()
-                if not ok:
-                    def fail() -> None:
-                        self._close_alt_assess_progress()
-                        wx.MessageBox(
-                            error_message_for_key("no_litellm", detail=detail),
-                            feature_title(),
-                            wx.OK | wx.ICON_ERROR,
-                            parent or self,
-                        )
+                result_holder["run"] = run_fido_image_report(
+                    doc_path,
+                    assess=assess,
+                    percent=percent,
+                    use_cache=use_cache,
+                    cancel_event=cancel,
+                    progress=_on_progress,
+                )
+            except Exception as exc:
+                result_holder["error"] = exc
 
-                    wx.CallAfter(fail)
-                    posted = True
-                    return
-                if cancel.is_set():
-                    return
-                try:
-                    out = assess_alt_export(
-                        folder,
-                        mode=mode,
-                        percent=percent,
-                        prior=prior,
-                        cancel_event=cancel,
-                        status_callback=status_cb,
-                    )
-                except Exception as exc:
-                    out = AltAssessResult(
-                        ok=False, error_key="provider_error", detail=str(exc)
-                    )
-                if cancel.is_set():
-                    return
-                try:
-                    wx.PostEvent(
-                        self,
-                        AltAssessAiEvent(result=out),
-                    )
-                    posted = True
-                except RuntimeError:
-                    return
-            finally:
-                if not posted:
-                    wx.CallAfter(self._close_alt_assess_progress)
-
-        threading.Thread(target=work, daemon=True).start()
-
-
-    def _on_alt_assess_ai_event(self, event: AltAssessAiEvent) -> None:
-        self._close_alt_assess_progress()
-        out = getattr(event, "result", None)
-        if out is None:
-            return
-        if not out.ok:
-            from .ai.alt_labels import feature_title
-            from .ai.explain import error_message_for_key
-
-            if out.error_key == "cancelled":
-                self.SetStatusText(_("Cancelled."))
-                wx.CallLater(4000, self._update_status_bar)
-                return
-            msg = error_message_for_key(
-                out.error_key, detail=out.detail or out.text or ""
-            )
-            wx.MessageBox(msg, feature_title(), wx.OK | wx.ICON_ERROR, self)
-            return
-
+        thread = threading.Thread(target=work, daemon=True)
+        thread.start()
+        while thread.is_alive():
+            if cancel.is_set():
+                break
+            try:
+                if progress.WasCancelled():
+                    cancel.set()
+                    break
+                _pulse_progress(progress, announce=False)
+            except RuntimeError:
+                cancel.set()
+                break
+            wx.Yield()
+            thread.join(timeout=0.1)
+        thread.join(timeout=30)
         try:
-            from .telemetry import log_ai_alt_assess
-
-            log_ai_alt_assess()
+            progress.Destroy()
         except Exception:
             pass
+        err = result_holder.get("error")
+        if isinstance(err, FidoImageReportError):
+            msg = str(err)
+            if "cancel" in msg.lower():
+                return None
+            wx.MessageBox(
+                msg,
+                _("Image report"),
+                wx.OK | wx.ICON_ERROR,
+                host,
+            )
+            return None
+        if isinstance(err, Exception):
+            wx.MessageBox(
+                _("Could not build the image report:\n{error}").format(error=err),
+                _("Image report"),
+                wx.OK | wx.ICON_ERROR,
+                host,
+            )
+            return None
+        run = result_holder.get("run")
+        folder = getattr(run, "folder", None)
+        return Path(folder) if folder else None
 
-        dlg = self._alive_inventory_dialog()
-        if dlg is not None:
-            try:
-                if dlg.IsModal() and hasattr(dlg, "apply_sniff_result"):
-                    dlg.apply_sniff_result(out)
-                    return
-            except RuntimeError:
-                pass
-        # Sniff test now lives on the alt-text report dialog. Do not open a
-        # second modal (that path left zombie dialogs after Close).
+    def _prompt_alt_assess_sample(self, folder: Path) -> None:
+        return
+
+    def _start_alt_assess(self, *args, **kwargs) -> None:
+        return
+
+    def _on_alt_assess_ai_event(self, event) -> None:
+        self._close_alt_assess_progress()
 
     def _reenable_after_alt_assess(self) -> None:
         try:

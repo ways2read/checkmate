@@ -108,6 +108,40 @@ def ai_features_enabled() -> bool:
     return bool(read_settings().get("ai_features_enabled", True))
 
 
+def chat_pane_shown() -> bool:
+    """Whether the native conversation pane starts split (Hide/Show)."""
+    return bool(read_settings().get("chat_pane_shown", False))
+
+
+DEFAULT_CHAT_PANE_WIDTH = 340
+
+
+def chat_pane_width() -> int:
+    """Width in pixels of the native conversation pane (right splitter)."""
+    try:
+        raw = int(read_settings().get("chat_pane_width", DEFAULT_CHAT_PANE_WIDTH) or DEFAULT_CHAT_PANE_WIDTH)
+    except (TypeError, ValueError):
+        raw = DEFAULT_CHAT_PANE_WIDTH
+    return max(200, min(raw, 1200))
+
+
+def set_chat_pane_width(px: int) -> None:
+    update_settings(chat_pane_width=max(200, min(int(px), 1200)))
+
+
+def set_chat_pane_shown(shown: bool) -> None:
+    update_settings(chat_pane_shown=bool(shown))
+
+
+def include_chat_in_html_report() -> bool:
+    """Whether Open in browser / Save as HTML include the conversation."""
+    return bool(read_settings().get("include_chat_in_html_report", True))
+
+
+def set_include_chat_in_html_report(include: bool) -> None:
+    update_settings(include_chat_in_html_report=bool(include))
+
+
 def ai_send_kb_article_body() -> bool:
     """True when Explain/Fix may include the offline DAISY KB article body.
 
