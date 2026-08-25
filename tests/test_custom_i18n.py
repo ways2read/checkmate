@@ -178,3 +178,62 @@ def test_export_shipped_language(tmp_i18n: Path) -> None:
     assert raw["direction"] == "ltr"
     assert isinstance(raw["strings"], dict)
     assert raw["strings"]
+
+
+def _source_ui_msgids() -> set[str]:
+    import ast
+    from pathlib import Path
+
+    def const_str(node: ast.AST) -> str | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left, right = const_str(node.left), const_str(node.right)
+            if left is not None and right is not None:
+                return left + right
+        return None
+
+    def call_name(func: ast.AST) -> str | None:
+        if isinstance(func, ast.Name):
+            return func.id
+        if isinstance(func, ast.Attribute):
+            return func.attr
+        return None
+
+    keys: set[str] = set()
+    root = Path(i18n.__file__).resolve().parent
+    for path in root.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = call_name(node.func)
+            if name == "_" and node.args:
+                value = const_str(node.args[0])
+                if value:
+                    keys.add(value)
+            elif name == "ngettext" and len(node.args) >= 2:
+                a, b = const_str(node.args[0]), const_str(node.args[1])
+                if a:
+                    keys.add(a)
+                if b:
+                    keys.add(b)
+    return keys
+
+
+def test_shipped_catalogs_cover_source_msgids() -> None:
+    keys = _source_ui_msgids()
+    assert "Show chat" in keys
+    assert "Include chat in HTML report" in keys
+    missing_by_lang: dict[str, list[str]] = {}
+    for code in ("fr", "es", "ar", "ru", "ja"):
+        catalog = i18n.read_packaged_catalog(code)
+        assert catalog is not None, code
+        strings = catalog["strings"]
+        missing = sorted(keys - set(strings))
+        if missing:
+            missing_by_lang[code] = missing
+        assert catalog.get("source_msgid_hash") == i18n.msgid_hash()
+    assert missing_by_lang == {}

@@ -287,6 +287,29 @@ def html_report_with_chat(html_doc: str, chat_markdown: str, *, include: bool) -
     return text + section
 
 
+def overview_html_for_export(
+    markdown_text: str,
+    *,
+    include_chat: bool,
+    title: str,
+    plain: bool = False,
+) -> str:
+    """Browser HTML for an AI overview, optionally including follow-up chat.
+
+    The in-app WebView always shows synthesis only. View in browser / Save as
+    HTML append the conversation when *include_chat* is true.
+    """
+    md = markdown_text or ""
+    if not include_chat:
+        md, _suffix = split_followup_markdown(md)
+    return markdown_to_browser_page(
+        md,
+        title=title,
+        plain=plain,
+        tab_exit=False,
+    )
+
+
 def markdown_to_page(text: str, *, plain: bool = False) -> str:
     """
     Full HTML page suitable for ``HtmlWindow.SetPage`` (limited HTML subset).

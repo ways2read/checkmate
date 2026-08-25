@@ -390,7 +390,6 @@ class AltTextReportDialog(AltSniffTestMixin, wx.Dialog):
             title=_("Image report"),
             style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX,
         )
-        self.SetSize((900, 760))
         self.SetMinSize((720, 520))
         self.folder = Path(folder)
         self._html_path = Path(html_path)
@@ -501,6 +500,9 @@ class AltTextReportDialog(AltSniffTestMixin, wx.Dialog):
         self.Bind(wx.EVT_CHAR_HOOK, self._on_char_hook)
 
         self.SetSizer(root)
+        from .conversation_pane import apply_webview_chat_dialog_size
+
+        apply_webview_chat_dialog_size(self, "image_report")
         self.CentreOnParent()
         # Escape is handled by CHAR_HOOK / in-page JS. Stock ID_CLOSE as the
         # escape id leaves a queued EndModal that instantly closes the next open.
@@ -622,6 +624,7 @@ class AltTextReportDialog(AltSniffTestMixin, wx.Dialog):
             self._sniff_host,
             shown=self._chat_pane_shown,
             toggle=getattr(self, "chat_toggle_btn", None),
+            remember_width=persist,
         )
         try:
             self.Layout()

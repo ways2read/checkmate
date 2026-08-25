@@ -1177,9 +1177,13 @@ class AltSniffTestMixin:
         self._closing = True
         self._persist_qa_markdown()
         try:
-            from .conversation_pane import remember_chat_pane_width
+            from .conversation_pane import (
+                remember_chat_pane_width,
+                remember_webview_chat_dialog_size,
+            )
 
             remember_chat_pane_width(getattr(self, "_splitter", None))
+            remember_webview_chat_dialog_size(self, "image_report")
         except Exception:
             pass
         close_session = int(getattr(self, "_modal_session", 0))

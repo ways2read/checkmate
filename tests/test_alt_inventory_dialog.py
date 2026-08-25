@@ -314,11 +314,14 @@ class UniqueViewHtmlTests(unittest.TestCase):
         report_src = inspect.getsource(AltTextReportDialog.__init__)
         self.assertIn("ConversationScroller", report_src)
         self.assertIn("make_chat_splitter", report_src)
+        self.assertIn("apply_webview_chat_dialog_size", report_src)
         overview_src = inspect.getsource(AiOverviewDialog.__init__)
         self.assertIn("ConversationScroller", overview_src)
+        self.assertIn("apply_webview_chat_dialog_size", overview_src)
         self.assertIn("on_toggle_chat", overview_src)
         self.assertIn("_add_chat_column_composer", overview_src)
         self.assertIn("chat_toggle_btn", overview_src)
+        self.assertIn("Include chat in HTML report", overview_src)
         self.assertNotIn("_add_followup_question_row", overview_src)
         follow_src = inspect.getsource(AltTextReportDialog._build_sniff_followup)
         self.assertIn("Include chat in HTML report", follow_src)
@@ -329,6 +332,10 @@ class UniqueViewHtmlTests(unittest.TestCase):
         self.assertNotIn("_path_label", report_src)
         open_src = inspect.getsource(AltTextReportDialog._on_open_browser)
         self.assertIn("_html_report_for_export", open_src)
+        overview_view = inspect.getsource(AiOverviewDialog._on_view_browser)
+        self.assertIn("_html_for_export", overview_view)
+        overview_save = inspect.getsource(AiOverviewDialog._on_save_html)
+        self.assertIn("_html_for_export", overview_save)
 
 
 class ConversationPaneMacSafetyTests(unittest.TestCase):
@@ -580,11 +587,16 @@ class InventoryLifecycleSourceTests(unittest.TestCase):
 
         src = inspect.getsource(MainFrame._on_main_close)
         self.assertIn("_finish_app_exit", src)
-        self.assertIn("_end_inventory_modal", src)
+        self.assertIn("_end_nested_modals", src)
         self.assertNotIn("dlg.Destroy()", src)
         self.assertNotIn("flush_pending_webview_destroys", src)
         self.assertNotIn("schedule_webview_window_destroy", src)
         self.assertNotIn("CallLater", src)
+        nested = inspect.getsource(MainFrame._end_nested_modals)
+        self.assertIn("_end_inventory_modal", nested)
+        self.assertIn("_overview_dialog", nested)
+        self.assertIn("_issue_detail_dialog", nested)
+        self.assertIn("_ensure_end_modal", nested)
         self.assertIn("ExitMainLoop", inspect.getsource(MainFrame._finish_app_exit))
         self.assertIn("os._exit", inspect.getsource(MainFrame._finish_app_exit))
 
@@ -597,6 +609,43 @@ class InventoryLifecycleSourceTests(unittest.TestCase):
         self.assertIn("except RuntimeError", src)
         sync = inspect.getsource(AltTextReportDialog._sync_chat_chrome)
         self.assertIn("except RuntimeError", sync)
+
+
+class NestedEdgeModalCloseTests(unittest.TestCase):
+    def test_issue_detail_close_ends_modal_immediately(self):
+        import inspect
+
+        from checkmate.main import IssueDetailDialog, MainFrame
+
+        close_src = inspect.getsource(IssueDetailDialog._on_close_dialog)
+        self.assertIn("_ensure_end_modal", close_src)
+        self.assertIn("reclaim_focus=False", close_src)
+        closing_branch = close_src.split('if getattr(self, "_closing", False):', 1)[1]
+        closing_branch = closing_branch.split("self._closing = True", 1)[0]
+        self.assertIn("_ensure_end_modal", closing_branch)
+        show_src = inspect.getsource(MainFrame._show_issue_details)
+        self.assertIn("self._issue_detail_dialog = dlg", show_src)
+        self.assertIn("dlg.ShowModal()", show_src)
+        self.assertLess(
+            show_src.find("self._issue_detail_dialog = dlg"),
+            show_src.find("dlg.ShowModal()"),
+        )
+
+    def test_overview_close_ends_modal_immediately(self):
+        import inspect
+
+        from checkmate.main import AiOverviewDialog, MainFrame
+
+        close_src = inspect.getsource(AiOverviewDialog._on_close_dialog)
+        self.assertIn("_ensure_end_modal", close_src)
+        self.assertIn("reclaim_focus=False", close_src)
+        closing_branch = close_src.split('if getattr(self, "_closing", False):', 1)[1]
+        closing_branch = closing_branch.split("self._closing = True", 1)[0]
+        self.assertIn("_ensure_end_modal", closing_branch)
+        run_src = inspect.getsource(MainFrame._run_overview_dialog)
+        self.assertIn("dlg.ShowModal()", run_src)
+        self.assertNotIn("self._overview_dialog = None", run_src.split("dlg.ShowModal()", 1)[0])
+        self.assertIn("self._overview_dialog = None", run_src.split("finally:", 1)[1])
 
 
 class ScheduleDestroyTests(unittest.TestCase):
@@ -623,6 +672,56 @@ class ScheduleDestroyTests(unittest.TestCase):
                 mod._pending_webview_destroy.remove(frame)
         finally:
             frame.Destroy()
+
+
+class WebviewChatDialogSizeTests(unittest.TestCase):
+    def test_first_open_uses_three_quarters_except_ultrawide(self) -> None:
+        from checkmate.settings import default_webview_chat_dialog_size
+
+        self.assertEqual(default_webview_chat_dialog_size(1920, 1080), (1440, 810))
+        self.assertEqual(default_webview_chat_dialog_size(2560, 1440), (1920, 1080))
+        self.assertEqual(default_webview_chat_dialog_size(3440, 1440), (1720, 1080))
+        self.assertEqual(default_webview_chat_dialog_size(3840, 1080), (1920, 810))
+
+    def test_saved_size_is_per_dialog_kind(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        from checkmate import settings as settings_mod
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            with mock.patch.object(settings_mod, "settings_path", return_value=path):
+                self.assertIsNone(settings_mod.webview_chat_dialog_size("overview"))
+                settings_mod.set_webview_chat_dialog_size("overview", 1400, 800)
+                settings_mod.set_webview_chat_dialog_size("image_report", 1600, 900)
+                self.assertEqual(
+                    settings_mod.webview_chat_dialog_size("overview"), (1400, 800)
+                )
+                self.assertEqual(
+                    settings_mod.webview_chat_dialog_size("image_report"), (1600, 900)
+                )
+
+    def test_hide_chat_keeps_saved_width_until_user_toggles(self) -> None:
+        import inspect
+
+        from checkmate.ai.conversation_pane import set_chat_pane_shown
+        from checkmate.ai.alt_dialog import AltSniffTestMixin
+        from checkmate.ai.alt_inventory_dialog import AltTextReportDialog
+        from checkmate.main import AiOverviewDialog
+
+        shown_src = inspect.getsource(set_chat_pane_shown)
+        self.assertIn("remember_width", shown_src)
+        self.assertIn("if remember_width:", shown_src)
+        overview_apply = inspect.getsource(AiOverviewDialog._apply_chat_pane_shown)
+        self.assertIn("remember_width=persist", overview_apply)
+        report_apply = inspect.getsource(AltTextReportDialog._apply_chat_pane_shown)
+        self.assertIn("remember_width=persist", report_apply)
+        overview_close = inspect.getsource(AiOverviewDialog._on_close_dialog)
+        self.assertIn("remember_webview_chat_dialog_size", overview_close)
+        mixin_close = inspect.getsource(AltSniffTestMixin._on_close_dialog)
+        self.assertIn("remember_webview_chat_dialog_size", mixin_close)
 
 
 if __name__ == "__main__":

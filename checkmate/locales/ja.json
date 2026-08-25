@@ -5,7 +5,7 @@
   "native_name": "日本語",
   "display_name": "Japanese",
   "direction": "ltr",
-  "source_msgid_hash": "1fc5edb426d25fda",
+  "source_msgid_hash": "a9aabeff7bd9b364",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*注: AIの返答が途中で切れました。「続けてください」などの補足を送信してください。*",
     "&About": "バージョン情報(&A)",
@@ -755,6 +755,18 @@
     "Web page": "ウェブページ",
     "Web page: {path}": "ウェブページ: {path}",
     "When checked, CheckMate follows same-site links from the starting page (skipping mailto, files, and other sites). When unchecked, only the page you opened is checked.": "オンにすると、CheckMate は開始ページから同一サイトのリンクをたどります（mailto、ファイル、他サイトは除く）。オフの場合、開いたページだけをチェックします。",
-    "axe report": "axe レポート"
+    "axe report": "axe レポート",
+    "Ask a question…": "質問する…",
+    "Conversation": "会話",
+    "Est. time remaining: {eta}": "残り時間（推定）: {eta}",
+    "Hide chat": "チャットを隠す",
+    "Include chat in HTML report": "HTMLレポートにチャットを含める",
+    "Open in browser includes the conversation": "ブラウザーで開くと会話が含まれます",
+    "Questions and Answers": "質問と回答",
+    "Show chat": "チャットを表示",
+    "This copy of Fido cannot build image reports. Update Fido, then try again.": "この Fido では画像レポートを作成できません。Fido を更新してから再試行してください。",
+    "Type a message about this report": "このレポートについてのメッセージを入力",
+    "What questions do you have about the image report?": "画像レポートについて、どのような質問がありますか？",
+    "What questions do you have about this overview?": "この概要について、どのような質問がありますか？"
   }
 }

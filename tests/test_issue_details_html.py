@@ -139,5 +139,18 @@ class IssueDetailFollowupI18nTests(unittest.TestCase):
         self.assertIn('_("Apply fix and validate")', fix_src)
 
 
+class IssueDetailCloseTests(unittest.TestCase):
+    def test_close_ends_modal_without_waiting_for_idle(self) -> None:
+        import inspect
+
+        from checkmate.main import IssueDetailDialog
+
+        close_src = inspect.getsource(IssueDetailDialog._on_close_dialog)
+        self.assertIn("_ensure_end_modal", close_src)
+        ensure_src = inspect.getsource(IssueDetailDialog._ensure_end_modal)
+        self.assertIn("EndModal", ensure_src)
+        self.assertIn("parent.Enable(True)", ensure_src)
+
+
 if __name__ == "__main__":
     unittest.main()

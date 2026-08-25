@@ -5,7 +5,7 @@
   "native_name": "Español",
   "display_name": "Spanish",
   "direction": "ltr",
-  "source_msgid_hash": "1fc5edb426d25fda",
+  "source_msgid_hash": "a9aabeff7bd9b364",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Nota: La respuesta de la IA se cortó de nuevo. Haz una pregunta de seguimiento como “Por favor, continúa”.*",
     "&About": "&Acerca de",
@@ -755,6 +755,18 @@
     "Web page": "Página web",
     "Web page: {path}": "Página web: {path}",
     "When checked, CheckMate follows same-site links from the starting page (skipping mailto, files, and other sites). When unchecked, only the page you opened is checked.": "Si está activado, CheckMate sigue los enlaces del mismo sitio desde la página inicial (omite mailto, archivos y otros sitios). Si está desactivado, solo se comprueba la página que abrió.",
-    "axe report": "Informe de axe"
+    "axe report": "Informe de axe",
+    "Ask a question…": "Hacer una pregunta…",
+    "Conversation": "Conversación",
+    "Est. time remaining: {eta}": "Tiempo rest. estimado: {eta}",
+    "Hide chat": "Ocultar el chat",
+    "Include chat in HTML report": "Incluir el chat en el informe HTML",
+    "Open in browser includes the conversation": "Abrir en el navegador incluye la conversación",
+    "Questions and Answers": "Preguntas y respuestas",
+    "Show chat": "Mostrar el chat",
+    "This copy of Fido cannot build image reports. Update Fido, then try again.": "Esta copia de Fido no puede generar informes de imágenes. Actualice Fido e inténtelo de nuevo.",
+    "Type a message about this report": "Escriba un mensaje sobre este informe",
+    "What questions do you have about the image report?": "¿Qué preguntas tiene sobre el informe de imágenes?",
+    "What questions do you have about this overview?": "¿Qué preguntas tiene sobre este resumen?"
   }
 }

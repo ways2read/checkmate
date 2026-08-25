@@ -2535,6 +2535,20 @@ class IssueDetailDialog(wx.Dialog):
         close_btn = self.FindWindowById(wx.ID_CLOSE)
         _try_set_focus(close_btn)
 
+    def _ensure_end_modal(self, code: int) -> None:
+        """EndModal if wx still thinks this dialog is modal. Safe to call twice."""
+        try:
+            if self.IsModal():
+                self.EndModal(int(code))
+        except RuntimeError:
+            pass
+        try:
+            parent = self.GetParent()
+            if parent is not None:
+                parent.Enable(True)
+        except RuntimeError:
+            pass
+
     def _on_close_dialog(self, event: wx.Event | None = None) -> None:
         # Guard against SetEscapeId + CHAR_HOOK + checkmate://close all firing.
         # A second pass that Destroy()s while ShowModal is unwinding leaves the
@@ -2542,6 +2556,9 @@ class IssueDetailDialog(wx.Dialog):
         if getattr(self, "_closing", False):
             if isinstance(event, wx.CloseEvent):
                 event.Veto()
+            # Idle CallAfter(_finish_close_dialog) can be dropped after Edge
+            # cycles; a second Close must still unblock ShowModal.
+            self._ensure_end_modal(int(wx.ID_CLOSE))
             return
         self._closing = True
         # Cancel deferred WebView focus/reveal/paint chains (follow-up SetPage
@@ -2559,12 +2576,12 @@ class IssueDetailDialog(wx.Dialog):
         # Do not reclaim focus onto this dialog after teardown.
         self._close_ai_progress(reclaim_focus=False)
         if isinstance(event, wx.CloseEvent):
-            # We EndModal ourselves on the next tick.
             event.Veto()
-        # Never steal focus from Edge via WM_NEXTDLGCTL here — that deadlocks
-        # WebView2 when Escape arrives through checkmate://close. Finish close
-        # on the next idle so we are outside navigating/key handlers.
-        self._release_webview()
+        # Never steal focus from Edge via WM_NEXTDLGCTL — that deadlocks
+        # WebView2. EndModal now: CallAfter can be dropped after Edge cycles,
+        # which leaves the main frame disabled so the app cannot quit.
+        self._release_webview(reclaim_focus=False)
+        self._ensure_end_modal(int(wx.ID_CLOSE))
         wx.CallAfter(self._finish_close_dialog)
 
     def _call_later(self, ms: int, fn) -> wx.CallLater:
@@ -2591,10 +2608,11 @@ class IssueDetailDialog(wx.Dialog):
         except RuntimeError:
             pass
 
-    def _release_webview(self) -> None:
+    def _release_webview(self, *, reclaim_focus: bool = True) -> None:
         """Unbind Edge events; do not Stop/Hide the control (that hangs)."""
         self._stop_pending_later()
-        self._focus_dialog_chrome()
+        if reclaim_focus:
+            self._focus_dialog_chrome()
         if not getattr(self, "_ai_output_is_webview", False):
             return
         view = getattr(self, "ai_output", None)
@@ -2617,16 +2635,10 @@ class IssueDetailDialog(wx.Dialog):
                 return
         except RuntimeError:
             return
-        self._focus_dialog_chrome()
         dlg_trace("issue-detail finish close", self)
-        try:
-            if self.IsModal():
-                dlg_trace("issue-detail EndModal", self)
-                self.EndModal(wx.ID_CLOSE)
-                dlg_trace("issue-detail EndModal returned", self)
-            # Caller owns Destroy — never Destroy Edge on this stack.
-        except RuntimeError:
-            pass
+        dlg_trace("issue-detail EndModal", self)
+        self._ensure_end_modal(int(wx.ID_CLOSE))
+        dlg_trace("issue-detail EndModal returned", self)
 
     def _ai_dialog_alive(self) -> bool:
         """False while closing or after the dialog window is gone."""
@@ -3917,7 +3929,6 @@ class AiOverviewDialog(wx.Dialog):
             title=_("AI overview"),
             style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX,
         )
-        self.SetSize((900, 640))
         self._result = result
         self._session = session
         self._busy = False
@@ -3935,6 +3946,7 @@ class AiOverviewDialog(wx.Dialog):
         from .ai.markdown_html import with_ai_disclaimer
         from .ai.conversation_pane import (
             ConversationScroller,
+            apply_webview_chat_dialog_size,
             bind_chat_sash_persist,
             make_chat_splitter,
         )
@@ -3975,6 +3987,17 @@ class AiOverviewDialog(wx.Dialog):
             on_ask=self._on_ask_followup,
             ask_enabled=self._session is not None,
         )
+        from .settings import include_chat_in_html_report
+
+        self.include_qa_chk = wx.CheckBox(
+            self._chat_host, label=_("Include chat in HTML report")
+        )
+        self.include_qa_chk.SetToolTip(
+            _("Open in browser includes the conversation")
+        )
+        self.include_qa_chk.SetValue(include_chat_in_html_report())
+        self.include_qa_chk.Bind(wx.EVT_CHECKBOX, self._on_include_qa)
+        chat_sizer.Add(self.include_qa_chk, 0, wx.EXPAND | wx.ALL, 8)
         self._chat_host.SetSizer(chat_sizer)
         self._chat_pane_shown = bool(chat_pane_pref())
         self._splitter.SplitVertically(self._ai_output_host, self._chat_host, 520)
@@ -4029,6 +4052,7 @@ class AiOverviewDialog(wx.Dialog):
         self.Bind(EVT_EXPLAIN_AI, self._on_followup_ai_event)
 
         self.SetSizer(root)
+        apply_webview_chat_dialog_size(self, "overview")
         self.CentreOnParent()
         self.SetEscapeId(wx.ID_NONE)
         self.SetAffirmativeId(wx.ID_NONE)
@@ -4053,6 +4077,7 @@ class AiOverviewDialog(wx.Dialog):
             self._chat_host,
             shown=self._chat_pane_shown,
             toggle=getattr(self, "chat_toggle_btn", None),
+            remember_width=persist,
         )
         try:
             self.Layout()
@@ -4060,6 +4085,14 @@ class AiOverviewDialog(wx.Dialog):
             pass
         if persist:
             persist_chat(self._chat_pane_shown)
+
+    def _on_include_qa(self, _event: wx.Event) -> None:
+        from .settings import set_include_chat_in_html_report
+
+        chk = getattr(self, "include_qa_chk", None)
+        if chk is None:
+            return
+        set_include_chat_in_html_report(bool(chk.GetValue()))
 
     def _paint_overview_chat(self) -> None:
         from .ai.markdown_html import (
@@ -4343,6 +4376,20 @@ class AiOverviewDialog(wx.Dialog):
         self._dialog_html_cache = html_doc
         return html_doc
 
+    def _html_for_export(self) -> str:
+        from .ai.markdown_html import overview_html_for_export
+
+        include = True
+        chk = getattr(self, "include_qa_chk", None)
+        if chk is not None:
+            include = bool(chk.GetValue())
+        return overview_html_for_export(
+            self._ai_markdown or "",
+            include_chat=include,
+            title=_("AI overview"),
+            plain=self._ai_plain,
+        )
+
     def _paint_content(self, *, focus: bool = False) -> None:
         if not self._ai_dialog_alive():
             return
@@ -4601,7 +4648,7 @@ class AiOverviewDialog(wx.Dialog):
         try:
             fd, name = tempfile.mkstemp(prefix="checkmate-overview-", suffix=".html", text=True)
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(self._dialog_html())
+                fh.write(self._html_for_export())
             webbrowser.open(Path(name).as_uri())
         except OSError as exc:
             wx.MessageBox(
@@ -4623,7 +4670,7 @@ class AiOverviewDialog(wx.Dialog):
                 return
             path = Path(dlg.GetPath())
         try:
-            path.write_text(self._dialog_html(), encoding="utf-8")
+            path.write_text(self._html_for_export(), encoding="utf-8")
         except OSError as exc:
             wx.MessageBox(
                 _("Could not save the explanation:\n{error}", error=exc),
@@ -4661,6 +4708,20 @@ class AiOverviewDialog(wx.Dialog):
             finally:
                 wx.TheClipboard.Close()
 
+    def _ensure_end_modal(self, code: int) -> None:
+        """EndModal if wx still thinks this dialog is modal. Safe to call twice."""
+        try:
+            if self.IsModal():
+                self.EndModal(int(code))
+        except RuntimeError:
+            pass
+        try:
+            parent = self.GetParent()
+            if parent is not None:
+                parent.Enable(True)
+        except RuntimeError:
+            pass
+
     def _on_close_dialog(self, event: wx.Event | None = None) -> None:
         from .dialog_trace import dlg_trace
 
@@ -4668,16 +4729,21 @@ class AiOverviewDialog(wx.Dialog):
         # A second pass that Destroy()s while ShowModal is unwinding leaves the
         # main frame disabled/frozen.
         if getattr(self, "_closing", False):
-            dlg_trace("overview close ignored (already closing)", self)
+            dlg_trace("overview close retry EndModal", self)
             if isinstance(event, wx.CloseEvent):
                 event.Veto()
+            self._ensure_end_modal(int(wx.ID_CLOSE))
             return
         dlg_trace("overview close", self)
         self._closing = True
         try:
-            from .ai.conversation_pane import remember_chat_pane_width
+            from .ai.conversation_pane import (
+                remember_chat_pane_width,
+                remember_webview_chat_dialog_size,
+            )
 
             remember_chat_pane_width(getattr(self, "_splitter", None))
+            remember_webview_chat_dialog_size(self, "overview")
         except Exception:
             pass
         self._stop_pending_later()
@@ -4688,7 +4754,10 @@ class AiOverviewDialog(wx.Dialog):
         self._close_ai_progress(reclaim_focus=False)
         if isinstance(event, wx.CloseEvent):
             event.Veto()
-        self._release_webview()
+        # EndModal now: CallAfter can be dropped after Edge cycles (issue
+        # details then overview), which leaves the main frame disabled.
+        self._release_webview(reclaim_focus=False)
+        self._ensure_end_modal(int(wx.ID_CLOSE))
         wx.CallAfter(self._finish_close_dialog)
 
     def _focus_dialog_chrome(self) -> None:
@@ -4702,12 +4771,13 @@ class AiOverviewDialog(wx.Dialog):
         except RuntimeError:
             pass
 
-    def _release_webview(self) -> None:
+    def _release_webview(self, *, reclaim_focus: bool = True) -> None:
         """Unbind Edge events; do not Stop/Hide the control (that hangs)."""
         from .dialog_trace import dlg_trace
 
         self._stop_pending_later()
-        self._focus_dialog_chrome()
+        if reclaim_focus:
+            self._focus_dialog_chrome()
         view = getattr(self, "ai_output", None)
         if view is None or not getattr(self, "_ai_output_is_webview", False):
             return
@@ -4729,16 +4799,10 @@ class AiOverviewDialog(wx.Dialog):
                 return
         except RuntimeError:
             return
-        self._focus_dialog_chrome()
         dlg_trace("overview finish close", self)
-        try:
-            if self.IsModal():
-                dlg_trace("overview EndModal", self)
-                self.EndModal(wx.ID_CLOSE)
-                dlg_trace("overview EndModal returned", self)
-            # Caller owns Destroy — never Destroy Edge on this stack.
-        except RuntimeError as exc:
-            dlg_trace("overview EndModal failed", self, err=exc)
+        dlg_trace("overview EndModal", self)
+        self._ensure_end_modal(int(wx.ID_CLOSE))
+        dlg_trace("overview EndModal returned", self)
 
     def _ai_dialog_alive(self) -> bool:
         if getattr(self, "_closing", False):
@@ -5231,6 +5295,8 @@ class MainFrame(wx.Frame):
         self._overview_cancel: threading.Event | None = None
         self._overview_progress: wx.ProgressDialog | None = None
         self._overview_progress_timer: wx.Timer | None = None
+        self._overview_dialog = None
+        self._issue_detail_dialog = None
         self._alt_assess_cancel: threading.Event | None = None
         self._alt_assess_progress: wx.ProgressDialog | None = None
         self._alt_assess_progress_timer: wx.Timer | None = None
@@ -6278,6 +6344,22 @@ class MainFrame(wx.Frame):
         except Exception:
             pass
 
+    def _end_nested_modals(self) -> None:
+        """Unblock leftover ShowModal so File/Exit and the title bar can quit."""
+        self._end_inventory_modal()
+        for attr in ("_overview_dialog", "_issue_detail_dialog"):
+            dlg = getattr(self, attr, None)
+            if dlg is None:
+                continue
+            ensure = getattr(dlg, "_ensure_end_modal", None)
+            try:
+                if callable(ensure):
+                    ensure(int(wx.ID_CLOSE))
+                elif dlg.IsModal():
+                    dlg.EndModal(int(wx.ID_CLOSE))
+            except Exception:
+                pass
+
     def _on_main_close(self, event: wx.CloseEvent) -> None:
         from .dialog_trace import dlg_trace
 
@@ -6286,7 +6368,7 @@ class MainFrame(wx.Frame):
         self._exiting = True
         self._stop_alt_inventory_open_timer()
         self._pending_alt_inventory = None
-        self._end_inventory_modal()
+        self._end_nested_modals()
         self._park_inventory_dialog(getattr(self, "_alt_inventory_dialog", None))
         self._finish_app_exit()
         if event.CanVeto():
@@ -7416,19 +7498,24 @@ class MainFrame(wx.Frame):
             except RuntimeError:
                 pass
 
-        result_code = dlg.ShowModal()
-        pending = getattr(dlg, "applied_fix_verify", None)
         from .ai.alt_inventory_dialog import schedule_webview_window_destroy
         from .dialog_trace import dlg_trace
 
-        dlg_trace("issue-detail ShowModal returned", dlg, result=result_code)
+        result_code = int(wx.ID_CANCEL)
+        self._issue_detail_dialog = dlg
         try:
-            dlg._release_webview()
-        except RuntimeError:
-            pass
-        schedule_webview_window_destroy(dlg)
-        wx.CallAfter(self._reclaim_after_modal)
-        wx.CallLater(150, self._reclaim_after_modal)
+            result_code = dlg.ShowModal()
+            dlg_trace("issue-detail ShowModal returned", dlg, result=result_code)
+        finally:
+            self._issue_detail_dialog = None
+            try:
+                dlg._release_webview(reclaim_focus=False)
+            except RuntimeError:
+                pass
+            schedule_webview_window_destroy(dlg)
+            wx.CallAfter(self._reclaim_after_modal)
+            wx.CallLater(150, self._reclaim_after_modal)
+        pending = getattr(dlg, "applied_fix_verify", None)
         if result_code == wx.ID_APPLY:
             # Apply fix succeeded — re-scan, then confirm resolution / offer revert.
             self._pending_fix_verify = pending
@@ -8344,7 +8431,6 @@ class MainFrame(wx.Frame):
         from .dialog_trace import dlg_trace
 
         dlg = getattr(self, "_overview_dialog", None)
-        self._overview_dialog = None
         if dlg is None:
             return
         dlg_trace("overview ShowModal", dlg)
@@ -8352,8 +8438,9 @@ class MainFrame(wx.Frame):
             dlg.ShowModal()
             dlg_trace("overview ShowModal returned", dlg)
         finally:
+            self._overview_dialog = None
             try:
-                dlg._release_webview()
+                dlg._release_webview(reclaim_focus=False)
             except RuntimeError:
                 pass
             # Immediate Destroy of Edge after a follow-up SetPage hangs the

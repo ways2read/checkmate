@@ -5,7 +5,7 @@
   "native_name": "Русский",
   "display_name": "Russian",
   "direction": "ltr",
-  "source_msgid_hash": "1fc5edb426d25fda",
+  "source_msgid_hash": "a9aabeff7bd9b364",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Примечание: ответ ИИ снова был обрезан. Задайте уточняющий вопрос, например «Пожалуйста, продолжите».*",
     "&About": "&О программе",
@@ -755,6 +755,18 @@
     "Remove the custom language “{name}” from this computer?": "Удалить пользовательский язык «{name}» с этого компьютера?",
     "Remove…": "Удалить…",
     "Update translations…": "Обновить переводы…",
-    "“{code}” is already included with CheckMate.": "«{code}» уже входит в CheckMate."
+    "“{code}” is already included with CheckMate.": "«{code}» уже входит в CheckMate.",
+    "Ask a question…": "Задайте вопрос…",
+    "Conversation": "Беседа",
+    "Est. time remaining: {eta}": "Ост. время: {eta}",
+    "Hide chat": "Скрыть чат",
+    "Include chat in HTML report": "Включить чат в HTML-отчёт",
+    "Open in browser includes the conversation": "Открытие в браузере включает беседу",
+    "Questions and Answers": "Вопросы и ответы",
+    "Show chat": "Показать чат",
+    "This copy of Fido cannot build image reports. Update Fido, then try again.": "Эта копия Fido не может создавать отчёты об изображениях. Обновите Fido и повторите попытку.",
+    "Type a message about this report": "Введите сообщение об этом отчёте",
+    "What questions do you have about the image report?": "Какие у вас вопросы по отчёту об изображениях?",
+    "What questions do you have about this overview?": "Какие у вас вопросы по этому обзору?"
   }
 }

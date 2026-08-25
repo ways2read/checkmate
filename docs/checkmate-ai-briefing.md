@@ -297,7 +297,7 @@ Confirm / revert dialogs show the changelog path when present. Open the log anyt
 
 **Purpose:** After a check, browse images and alt text for a packaged EPUB or PDF, optionally with Fido’s AI Image Sniff Test. CheckMate is the viewer and chat host; Fido builds the report.
 
-**Entry:** Result-row **Images** button, enabled when Fido is installed and the target is a packaged `.epub` or `.pdf`. Click asks for an inventory report or an image report with AI analysis (`--percent` / `--assess`), then runs `Fido.exe image-report --input … --output …` (inventory cached under CheckMate app-data `image_reports/`). The HTML report opens in-app on a single page; Fido’s coloured verdict pills sit above the WebView. Inventory HTML does not require AI credentials. Chat is JSON-seeded Q&A via `ExplainSession` (no image bytes on the first turn). HTML, eBraille, DAISY, folders, and URLs are out of scope.
+**Entry:** Result-row **Images** button, enabled when Fido is installed and the target is a packaged `.epub` or `.pdf`. Click asks for an inventory report or an image report with AI analysis (`--percent` / `--assess`), then runs `Fido.exe image-report --input … --output … --language <CheckMate UI>` (inventory cached under CheckMate app-data `image_reports/`, keyed by file and UI language). The HTML report opens in-app on a single page; Fido’s coloured verdict pills sit above the WebView. Inventory HTML does not require AI credentials. Chat is JSON-seeded Q&A via `ExplainSession` (no image bytes on the first turn). HTML, eBraille, DAISY, folders, and URLs are out of scope.
 
 See `checkmate/fido_launch.py`, `checkmate/ai/fido_image_report.py`, `checkmate/ai/image_report_qa.py`, `checkmate/ai/verdict_tally_bar.py`.
 

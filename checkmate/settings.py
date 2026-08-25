@@ -114,6 +114,18 @@ def chat_pane_shown() -> bool:
 
 
 DEFAULT_CHAT_PANE_WIDTH = 340
+MIN_CHAT_PANE_WIDTH = 200
+MAX_CHAT_PANE_WIDTH = 2400
+
+# AI overview / image report: first-open size as a fraction of the work area.
+# Ultrawide (≈21:9 and wider) uses a smaller width fraction so the dialog
+# does not span the whole desk.
+MIN_WEBVIEW_CHAT_DIALOG_WIDTH = 720
+MIN_WEBVIEW_CHAT_DIALOG_HEIGHT = 520
+ULTRAWIDE_ASPECT_RATIO = 2.0
+WEBVIEW_CHAT_DIALOG_WIDTH_FRACTION = 0.75
+WEBVIEW_CHAT_DIALOG_ULTRAWIDE_WIDTH_FRACTION = 0.50
+WEBVIEW_CHAT_DIALOG_HEIGHT_FRACTION = 0.75
 
 
 def chat_pane_width() -> int:
@@ -122,11 +134,55 @@ def chat_pane_width() -> int:
         raw = int(read_settings().get("chat_pane_width", DEFAULT_CHAT_PANE_WIDTH) or DEFAULT_CHAT_PANE_WIDTH)
     except (TypeError, ValueError):
         raw = DEFAULT_CHAT_PANE_WIDTH
-    return max(200, min(raw, 1200))
+    return max(MIN_CHAT_PANE_WIDTH, min(raw, MAX_CHAT_PANE_WIDTH))
 
 
 def set_chat_pane_width(px: int) -> None:
-    update_settings(chat_pane_width=max(200, min(int(px), 1200)))
+    update_settings(
+        chat_pane_width=max(MIN_CHAT_PANE_WIDTH, min(int(px), MAX_CHAT_PANE_WIDTH))
+    )
+
+
+def default_webview_chat_dialog_size(work_w: int, work_h: int) -> tuple[int, int]:
+    """First-open size: ¾ of the work area, or ½ width on ultrawide displays."""
+    width = max(int(work_w), 1)
+    height = max(int(work_h), 1)
+    aspect = width / height
+    frac = (
+        WEBVIEW_CHAT_DIALOG_ULTRAWIDE_WIDTH_FRACTION
+        if aspect >= ULTRAWIDE_ASPECT_RATIO
+        else WEBVIEW_CHAT_DIALOG_WIDTH_FRACTION
+    )
+    w = min(width, max(MIN_WEBVIEW_CHAT_DIALOG_WIDTH, int(width * frac)))
+    h = min(
+        height,
+        max(MIN_WEBVIEW_CHAT_DIALOG_HEIGHT, int(height * WEBVIEW_CHAT_DIALOG_HEIGHT_FRACTION)),
+    )
+    return w, h
+
+
+def webview_chat_dialog_size(kind: str) -> tuple[int, int] | None:
+    """Saved AI overview / image report size, or None to use the display default."""
+    key = str(kind or "").strip() or "overview"
+    data = read_settings()
+    try:
+        width = int(data.get(f"{key}_dialog_width") or 0)
+        height = int(data.get(f"{key}_dialog_height") or 0)
+    except (TypeError, ValueError):
+        return None
+    if width < 200 or height < 200:
+        return None
+    return width, height
+
+
+def set_webview_chat_dialog_size(kind: str, width: int, height: int) -> None:
+    key = str(kind or "").strip() or "overview"
+    update_settings(
+        **{
+            f"{key}_dialog_width": max(200, int(width)),
+            f"{key}_dialog_height": max(200, int(height)),
+        }
+    )
 
 
 def set_chat_pane_shown(shown: bool) -> None:

@@ -537,6 +537,61 @@ def bind_chat_sash_persist(splitter: wx.SplitterWindow) -> None:
     splitter.Bind(wx.EVT_SPLITTER_SASH_POS_CHANGED, _on_sash)
 
 
+def work_area_size(window: wx.Window | None) -> tuple[int, int]:
+    """Client (work) area of the display that contains ``window``."""
+    try:
+        idx = wx.NOT_FOUND
+        if window is not None:
+            idx = wx.Display.GetFromWindow(window)
+        if idx == wx.NOT_FOUND or int(idx) < 0:
+            rect = wx.GetClientDisplayRect()
+        else:
+            rect = wx.Display(idx).GetClientArea()
+        return max(int(rect.GetWidth()), 1), max(int(rect.GetHeight()), 1)
+    except Exception:
+        return 1920, 1080
+
+
+def apply_webview_chat_dialog_size(dialog: wx.Dialog, kind: str) -> None:
+    """Size AI overview / image report from the display, or the last saved size."""
+    from ..settings import (
+        MIN_WEBVIEW_CHAT_DIALOG_HEIGHT,
+        MIN_WEBVIEW_CHAT_DIALOG_WIDTH,
+        default_webview_chat_dialog_size,
+        webview_chat_dialog_size,
+    )
+
+    work_w, work_h = work_area_size(dialog.GetParent() or dialog)
+    saved = webview_chat_dialog_size(kind)
+    if saved is None:
+        width, height = default_webview_chat_dialog_size(work_w, work_h)
+    else:
+        width = min(work_w, max(MIN_WEBVIEW_CHAT_DIALOG_WIDTH, int(saved[0])))
+        height = min(work_h, max(MIN_WEBVIEW_CHAT_DIALOG_HEIGHT, int(saved[1])))
+    try:
+        dialog.SetMinSize((MIN_WEBVIEW_CHAT_DIALOG_WIDTH, MIN_WEBVIEW_CHAT_DIALOG_HEIGHT))
+        dialog.SetSize((width, height))
+        dialog.Layout()
+    except RuntimeError:
+        pass
+
+
+def remember_webview_chat_dialog_size(
+    dialog: wx.Dialog | None, kind: str
+) -> None:
+    if dialog is None:
+        return
+    try:
+        if not dialog:
+            return
+        size = dialog.GetSize()
+        from ..settings import set_webview_chat_dialog_size
+
+        set_webview_chat_dialog_size(kind, int(size.GetWidth()), int(size.GetHeight()))
+    except (RuntimeError, TypeError, ValueError):
+        pass
+
+
 def set_chat_pane_shown(
     splitter: wx.SplitterWindow,
     report_host: wx.Window,
@@ -544,6 +599,7 @@ def set_chat_pane_shown(
     *,
     shown: bool,
     toggle: wx.Button | None = None,
+    remember_width: bool = True,
 ) -> None:
     """Split or unsplit a native (non-Edge) conversation pane."""
     from ..settings import chat_pane_width
@@ -559,7 +615,8 @@ def set_chat_pane_shown(
             if toggle is not None:
                 toggle.SetLabel(_("Hide chat"))
         else:
-            remember_chat_pane_width(splitter)
+            if remember_width:
+                remember_chat_pane_width(splitter)
             if splitter.IsSplit():
                 splitter.Unsplit(chat_host)
             chat_host.Hide()

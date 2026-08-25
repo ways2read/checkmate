@@ -348,3 +348,65 @@ def test_run_fido_uses_fresh_output_per_document(tmp_path: Path, monkeypatch) ->
     assert outputs[0] != outputs[1]
     assert outputs[0].parent == cache
     assert outputs[1].parent == cache
+
+
+def test_build_cli_argv_passes_checkmate_ui_language(tmp_path: Path, monkeypatch) -> None:
+    from checkmate.ai.fido_image_report import _build_cli_argv
+    from checkmate.i18n import get_language, set_language
+
+    _stub_fido_cli(monkeypatch, tmp_path)
+    previous = get_language()
+    try:
+        set_language("fr")
+        argv = _build_cli_argv(
+            input_path=tmp_path / "book.epub",
+            output_dir=tmp_path / "out",
+            assess=True,
+            percent=None,
+        )
+        assert argv[argv.index("--language") + 1] == "fr"
+        assert "--assess" in argv
+        argv_pct = _build_cli_argv(
+            input_path=tmp_path / "book.epub",
+            output_dir=tmp_path / "out",
+            assess=False,
+            percent=25,
+        )
+        assert argv_pct[argv_pct.index("--language") + 1] == "fr"
+        assert argv_pct[argv_pct.index("--percent") + 1] == "25"
+    finally:
+        set_language(previous)
+
+
+def test_inventory_cache_is_per_ui_language(tmp_path: Path, monkeypatch) -> None:
+    from checkmate.i18n import get_language, set_language
+
+    src = tmp_path / "book.epub"
+    src.write_bytes(b"PK")
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(
+        "checkmate.ai.fido_image_report.image_report_cache_dir", lambda: cache
+    )
+    _stub_fido_cli(monkeypatch, tmp_path)
+    languages: list[str] = []
+
+    def fake_run(argv, *, cancel_event, progress):
+        languages.append(argv[argv.index("--language") + 1])
+        dest = Path(argv[argv.index("--output") + 1])
+        dest.mkdir(parents=True, exist_ok=True)
+        _write_report(dest)
+        return 0, "ok"
+
+    monkeypatch.setattr("checkmate.ai.fido_image_report._run_fido_process", fake_run)
+    previous = get_language()
+    try:
+        set_language("en")
+        first = run_fido_image_report(src)
+        set_language("fr")
+        second = run_fido_image_report(src)
+        assert first.from_cache is False
+        assert second.from_cache is False
+        assert languages == ["en", "fr"]
+        assert first.folder != second.folder
+    finally:
+        set_language(previous)

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from ..fido_launch import fido_cli_command, fido_supports_image_report_cli, find_fido_app
-from ..i18n import _
+from ..i18n import _, get_language
 from ..paths import app_data_dir
 from ..subprocess_util import hidden_run_kwargs
 
@@ -377,11 +377,15 @@ def _fingerprint(path: Path) -> dict[str, Any]:
         "mtime_ns": mtime_ns,
         "size": int(st.st_size),
         "format": CACHE_FORMAT,
+        "language": _ui_language_code(),
     }
 
 
 def _cache_key(fp: dict[str, Any]) -> str:
-    raw = f"{fp['resolved']}|{fp['mtime_ns']}|{fp['size']}|{fp['format']}"
+    raw = (
+        f"{fp['resolved']}|{fp['mtime_ns']}|{fp['size']}|{fp['format']}"
+        f"|{fp.get('language') or ''}"
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -446,6 +450,7 @@ def _manifest_matches(folder: Path, fp: dict[str, Any]) -> bool:
         and int(data.get("mtime_ns") or 0) == fp["mtime_ns"]
         and int(data.get("size") or 0) == fp["size"]
         and int(data.get("format") or 0) == CACHE_FORMAT
+        and str(data.get("language") or "") == str(fp.get("language") or "")
         and str(data.get("session_id") or "") == _PROCESS_SESSION
     )
 
@@ -590,6 +595,10 @@ def _message_for_exit_code(code: int, detail: str) -> str:
     return base
 
 
+def _ui_language_code() -> str:
+    return (get_language() or "en").strip() or "en"
+
+
 def _build_cli_argv(
     *,
     input_path: Path,
@@ -609,6 +618,8 @@ def _build_cli_argv(
         str(input_path),
         "--output",
         str(output_dir),
+        "--language",
+        _ui_language_code(),
     ]
     if percent is not None:
         argv.extend(["--percent", str(int(percent))])
