@@ -42,7 +42,11 @@ def _plain_fallback(fragment: str) -> str:
 
 
 class _TurnAccessible(wx.Accessible):
-    """One named utterance; hide inner StaticText from the a11y tree."""
+    """One named utterance; hide inner StaticText from the a11y tree.
+
+    ``wx.Accessible`` is implemented on Windows; Cocoa accepts the subclass
+    but ignores most callbacks. Construction is still safe on macOS.
+    """
 
     def __init__(self, name: str) -> None:
         super().__init__()
@@ -172,7 +176,15 @@ class ConversationScroller(wx.ScrolledWindow):
         paper = _hex_colour(colors["paper"])
         if paper.IsOk():
             self.SetBackgroundColour(paper)
-        self.Freeze()
+        # Cocoa asserts or crashes if Freeze() runs on a window that is not
+        # yet on screen (both dialogs paint the list from __init__).
+        freeze = False
+        try:
+            freeze = bool(self.IsShownOnScreen())
+        except (RuntimeError, AttributeError):
+            freeze = False
+        if freeze:
+            self.Freeze()
         try:
             self._stack.Clear(delete_windows=True)
             self._cards.clear()
@@ -196,7 +208,11 @@ class ConversationScroller(wx.ScrolledWindow):
             self._apply_wrap()
             self.FitInside()
         finally:
-            self.Thaw()
+            if freeze:
+                try:
+                    self.Thaw()
+                except RuntimeError:
+                    pass
         try:
             wx.CallAfter(self._apply_wrap)
         except Exception:
@@ -412,6 +428,42 @@ class ConversationScroller(wx.ScrolledWindow):
             self.FitInside()
         except RuntimeError:
             pass
+
+
+def dialog_handles_composer_enter(
+    event: wx.KeyEvent,
+    ctrl: wx.Window | None,
+    on_ask,
+) -> bool:
+    """True if Return was handled as Send (macOS default-button safe).
+
+    Cocoa often delivers Return to the dialog CHAR_HOOK / default button
+    instead of a child ``EVT_CHAR_HOOK`` on a multiline ``TextCtrl``.
+    Shift+Return is left to the control so it can insert a newline.
+    """
+    if not callable(on_ask) or ctrl is None:
+        return False
+    if event.GetKeyCode() not in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
+        return False
+    if event.ShiftDown():
+        return False
+    try:
+        focus = wx.Window.FindFocus()
+    except RuntimeError:
+        return False
+    if focus is None:
+        return False
+    try:
+        if focus is ctrl:
+            on_ask(event)
+            return True
+        desc = getattr(ctrl, "IsDescendant", None)
+        if callable(desc) and desc(focus):
+            on_ask(event)
+            return True
+    except RuntimeError:
+        return False
+    return False
 
 
 def make_chat_splitter(parent: wx.Window) -> wx.SplitterWindow:

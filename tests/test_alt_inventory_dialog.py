@@ -317,14 +317,84 @@ class UniqueViewHtmlTests(unittest.TestCase):
         overview_src = inspect.getsource(AiOverviewDialog.__init__)
         self.assertIn("ConversationScroller", overview_src)
         self.assertIn("on_toggle_chat", overview_src)
+        self.assertIn("_add_chat_column_composer", overview_src)
+        self.assertIn("chat_toggle_btn", overview_src)
+        self.assertNotIn("_add_followup_question_row", overview_src)
         follow_src = inspect.getsource(AltTextReportDialog._build_sniff_followup)
         self.assertIn("Include chat in HTML report", follow_src)
+        self.assertIn("_add_chat_column_composer", follow_src)
         actions_src = inspect.getsource(AltTextReportDialog._build_report_actions)
         self.assertIn("chat_toggle_btn", actions_src)
         self.assertIn("&Close", actions_src)
         self.assertNotIn("_path_label", report_src)
         open_src = inspect.getsource(AltTextReportDialog._on_open_browser)
         self.assertIn("_html_report_for_export", open_src)
+
+
+class ConversationPaneMacSafetyTests(unittest.TestCase):
+    def test_set_content_before_shown_does_not_raise(self) -> None:
+        import wx
+
+        from checkmate.ai.conversation_pane import ConversationScroller
+
+        app = wx.GetApp() or wx.App(False)
+        self.assertIsNotNone(app)
+        frame = wx.Frame(None)
+        try:
+            view = ConversationScroller(frame)
+            view.set_content([], idle="Ask about this report")
+            view.set_content([("user", "You", "Hello")])
+        finally:
+            frame.Destroy()
+
+    def test_dialog_enter_helper_ignores_unrelated_focus(self) -> None:
+        import wx
+
+        from checkmate.ai.conversation_pane import dialog_handles_composer_enter
+
+        class Event:
+            def GetKeyCode(self):
+                return wx.WXK_RETURN
+
+            def ShiftDown(self):
+                return False
+
+        called = []
+        self.assertFalse(
+            dialog_handles_composer_enter(Event(), None, called.append)
+        )
+        self.assertEqual(called, [])
+
+
+class ChatComposerSizeTests(unittest.TestCase):
+    def test_composer_min_height_covers_three_lines(self) -> None:
+        import inspect
+
+        import wx
+
+        from checkmate.main import (
+            _add_chat_column_composer,
+            _add_followup_question_row,
+            _size_chat_composer,
+        )
+
+        app = wx.GetApp() or wx.App(False)
+        self.assertIsNotNone(app)
+        frame = wx.Frame(None)
+        try:
+            ctrl = wx.TextCtrl(frame, style=wx.TE_MULTILINE | wx.TE_WORDWRAP)
+            _size_chat_composer(ctrl, lines=3)
+            self.assertGreaterEqual(
+                ctrl.GetMinSize().GetHeight(), ctrl.GetCharHeight() * 3
+            )
+            row_src = inspect.getsource(_add_followup_question_row)
+            self.assertIn("_chat_composer_style", row_src)
+            self.assertIn("_size_chat_composer", row_src)
+            col_src = inspect.getsource(_add_chat_column_composer)
+            self.assertIn("_chat_composer_style", col_src)
+            self.assertIn("_size_chat_composer", col_src)
+        finally:
+            frame.Destroy()
 
 
 class PrepareReuseTests(unittest.TestCase):

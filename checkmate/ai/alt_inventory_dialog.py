@@ -523,34 +523,13 @@ class AltTextReportDialog(AltSniffTestMixin, wx.Dialog):
         """Composer under the message list, matching the chat column width."""
         from ..settings import include_chat_in_html_report
 
-        label_text = _("Ask a question…")
-        hint = _("Type a message about this report")
-        label = wx.StaticText(parent, label=label_text)
-        label.SetToolTip(hint)
-        self._main._win_clear_tab_stop(label)
-        sizer.Add(label, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
-
-        self.followup_ctrl = wx.TextCtrl(
+        self.followup_ctrl, self.ask_btn = self._main._add_chat_column_composer(
             parent,
-            value="",
-            style=wx.TE_PROCESS_ENTER,
-            name=label_text,
+            sizer,
+            on_ask=self._on_ask,
         )
-        self.followup_ctrl.SetName(label_text)
-        self.followup_ctrl.SetToolTip(hint)
-        if hasattr(self.followup_ctrl, "SetAccessibleName"):
-            try:
-                self.followup_ctrl.SetAccessibleName(label_text)
-            except Exception:
-                pass
         self.followup_ctrl.Bind(wx.EVT_SET_FOCUS, self._on_followup_focus)
         self.followup_ctrl.Bind(wx.EVT_KILL_FOCUS, self._on_followup_kill_focus)
-        self.followup_ctrl.Bind(wx.EVT_TEXT_ENTER, self._on_ask)
-        sizer.Add(self.followup_ctrl, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 4)
-
-        self.ask_btn = wx.Button(parent, label=_("Ask"))
-        self.ask_btn.Bind(wx.EVT_BUTTON, self._on_ask)
-        sizer.Add(self.ask_btn, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 6)
 
         self.include_qa_chk = wx.CheckBox(
             parent, label=_("Include chat in HTML report")

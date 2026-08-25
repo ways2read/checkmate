@@ -377,6 +377,82 @@ def _webview_host_action(url: str) -> str | None:
     return None
 
 
+def _size_chat_composer(ctrl: wx.TextCtrl, *, lines: int = 3) -> None:
+    """Make *ctrl* tall enough to show *lines* of text, including edit chrome."""
+    line_h = max(int(ctrl.GetCharHeight()), 1)
+    if hasattr(ctrl, "GetSizeFromTextSize"):
+        text_h = ctrl.GetSizeFromTextSize(-1, line_h * lines).height
+        text_h = max(text_h + 8, line_h * lines + 16)
+    else:
+        text_h = line_h * lines + 24
+    ctrl.SetMinSize((-1, text_h))
+
+
+def _bind_chat_composer_enter(ctrl: wx.TextCtrl, on_ask) -> None:
+    """Enter sends the message; Shift+Enter inserts a newline.
+
+    macOS also uses the dialog CHAR_HOOK (see ``dialog_handles_composer_enter``)
+    because Cocoa often never delivers Return to a child CHAR_HOOK.
+    """
+
+    def _on_key(event: wx.KeyEvent) -> None:
+        if event.GetKeyCode() in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER) and not event.ShiftDown():
+            on_ask(event)
+            return
+        event.Skip()
+
+    ctrl.Bind(wx.EVT_CHAR_HOOK, _on_key)
+
+
+def _chat_composer_style() -> int:
+    style = wx.TE_MULTILINE | wx.TE_WORDWRAP
+    if sys.platform == "darwin":
+        style |= wx.TE_PROCESS_ENTER
+    return style
+
+
+def _add_chat_column_composer(
+    parent: wx.Window,
+    sizer: wx.Sizer,
+    *,
+    on_ask,
+    ask_enabled: bool = True,
+    label_text: str | None = None,
+    hint: str | None = None,
+) -> tuple[wx.TextCtrl, wx.Button]:
+    """Label + multiline edit + Ask stacked in the conversation column."""
+    label_text = label_text or _("Ask a question…")
+    hint = hint or _("Type a message about this report")
+    label = wx.StaticText(parent, label=label_text)
+    label.SetToolTip(hint)
+    _win_clear_tab_stop(label)
+    sizer.Add(label, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
+
+    ctrl = wx.TextCtrl(
+        parent,
+        value="",
+        style=_chat_composer_style(),
+        name=label_text,
+    )
+    ctrl.SetName(label_text)
+    ctrl.SetToolTip(hint)
+    if hasattr(ctrl, "SetAccessibleName"):
+        try:
+            ctrl.SetAccessibleName(label_text)
+        except Exception:
+            pass
+    _size_chat_composer(ctrl)
+    ctrl.Enable(ask_enabled)
+    sizer.Add(ctrl, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 4)
+
+    ask_btn = wx.Button(parent, label=_("Ask"))
+    ask_btn.Enable(ask_enabled)
+    ask_btn.Bind(wx.EVT_BUTTON, on_ask)
+    _bind_chat_composer_enter(ctrl, on_ask)
+    sizer.Add(ask_btn, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 6)
+    return ctrl, ask_btn
+
+
 def _add_followup_question_row(
     parent: wx.Window,
     sizer: wx.Sizer,
@@ -416,7 +492,7 @@ def _add_followup_question_row(
     ctrl = wx.TextCtrl(
         parent,
         value="",
-        style=wx.TE_PROCESS_ENTER,
+        style=_chat_composer_style(),
         name=label_text,
     )
     ctrl.SetName(label_text)
@@ -427,14 +503,15 @@ def _add_followup_question_row(
             ctrl.SetAccessibleName(label_text)
         except Exception:
             pass
+    _size_chat_composer(ctrl)
     ask_btn = wx.Button(parent, label=_("Ask"))
     ask_btn.Enable(ask_enabled)
     ctrl.Enable(ask_enabled)
-    follow_row.Add(ctrl, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
-    follow_row.Add(ask_btn, 0)
+    follow_row.Add(ctrl, 1, wx.EXPAND | wx.RIGHT, 6)
+    follow_row.Add(ask_btn, 0, wx.ALIGN_TOP)
     sizer.Add(follow_row, 0, wx.EXPAND | wx.BOTTOM, 4)
     ask_btn.Bind(wx.EVT_BUTTON, on_ask)
-    ctrl.Bind(wx.EVT_TEXT_ENTER, on_ask)
+    _bind_chat_composer_enter(ctrl, on_ask)
     return ctrl, ask_btn, toggle
 
 
@@ -2017,7 +2094,7 @@ class IssueDetailDialog(wx.Dialog):
         _win_clear_tab_stop(panel)
         _win_ensure_control_parent(panel)
         sizer = wx.BoxSizer(wx.VERTICAL)
-        self.followup_ctrl, self.ask_btn, _ = _add_followup_question_row(
+        self.followup_ctrl, self.ask_btn, _chat_toggle = _add_followup_question_row(
             panel,
             sizer,
             on_ask=self._on_ask_followup,
@@ -2081,7 +2158,7 @@ class IssueDetailDialog(wx.Dialog):
         row.Add(self.apply_fix_btn, 0, wx.ALIGN_CENTER_VERTICAL)
         sizer.Add(row, 0, wx.EXPAND | wx.TOP | wx.BOTTOM, 4)
 
-        self.fix_followup_ctrl, self.fix_ask_btn, _ = _add_followup_question_row(
+        self.fix_followup_ctrl, self.fix_ask_btn, _chat_toggle = _add_followup_question_row(
             panel,
             sizer,
             on_ask=self._on_ask_followup,
@@ -2351,8 +2428,18 @@ class IssueDetailDialog(wx.Dialog):
         return fix_allowed_for_result(check_result)
 
     def _on_dialog_char_hook(self, event: wx.KeyEvent) -> None:
+        from .ai.conversation_pane import dialog_handles_composer_enter
+
         if event.GetKeyCode() == wx.WXK_ESCAPE:
             wx.CallAfter(self._on_close_dialog)
+            return
+        if dialog_handles_composer_enter(
+            event, getattr(self, "followup_ctrl", None), self._on_ask_followup
+        ):
+            return
+        if dialog_handles_composer_enter(
+            event, getattr(self, "fix_followup_ctrl", None), self._on_ask_followup
+        ):
             return
         event.Skip()
 
@@ -3830,7 +3917,7 @@ class AiOverviewDialog(wx.Dialog):
             title=_("AI overview"),
             style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX,
         )
-        self.SetSize((720, 640))
+        self.SetSize((900, 640))
         self._result = result
         self._session = session
         self._busy = False
@@ -3863,7 +3950,9 @@ class AiOverviewDialog(wx.Dialog):
             heading.SetFont(heading_font)
         root.Add(heading, 0, wx.LEFT | wx.RIGHT | wx.TOP, 12)
 
-        self._splitter = make_chat_splitter(self)
+        content = wx.Panel(self, style=wx.TAB_TRAVERSAL)
+        _win_ensure_control_parent(content)
+        self._splitter = make_chat_splitter(content)
         self._ai_output_host = _AiHtmlHostPanel(self._splitter, name=_("AI overview"))
         self._ai_output_host.SetMinSize((-1, 280))
         host_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -3876,33 +3965,32 @@ class AiOverviewDialog(wx.Dialog):
         self.ai_output = self._ai_output_host
 
         self._chat_host = wx.Panel(self._splitter, name=_("Conversation"))
-        self._chat_host.SetMinSize((240, 200))
+        self._chat_host.SetMinSize((260, 200))
         chat_sizer = wx.BoxSizer(wx.VERTICAL)
         self._chat_view = ConversationScroller(self._chat_host)
         chat_sizer.Add(self._chat_view, 1, wx.EXPAND)
+        self.followup_ctrl, self.ask_btn = _add_chat_column_composer(
+            self._chat_host,
+            chat_sizer,
+            on_ask=self._on_ask_followup,
+            ask_enabled=self._session is not None,
+        )
         self._chat_host.SetSizer(chat_sizer)
         self._chat_pane_shown = bool(chat_pane_pref())
-        self._splitter.SplitVertically(self._ai_output_host, self._chat_host, 480)
+        self._splitter.SplitVertically(self._ai_output_host, self._chat_host, 520)
         bind_chat_sash_persist(self._splitter)
-        root.Add(self._splitter, 1, wx.EXPAND | wx.ALL, 12)
-
-        follow_sizer = wx.BoxSizer(wx.VERTICAL)
-        self.followup_ctrl, self.ask_btn, self.chat_toggle_btn = (
-            _add_followup_question_row(
-                self,
-                follow_sizer,
-                on_ask=self._on_ask_followup,
-                ask_enabled=self._session is not None,
-                on_toggle_chat=self._on_toggle_chat,
-            )
-        )
-        root.Add(follow_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        content_sizer = wx.BoxSizer(wx.VERTICAL)
+        content_sizer.Add(self._splitter, 1, wx.EXPAND)
+        content.SetSizer(content_sizer)
+        root.Add(content, 1, wx.EXPAND | wx.ALL, 12)
 
         actions = wx.BoxSizer(wx.HORIZONTAL)
         self.view_browser_btn = wx.Button(self, label=_("View in browser"))
         self.save_html_btn = wx.Button(self, label=_("Save as HTML…"))
         self.save_md_btn = wx.Button(self, label=_("Save as Markdown…"))
         self.copy_ai_btn = wx.Button(self, label=_("Copy to clipboard"))
+        self.chat_toggle_btn = wx.Button(self, label=_("Show chat"))
+        self.chat_toggle_btn.Bind(wx.EVT_BUTTON, self._on_toggle_chat)
         for btn in (
             self.view_browser_btn,
             self.save_html_btn,
@@ -3910,14 +3998,29 @@ class AiOverviewDialog(wx.Dialog):
             self.copy_ai_btn,
         ):
             actions.Add(btn, 0, wx.RIGHT, 6)
-        root.Add(actions, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
-
-        footer = wx.BoxSizer(wx.HORIZONTAL)
-        footer.AddStretchSpacer(1)
+        actions.Add(self.chat_toggle_btn, 0, wx.RIGHT, 6)
+        actions.AddStretchSpacer(1)
         close_btn = wx.Button(self, id=wx.ID_CLOSE, label=_("Close"))
         close_btn.Bind(wx.EVT_BUTTON, self._on_close_dialog)
-        footer.Add(close_btn, 0)
-        root.Add(footer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        actions.Add(close_btn, 0)
+        root.Add(actions, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+
+        def _on_followup_focus(event: wx.FocusEvent) -> None:
+            event.Skip()
+            try:
+                self.ask_btn.SetDefault()
+            except RuntimeError:
+                pass
+
+        def _on_followup_kill_focus(event: wx.FocusEvent) -> None:
+            event.Skip()
+            try:
+                close_btn.SetDefault()
+            except RuntimeError:
+                pass
+
+        self.followup_ctrl.Bind(wx.EVT_SET_FOCUS, _on_followup_focus)
+        self.followup_ctrl.Bind(wx.EVT_KILL_FOCUS, _on_followup_kill_focus)
 
         self.view_browser_btn.Bind(wx.EVT_BUTTON, self._on_view_browser)
         self.save_html_btn.Bind(wx.EVT_BUTTON, self._on_save_html)
@@ -3993,13 +4096,24 @@ class AiOverviewDialog(wx.Dialog):
 
     def _on_show(self, event: wx.ShowEvent) -> None:
         event.Skip()
-        if not event.IsShown() or self._ai_view_realized or self._closing:
+        if not event.IsShown() or self._closing:
+            return
+        if self._ai_view_realized:
+            from .ai.conversation_pane import restore_chat_sash
+
+            restore_chat_sash(self._splitter)
             return
         wx.CallAfter(self._realize_ai_html_view)
 
     def _on_dialog_char_hook(self, event: wx.KeyEvent) -> None:
+        from .ai.conversation_pane import dialog_handles_composer_enter
+
         if event.GetKeyCode() == wx.WXK_ESCAPE:
             wx.CallAfter(self._on_close_dialog)
+            return
+        if dialog_handles_composer_enter(
+            event, getattr(self, "followup_ctrl", None), self._on_ask_followup
+        ):
             return
         event.Skip()
 
@@ -4079,10 +4193,11 @@ class AiOverviewDialog(wx.Dialog):
 
     def _leave_ai_webview(self, forward: bool) -> None:
         if forward:
-            if _try_set_focus(getattr(self, "followup_ctrl", None)):
-                return
-            if _try_set_focus(getattr(self, "ask_btn", None)):
-                return
+            if getattr(self, "_chat_pane_shown", False):
+                if _try_set_focus(getattr(self, "followup_ctrl", None)):
+                    return
+                if _try_set_focus(getattr(self, "ask_btn", None)):
+                    return
             if _try_set_focus(getattr(self, "view_browser_btn", None)):
                 return
             close_btn = self.FindWindowById(wx.ID_CLOSE)

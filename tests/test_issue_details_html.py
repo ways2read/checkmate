@@ -126,5 +126,18 @@ class IssueDetailsPageTests(unittest.TestCase):
         self.assertIn("2", md)
 
 
+class IssueDetailFollowupI18nTests(unittest.TestCase):
+    def test_fix_followup_does_not_shadow_gettext(self) -> None:
+        import inspect
+
+        from checkmate.main import IssueDetailDialog
+
+        fix_src = inspect.getsource(IssueDetailDialog._build_fix_followup)
+        explain_src = inspect.getsource(IssueDetailDialog._build_explain_followup)
+        self.assertNotIn(", _ =", fix_src)
+        self.assertNotIn(", _ =", explain_src)
+        self.assertIn('_("Apply fix and validate")', fix_src)
+
+
 if __name__ == "__main__":
     unittest.main()

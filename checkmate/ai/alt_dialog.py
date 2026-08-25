@@ -228,6 +228,12 @@ class AltSniffTestMixin:
             # Direct close — CallAfter stops running after a few Edge cycles.
             self._on_close_dialog(None)
             return
+        from .conversation_pane import dialog_handles_composer_enter
+
+        if dialog_handles_composer_enter(
+            event, getattr(self, "followup_ctrl", None), self._on_ask
+        ):
+            return
         event.Skip()
 
     def _close_dialog_if_session(self, session: int) -> None:
