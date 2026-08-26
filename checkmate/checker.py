@@ -16,7 +16,14 @@ from .paths import (
     epubcheck_uses_bundled_copy,
     verapdf_uses_bundled_copy,
 )
-from .publication import PublicationKind, classify_publication, classify_target, is_html_url
+from .publication import (
+    PublicationKind,
+    classify_publication,
+    classify_target,
+    is_html_url,
+    is_pipeline_kind,
+    is_vnu_document_kind,
+)
 from .settings import (
     epub_checkers,
     verapdf_flavour,
@@ -65,8 +72,9 @@ def tool_for_kind(kind: PublicationKind) -> ToolSpec | None:
 
 
 _UNSUPPORTED_PATH_MESSAGE = (
-    "Choose a packaged .ebrl, .epub, or .pdf file, an HTML file or folder, "
-    "an http(s) URL, or an exploded eBraille/EPUB publication folder."
+    "Choose a packaged .ebrl, .epub, or .pdf file, an HTML, SVG, CSS, MathML, "
+    "or XML file, an http(s) URL, a DTBook XML or NIMAS/DAISY package, or an "
+    "exploded eBraille/EPUB/DAISY publication folder."
 )
 
 
@@ -131,6 +139,25 @@ def _ensure_meta(result: CheckResult, *pairs: tuple[str, str]) -> CheckResult:
 def _ensure_validation_profile(result: CheckResult, profile: str) -> CheckResult:
     """Ensure a Validation profile row is present for reports / result pane."""
     return _ensure_meta(result, ("Validation profile", profile))
+
+
+def _annotate_clipboard_source(result: CheckResult, raw: str) -> CheckResult:
+    """Mark results that came from File → Check clipboard…"""
+    from .clipboard_markup import is_clipboard_snapshot_path, is_clipboard_snippet_path
+
+    text = str(raw or "").strip().strip('"')
+    if not text or is_html_url(text):
+        return result
+    try:
+        path = Path(text).expanduser()
+    except (OSError, ValueError):
+        return result
+    if is_clipboard_snapshot_path(path):
+        result = _ensure_meta(result, ("Source", "Clipboard"))
+        if is_clipboard_snippet_path(path):
+            result = _ensure_meta(result, ("Checked as", "HTML snippet"))
+        return result
+    return result
 
 
 def _location_from_loc_object(loc) -> str:
@@ -977,10 +1004,33 @@ def run_check(
 ) -> CheckResult:
     raw = str(target).strip().strip('"')
     checked_at = datetime.now().astimezone()
-    if is_html_url(raw) or classify_target(raw) == PublicationKind.HTML:
+    kind = classify_target(raw)
+    if kind == PublicationKind.HTML:
         from .html_check import run_html_check
 
         result = run_html_check(raw, progress=progress)
+        if result.checked_at is None:
+            result.checked_at = checked_at
+        if not result.target_path:
+            result.target_path = raw
+        return _annotate_clipboard_source(result, raw)
+
+    if is_vnu_document_kind(kind):
+        from .vnu_check import run_vnu_document_check
+
+        if not is_html_url(raw):
+            path = Path(raw).expanduser().resolve()
+            if not path.exists():
+                return _stamp_result(
+                    CheckResult(
+                        verdict=Verdict.ERROR,
+                        error_message=f"Path not found: {path}",
+                    ),
+                    target=path,
+                    checked_at=checked_at,
+                )
+            raw = str(path)
+        result = run_vnu_document_check(raw, kind=kind, progress=progress)
         if result.checked_at is None:
             result.checked_at = checked_at
         if not result.target_path:
@@ -999,21 +1049,10 @@ def run_check(
         )
 
     kind = classify_publication(target)
-    if kind == PublicationKind.DAISY202:
-        from .pipeline_check import run_daisy202_check
+    if is_pipeline_kind(kind):
+        from .pipeline_check import run_pipeline_check
 
-        daisy_result = run_daisy202_check(target, progress=progress)
-        if daisy_result is not None:
-            return daisy_result
-        # Pipeline not usable — fall through as unsupported (silent).
-        return _stamp_result(
-            CheckResult(
-                verdict=Verdict.ERROR,
-                error_message=_UNSUPPORTED_PATH_MESSAGE,
-            ),
-            target=target,
-            checked_at=checked_at,
-        )
+        return run_pipeline_check(target, kind=kind, progress=progress)
 
     # EPUB Ace-only: skip EPUBCheck/Java entirely (Settings → EPUB checkers).
     if kind == PublicationKind.EPUB and epub_checkers() == "ace":

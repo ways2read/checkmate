@@ -72,6 +72,8 @@ from .paths import (
     EBRAILLE_SPEC_URL,
     EBRAILLE_STANDARD_PAGE,
     EPUBCHECK_REPO_PAGE,
+    NU_CHECKER_PAGE,
+    PIPELINE_HOME_PAGE,
     VERAPDF_HOME_PAGE,
     application_dir,
     images_dir,
@@ -5094,7 +5096,8 @@ class AboutDialog(wx.Dialog):
             self,
             label=_(
                 "An accessible, cross-platform front-end for the DAISY "
-                "eBraille Checker, W3C EPUBCheck, and veraPDF (PDF/UA)."
+                "eBraille Checker, W3C EPUBCheck, veraPDF, the Nu HTML "
+                "Checker, and DAISY Pipeline."
             ),
         )
         desc.Wrap(420)
@@ -5114,6 +5117,8 @@ class AboutDialog(wx.Dialog):
             (_("eBraille Checker"), CHECKER_REPO_PAGE),
             (_("EPUBCheck"), EPUBCHECK_REPO_PAGE),
             (_("veraPDF"), VERAPDF_HOME_PAGE),
+            (_("Nu HTML Checker"), NU_CHECKER_PAGE),
+            (_("DAISY Pipeline"), PIPELINE_HOME_PAGE),
         ):
             link = wx.adv.HyperlinkCtrl(self, label=label, url=url)
             link.SetName(label)
@@ -5730,20 +5735,23 @@ class MainFrame(wx.Frame):
         self.select_file_btn = wx.Button(panel, label=_("Select &file…"))
         self.select_file_btn.SetName(_("Select file"))
         self.select_file_btn.SetToolTip(
-            _("Select a packaged publication or HTML file (Ctrl+O)")
+            _("Select a publication, HTML, SVG, CSS, or DTBook file (Ctrl+O)")
         )
         self.select_folder_btn = wx.Button(panel, label=_("Select f&older…"))
         self.select_folder_btn.SetName(_("Select folder"))
         self.select_folder_btn.SetToolTip(
-            _("Select an exploded publication folder or HTML folder (Ctrl+Shift+O)")
+            _(
+                "Select an exploded publication folder, HTML folder, "
+                "or DAISY/NIMAS book (Ctrl+Shift+O)"
+            )
         )
         self.path_ctrl = wx.TextCtrl(
             panel, style=wx.TE_PROCESS_ENTER, name=_("Publication")
         )
         self.path_ctrl.SetHint(
             _(
-                "Select or drop a .ebrl / .epub / .pdf / .html file or folder, "
-                "or paste an http(s) URL — checking starts automatically"
+                "Select or drop a .ebrl / .epub / .pdf / .html / .svg / .css "
+                "file or folder, or paste an http(s) URL — checking starts automatically"
             )
         )
         # Keep visual/tab order: path → select file → select folder.
@@ -5944,6 +5952,23 @@ class MainFrame(wx.Frame):
         self.menu_open_folder = file_menu.Append(
             wx.ID_ANY, _("Select f&older…\tCtrl+Shift+O")
         )
+        self.menu_clipboard = file_menu.Append(
+            wx.ID_ANY, _("Check &clipboard…\tCtrl+Shift+V")
+        )
+        self.menu_clipboard.SetHelp(
+            _(
+                "Validate HTML, CSS, XML, SVG, or MathML copied to the clipboard"
+            )
+        )
+        self.menu_view_clipboard = file_menu.Append(
+            wx.ID_ANY, _("View clipboard &snapshot…\tCtrl+Shift+B")
+        )
+        self.menu_view_clipboard.SetHelp(
+            _(
+                "Show the markup copied from the clipboard for the last "
+                "clipboard check"
+            )
+        )
         file_menu.AppendSeparator()
         self.menu_exit = file_menu.Append(wx.ID_EXIT, _("E&xit\tEsc"))
         if sys.platform == "darwin":
@@ -5954,7 +5979,7 @@ class MainFrame(wx.Frame):
             )
             self.menu_settings.SetHelp(
                 _(
-                    "General preferences, EPUB/HTML checkers, and PDF validation profile"
+                    "General preferences, EPUB/HTML checkers, MathML guidelines, and PDF validation profile"
                 )
             )
         menubar.Append(file_menu, _("&File"))
@@ -5990,6 +6015,14 @@ class MainFrame(wx.Frame):
         self.menu_view_log = report_menu.Append(
             wx.ID_ANY, _("View full &log\tCtrl+L")
         )
+        self.menu_view_clipboard_report = report_menu.Append(
+            wx.ID_ANY, _("View clipboard &snapshot…\tCtrl+Shift+B")
+        )
+        self.menu_view_clipboard_report.SetHelp(
+            _(
+                "Show the markup copied from the clipboard for this check"
+            )
+        )
         self.menu_view_changelog = report_menu.Append(
             wx.ID_ANY, _("View edit &changelog…\tCtrl+Shift+G")
         )
@@ -6013,7 +6046,7 @@ class MainFrame(wx.Frame):
             )
             self.menu_settings.SetHelp(
                 _(
-                    "General preferences, EPUB/HTML checkers, and PDF validation profile"
+                    "General preferences, EPUB/HTML checkers, MathML guidelines, and PDF validation profile"
                 )
             )
         tools_menu.AppendSeparator()
@@ -6163,6 +6196,8 @@ class MainFrame(wx.Frame):
         """
         enabled = self._last_result is not None
         changelog_ok = self._changelog_path_if_present() is not None
+        clipboard_ok = self._clipboard_snapshot_path_if_present() is not None
+        current_clipboard = self._current_is_clipboard_snapshot()
         for item in (
             self.menu_view_text,
             self.menu_save_text,
@@ -6176,19 +6211,21 @@ class MainFrame(wx.Frame):
         if self.menu_ai_overview is not None:
             self.menu_ai_overview.Enable(enabled)
         self.menu_view_changelog.Enable(changelog_ok)
+        self.menu_view_clipboard.Enable(clipboard_ok)
+        self.menu_view_clipboard_report.Enable(current_clipboard)
         # AI overview is hidden when features are off; only enable when shown.
         if self.ai_overview_btn is not None and ai_features_enabled():
             self.ai_overview_btn.Enable(enabled)
         self._update_alt_text_btn_enabled()
         self.copy_btn.Enable(enabled)
-        self.report_btn.Enable(enabled or changelog_ok)
+        self.report_btn.Enable(enabled or changelog_ok or current_clipboard)
         self._update_show_issues_button()
         menubar = self.GetMenuBar()
         if menubar is None:
             return
         idx = getattr(self, "_report_menu_index", -1)
         if 0 <= idx < menubar.GetMenuCount():
-            menubar.EnableTop(idx, enabled or changelog_ok)
+            menubar.EnableTop(idx, enabled or changelog_ok or current_clipboard)
 
     def _alt_text_path_ok(self) -> bool:
         from .ai.fido_image_report import supports_image_report_path
@@ -6276,6 +6313,9 @@ class MainFrame(wx.Frame):
     def _bind_menus(self) -> None:
         self.Bind(wx.EVT_MENU, self.on_browse_file, self.menu_open_file)
         self.Bind(wx.EVT_MENU, self.on_browse_folder, self.menu_open_folder)
+        self.Bind(wx.EVT_MENU, self.on_check_clipboard, self.menu_clipboard)
+        self.Bind(wx.EVT_MENU, self.on_view_clipboard_snapshot, self.menu_view_clipboard)
+        self.Bind(wx.EVT_MENU, self.on_view_clipboard_snapshot, self.menu_view_clipboard_report)
         self.Bind(wx.EVT_MENU, self.on_view_text_report, self.menu_view_text)
         self.Bind(wx.EVT_MENU, self.on_save_text_report, self.menu_save_text)
         self.Bind(wx.EVT_MENU, self.on_view_html_report, self.menu_view_html)
@@ -6943,19 +6983,22 @@ class MainFrame(wx.Frame):
         self.path_label.SetLabel(_("Path:"))
         self.path_ctrl.SetHint(
             _(
-                "Select or drop a .ebrl / .epub / .pdf / .html file or folder, "
-                "or paste an http(s) URL — checking starts automatically"
+                "Select or drop a .ebrl / .epub / .pdf / .html / .svg / .css "
+                "file or folder, or paste an http(s) URL — checking starts automatically"
             )
         )
         self.select_file_btn.SetLabel(_("Select &file…"))
         self.select_file_btn.SetName(_("Select file"))
         self.select_file_btn.SetToolTip(
-            _("Select a packaged publication or HTML file (Ctrl+O)")
+            _("Select a publication, HTML, SVG, CSS, or DTBook file (Ctrl+O)")
         )
         self.select_folder_btn.SetLabel(_("Select f&older…"))
         self.select_folder_btn.SetName(_("Select folder"))
         self.select_folder_btn.SetToolTip(
-            _("Select an exploded publication folder or HTML folder (Ctrl+Shift+O)")
+            _(
+                "Select an exploded publication folder, HTML folder, "
+                "or DAISY/NIMAS book (Ctrl+Shift+O)"
+            )
         )
         self.result_box.SetLabel(_("Result"))
         self.result_label.SetName(_("Check result"))
@@ -7320,8 +7363,6 @@ class MainFrame(wx.Frame):
         text = self._current_target()
         if not text:
             return False
-        if is_html_url(text):
-            return True
         from .publication import PublicationKind, classify_target
 
         return classify_target(text) == PublicationKind.HTML
@@ -7359,8 +7400,9 @@ class MainFrame(wx.Frame):
         if chosen is None:
             wx.MessageBox(
                 _(
-                    "Drop a packaged .ebrl, .epub, or .pdf file, an HTML file "
-                    "or folder, or an exploded eBraille/EPUB publication folder."
+                    "Drop a packaged .ebrl, .epub, or .pdf file, an HTML, SVG, "
+                    "CSS, MathML, or XML file, a DTBook XML or NIMAS/DAISY "
+                    "package, or an exploded eBraille/EPUB/DAISY publication folder."
                 ),
                 _("Unsupported drop"),
                 wx.OK | wx.ICON_WARNING,
@@ -7634,15 +7676,21 @@ class MainFrame(wx.Frame):
     def on_browse_file(self, _event: wx.CommandEvent | None) -> None:
         with wx.FileDialog(
             self,
-            _("Select an eBraille, EPUB, PDF, or HTML file"),
+            _("Select an eBraille, EPUB, PDF, HTML, SVG, CSS, MathML, or XML file"),
             wildcard=_(
-                "Publications (*.ebrl;*.epub;*.pdf;*.html;*.htm;*.xhtml)|"
+                "Publications (*.ebrl;*.epub;*.pdf;*.html;*.htm;*.xhtml;*.svg;*.css;*.mml;*.xml;*.opf)|"
                 "*.ebrl;*.Ebrl;*.EBRL;*.epub;*.EPUB;*.pdf;*.PDF;"
-                "*.html;*.HTML;*.htm;*.HTM;*.xhtml;*.XHTML|"
+                "*.html;*.HTML;*.htm;*.HTM;*.xhtml;*.XHTML;"
+                "*.svg;*.SVG;*.css;*.CSS;*.mml;*.MML;*.xml;*.XML;*.opf;*.OPF|"
                 "eBraille (*.ebrl)|*.ebrl;*.Ebrl;*.EBRL|"
                 "EPUB (*.epub)|*.epub;*.EPUB|"
                 "PDF (*.pdf)|*.pdf;*.PDF|"
                 "HTML (*.html;*.htm;*.xhtml)|*.html;*.HTML;*.htm;*.HTM;*.xhtml;*.XHTML|"
+                "SVG (*.svg)|*.svg;*.SVG|"
+                "CSS (*.css)|*.css;*.CSS|"
+                "MathML (*.mml)|*.mml;*.MML|"
+                "XML (*.xml)|*.xml;*.XML|"
+                "DAISY / NIMAS package (*.opf)|*.opf;*.OPF|"
                 "All files (*.*)|*.*"
             ),
             style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
@@ -7655,13 +7703,121 @@ class MainFrame(wx.Frame):
     def on_browse_folder(self, _event: wx.CommandEvent) -> None:
         with wx.DirDialog(
             self,
-            _("Select an exploded eBraille or EPUB folder, or a folder of HTML"),
+            _("Select an exploded eBraille, EPUB, HTML, or DAISY/NIMAS folder"),
             style=wx.DD_DIR_MUST_EXIST,
         ) as dlg:
             if dlg.ShowModal() != wx.ID_OK:
                 return
             self.path_ctrl.SetValue(dlg.GetPath())
             self.on_check(None)
+
+    def _read_clipboard_markup(self) -> str:
+        """Return clipboard text, preferring recognizable markup over CF_HTML chrome."""
+        from .clipboard_markup import prefer_clipboard_payload
+
+        if not wx.TheClipboard.Open():
+            return ""
+        try:
+            plain = ""
+            html = ""
+            text_obj = wx.TextDataObject()
+            if wx.TheClipboard.GetData(text_obj):
+                plain = text_obj.GetText() or ""
+            try:
+                html_obj = wx.HTMLDataObject()
+                html_ok = False
+                try:
+                    html_ok = bool(wx.TheClipboard.IsSupported(wx.DF_HTML))
+                except (AttributeError, TypeError):
+                    html_ok = True
+                if html_ok and wx.TheClipboard.GetData(html_obj):
+                    html = html_obj.GetHTML() or ""
+            except (AttributeError, TypeError):
+                html = ""
+        finally:
+            wx.TheClipboard.Close()
+        return prefer_clipboard_payload(plain, html)
+
+    def _ask_clipboard_kind(self):
+        from .clipboard_markup import CHOOSABLE_KINDS, ClipboardKind
+
+        labels = {
+            ClipboardKind.HTML: _("HTML"),
+            ClipboardKind.CSS: _("CSS"),
+            ClipboardKind.XML: _("XML"),
+            ClipboardKind.SVG: _("SVG"),
+            ClipboardKind.MATHML: _("MathML"),
+        }
+        choices = [labels[kind] for kind in CHOOSABLE_KINDS]
+        dlg = wx.SingleChoiceDialog(
+            self,
+            _(
+                "CheckMate could not tell what the clipboard contains. "
+                "Choose a document type:"
+            ),
+            _("Check clipboard"),
+            choices,
+        )
+        try:
+            if dlg.ShowModal() != wx.ID_OK:
+                return None
+            index = dlg.GetSelection()
+            if index < 0 or index >= len(CHOOSABLE_KINDS):
+                return None
+            return CHOOSABLE_KINDS[index]
+        finally:
+            dlg.Destroy()
+
+    def on_check_clipboard(self, _event: wx.CommandEvent | None) -> None:
+        if self._busy:
+            return
+        from .clipboard_markup import (
+            ClipboardKind,
+            detect_clipboard_kind,
+            looks_like_checkmate_report,
+            save_clipboard_snapshot,
+        )
+
+        raw = self._read_clipboard_markup()
+        if not raw.strip():
+            wx.MessageBox(
+                _("Copy HTML, CSS, XML, SVG, or MathML to the clipboard first."),
+                _("Clipboard is empty"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        if looks_like_checkmate_report(raw):
+            wx.MessageBox(
+                _(
+                    "The clipboard looks like a CheckMate report, not markup to "
+                    "validate.\n\nCopy the HTML, CSS, SVG, MathML, or XML you "
+                    "want to check, then try File → Check clipboard… again."
+                ),
+                _("Clipboard is a report"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        kind = detect_clipboard_kind(raw)
+        if kind == ClipboardKind.UNKNOWN:
+            chosen = self._ask_clipboard_kind()
+            if chosen is None:
+                return
+            kind = chosen
+        try:
+            path = save_clipboard_snapshot(raw, kind)
+        except OSError as exc:
+            wx.MessageBox(
+                _("Could not save the clipboard snapshot:\n{error}", error=exc),
+                _("Check clipboard"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+        self.path_ctrl.SetValue(str(path))
+        self._update_report_actions_enabled()
+        self.on_check(None)
 
     def on_check(self, _event: wx.CommandEvent | None) -> None:
         if self._busy:
@@ -8134,6 +8290,8 @@ class MainFrame(wx.Frame):
         log_item = menu.Append(wx.ID_ANY, _("View full &log\tCtrl+L"))
         changelog_item = menu.Append(wx.ID_ANY, _("View edit &changelog…\tCtrl+Shift+G"))
         changelog_item.Enable(self._changelog_path_if_present() is not None)
+        snapshot_item = menu.Append(wx.ID_ANY, _("View clipboard &snapshot…\tCtrl+Shift+B"))
+        snapshot_item.Enable(self._current_is_clipboard_snapshot())
         menu.Bind(wx.EVT_MENU, self.on_view_html_report, view_html)
         menu.Bind(wx.EVT_MENU, self.on_save_html_report, save_html)
         menu.Bind(wx.EVT_MENU, self.on_view_text_report, view_text)
@@ -8142,6 +8300,7 @@ class MainFrame(wx.Frame):
         menu.Bind(wx.EVT_MENU, self.on_clear_results, clear_item)
         menu.Bind(wx.EVT_MENU, self.on_view_full_log, log_item)
         menu.Bind(wx.EVT_MENU, self.on_view_changelog, changelog_item)
+        menu.Bind(wx.EVT_MENU, self.on_view_clipboard_snapshot, snapshot_item)
         _popup_menu_below(self, menu, self.report_btn)
         menu.Destroy()
 
@@ -8157,6 +8316,57 @@ class MainFrame(wx.Frame):
             if path.exists():
                 return path
         return None
+
+    def _current_is_clipboard_snapshot(self) -> bool:
+        from .clipboard_markup import is_clipboard_snapshot_path
+
+        path = self._current_publication_path()
+        return path is not None and is_clipboard_snapshot_path(path)
+
+    def _clipboard_snapshot_path_if_present(self) -> Path | None:
+        from .clipboard_markup import resolve_clipboard_snapshot
+
+        preferred: Path | None = None
+        if self._last_result is not None and self._last_result.target_path:
+            preferred = Path(self._last_result.target_path).expanduser()
+        if preferred is None:
+            preferred = self._current_path()
+        return resolve_clipboard_snapshot(preferred)
+
+    def on_view_clipboard_snapshot(self, _event: wx.CommandEvent | None) -> None:
+        from .clipboard_markup import clipboard_view_text
+
+        path = self._clipboard_snapshot_path_if_present()
+        if path is None:
+            wx.MessageBox(
+                _(
+                    "CheckMate has not saved a clipboard snapshot yet.\n\n"
+                    "Use File → Check clipboard… first."
+                ),
+                _("No clipboard snapshot"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        try:
+            body = clipboard_view_text(path)
+        except OSError as exc:
+            wx.MessageBox(
+                _("Could not read the clipboard snapshot:\n{error}", error=exc),
+                _("Error"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+        if not body.strip():
+            wx.MessageBox(
+                _("The clipboard snapshot is empty."),
+                _("No clipboard snapshot"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        self._show_text_dialog(_("Clipboard markup"), body)
 
     def _changelog_path_if_present(self) -> Path | None:
         from .edit_log import find_changelog
@@ -8218,7 +8428,7 @@ class MainFrame(wx.Frame):
             return "ace-report"
         return "check-report"
 
-    def _show_text_dialog(self, title: str, body: str) -> None:
+    def _show_text_dialog(self, title: str, body: str, *, note: str = "") -> None:
         """Read-only monospaced text viewer used for reports and the full log."""
         dlg = wx.Dialog(
             self,
@@ -8227,6 +8437,11 @@ class MainFrame(wx.Frame):
         )
         dlg.SetSize((720, 560))
         sizer = wx.BoxSizer(wx.VERTICAL)
+        if note:
+            caption = wx.StaticText(dlg, label=note)
+            caption.SetName(_("Snapshot notes"))
+            caption.Wrap(680)
+            sizer.Add(caption, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
         text = wx.TextCtrl(
             dlg,
             value=body,

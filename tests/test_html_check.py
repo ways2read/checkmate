@@ -31,7 +31,13 @@ from checkmate.publication import (
     is_html_url,
 )
 from checkmate.report_export import report_title
-from checkmate.vnu_check import issues_from_vnu_json, severity_from_vnu_message
+from checkmate.vnu_check import (
+    VNU_ALLOW_FORBIDDEN_HOSTS,
+    document_arg_for_vnu,
+    issues_from_vnu_json,
+    severity_from_vnu_message,
+    vnu_argv,
+)
 from checkmate import settings as settings_mod
 
 
@@ -161,6 +167,112 @@ class VnuMapperTests(unittest.TestCase):
         self.assertEqual(issues[0].severity, Severity.ERROR)
         self.assertIn("4:12", issues[0].location)
         self.assertEqual(issues[1].severity, Severity.WARNING)
+
+
+class VnuLocalhostTests(unittest.TestCase):
+    def test_argv_allows_forbidden_hosts_before_jar(self) -> None:
+        cmd = vnu_argv("java", Path("vnu.jar"), "http://127.0.0.1:9/x.html")
+        self.assertEqual(cmd[1], VNU_ALLOW_FORBIDDEN_HOSTS)
+        self.assertEqual(cmd[2], "-jar")
+        self.assertEqual(cmd[-1], "http://127.0.0.1:9/x.html")
+
+    def test_argv_keeps_extra_args_before_target(self) -> None:
+        cmd = vnu_argv(
+            "java", Path("vnu.jar"), "icon.svg", extra_args=["--svg"]
+        )
+        self.assertEqual(cmd[-2:], ["--svg", "icon.svg"])
+        self.assertEqual(cmd[1], VNU_ALLOW_FORBIDDEN_HOSTS)
+
+    def test_maps_loopback_url_to_local_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            page = root / "index.html"
+            page.write_text("<p>x</p>", encoding="utf-8")
+            mapped = document_arg_for_vnu(
+                "http://127.0.0.1:53757/index.html", root
+            )
+            self.assertEqual(Path(mapped).resolve(), page.resolve())
+
+    def test_leaves_remote_url_unchanged(self) -> None:
+        url = "https://example.com/a.html"
+        self.assertEqual(document_arg_for_vnu(url), url)
+        self.assertEqual(document_arg_for_vnu(url, None), url)
+
+    def test_run_vnu_passes_allow_forbidden_hosts(self) -> None:
+        from checkmate import vnu_check
+
+        captured: list[list[str]] = []
+        fake_java = mock.Mock()
+        fake_java.path = "java"
+        proc = mock.Mock()
+        proc.stdout = '{"messages":[]}'
+        proc.stderr = ""
+        proc.returncode = 0
+
+        def capturing(cmd, **_kwargs):
+            captured.append(list(cmd))
+            return proc
+
+        with (
+            mock.patch.object(vnu_check, "cached_java", return_value=fake_java),
+            mock.patch.object(
+                vnu_check, "ensure_vnu_jar", return_value=Path("vnu.jar")
+            ),
+            mock.patch.object(
+                vnu_check, "vnu_version_text", return_value="26.8.15"
+            ),
+            mock.patch.object(vnu_check, "run_capturing", side_effect=capturing),
+        ):
+            result = vnu_check.run_vnu_on_urls(["http://127.0.0.1:9/x.html"])
+        self.assertEqual(result.verdict, Verdict.PASSED)
+        self.assertEqual(len(captured), 1)
+        self.assertIn(VNU_ALLOW_FORBIDDEN_HOSTS, captured[0])
+        self.assertLess(
+            captured[0].index(VNU_ALLOW_FORBIDDEN_HOSTS),
+            captured[0].index("-jar"),
+        )
+
+    def test_run_vnu_checks_local_file_not_loopback_url(self) -> None:
+        from checkmate import vnu_check
+
+        captured: list[list[str]] = []
+        fake_java = mock.Mock()
+        fake_java.path = "java"
+        proc = mock.Mock()
+        proc.stdout = '{"messages":[]}'
+        proc.stderr = ""
+        proc.returncode = 0
+
+        def capturing(cmd, **_kwargs):
+            captured.append(list(cmd))
+            return proc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            page = root / "index.html"
+            page.write_text(
+                "<!DOCTYPE html><html lang='en'><title>x</title></html>",
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(vnu_check, "cached_java", return_value=fake_java),
+                mock.patch.object(
+                    vnu_check, "ensure_vnu_jar", return_value=Path("vnu.jar")
+                ),
+                mock.patch.object(
+                    vnu_check, "vnu_version_text", return_value="26.8.15"
+                ),
+                mock.patch.object(
+                    vnu_check, "run_capturing", side_effect=capturing
+                ),
+            ):
+                vnu_check.run_vnu_on_urls(
+                    ["http://127.0.0.1:9/index.html"],
+                    local_root=root,
+                )
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(Path(captured[0][-1]).resolve(), page.resolve())
+        self.assertFalse(captured[0][-1].startswith("http://"))
 
 
 class AxeMapperTests(unittest.TestCase):
@@ -353,6 +465,80 @@ class MergeAndReportTests(unittest.TestCase):
         self.assertTrue(
             any(line.startswith("Web page:") for line in merged.report_meta_lines())
         )
+
+    def test_merge_does_not_duplicate_vnu_version(self) -> None:
+        vnu = CheckResult(
+            verdict=Verdict.PASSED,
+            tool_name="Nu HTML Checker",
+            tool_version="26.8.15",
+            extra_meta=[("Nu HTML Checker version", "26.8.15")],
+        )
+        merged = merge_vnu_and_axe(
+            vnu,
+            None,
+            target="x.html",
+            pages=["http://127.0.0.1/x.html"],
+            images=[],
+        )
+        versions = [
+            value
+            for label, value in merged.extra_meta
+            if label == "Nu HTML Checker version"
+        ]
+        self.assertEqual(versions, ["26.8.15"])
+
+    def test_drop_snippet_axe_page_chrome(self) -> None:
+        from checkmate.html_check import drop_snippet_axe_issues
+        from checkmate.models import Issue
+
+        result = CheckResult(
+            verdict=Verdict.FAILED,
+            errors=2,
+            warnings=1,
+            issues=[
+                Issue(
+                    severity=Severity.ERROR,
+                    code="document-title",
+                    message="need title",
+                    source="axe",
+                ),
+                Issue(
+                    severity=Severity.WARNING,
+                    code="page-has-heading-one",
+                    message="need h1",
+                    source="axe",
+                ),
+                Issue(
+                    severity=Severity.ERROR,
+                    code="image-alt",
+                    message="need alt",
+                    source="axe",
+                ),
+            ],
+            tool_name="axe",
+        )
+        out = drop_snippet_axe_issues(result)
+        self.assertEqual([issue.code for issue in out.issues], ["image-alt"])
+        self.assertEqual(out.errors, 1)
+        self.assertEqual(out.warnings, 0)
+        self.assertEqual(out.verdict, Verdict.FAILED)
+
+        chrome_only = CheckResult(
+            verdict=Verdict.FAILED,
+            errors=1,
+            issues=[
+                Issue(
+                    severity=Severity.ERROR,
+                    code="html-has-lang",
+                    message="need lang",
+                    source="axe",
+                )
+            ],
+            tool_name="axe",
+        )
+        cleaned = drop_snippet_axe_issues(chrome_only)
+        self.assertEqual(cleaned.issues, [])
+        self.assertEqual(cleaned.verdict, Verdict.PASSED)
 
 
 class HtmlSettingsTests(unittest.TestCase):

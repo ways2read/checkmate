@@ -1,10 +1,11 @@
-"""Parse DAISY Pipeline daisy202-validator HTML reports into Issue models."""
+"""Parse DAISY Pipeline validator HTML and XML reports into Issue models."""
 
 from __future__ import annotations
 
 import html as html_lib
 import re
 from html.parser import HTMLParser
+from xml.etree import ElementTree as ET
 
 from .models import Issue, Severity
 
@@ -165,7 +166,7 @@ def _short_location(loc: str) -> str:
     return loc
 
 
-def parse_daisy202_html_report(html_text: str) -> tuple[list[Issue], list[str]]:
+def parse_pipeline_html_report(html_text: str) -> tuple[list[Issue], list[str]]:
     """Return (issues for the list, info lines for the log)."""
     parser = _ReportParser()
     try:
@@ -174,3 +175,101 @@ def parse_daisy202_html_report(html_text: str) -> tuple[list[Issue], list[str]]:
     except Exception:  # noqa: BLE001 — fall back to empty parse
         return [], []
     return parser.issues, parser.info_lines
+
+
+parse_daisy202_html_report = parse_pipeline_html_report
+
+
+def _local_name(tag: str) -> str:
+    if not isinstance(tag, str):
+        return ""
+    return tag.rsplit("}", 1)[-1]
+
+
+def _xml_location(elem: ET.Element) -> str:
+    loc_el = None
+    for child in list(elem):
+        if _local_name(child.tag) == "location":
+            loc_el = child
+            break
+    if loc_el is None:
+        href = elem.attrib.get("location") or elem.attrib.get("href") or ""
+        line = elem.attrib.get("line")
+        col = elem.attrib.get("column")
+        if href and line:
+            return f"{_short_location(href)}:{line}" + (f":{col}" if col else "")
+        return _short_location(href)
+    line = loc_el.attrib.get("line")
+    col = loc_el.attrib.get("column")
+    href = loc_el.attrib.get("href") or loc_el.attrib.get("path") or ""
+    text = (href or "".join(loc_el.itertext())).strip()
+    loc = _short_location(text)
+    if loc and line:
+        return f"{loc}:{line}" + (f":{col}" if col else "")
+    return loc or (f"{line}:{col}" if line else "")
+
+
+def parse_pipeline_xml_report(xml_text: str) -> list[Issue]:
+    """Map Pipeline ValidationReportXML / SVRL fragments to issues."""
+    text = (xml_text or "").strip()
+    if not text:
+        return []
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return []
+
+    issues: list[Issue] = []
+    for elem in root.iter():
+        name = _local_name(elem.tag)
+        if name == "error":
+            desc = ""
+            for child in list(elem):
+                if _local_name(child.tag) in {"desc", "description", "message"}:
+                    desc = "".join(child.itertext()).strip()
+                    break
+            if not desc:
+                desc = (elem.attrib.get("content") or "".join(elem.itertext())).strip()
+            if not desc:
+                continue
+            code = (elem.attrib.get("type") or "error").strip() or "error"
+            issues.append(
+                Issue(
+                    severity=Severity.ERROR,
+                    code=code,
+                    message=desc,
+                    location=_xml_location(elem),
+                    source="DAISY Pipeline",
+                )
+            )
+        elif name in {"failed-assert", "successful-report"}:
+            desc = ""
+            for child in list(elem):
+                if _local_name(child.tag) == "text":
+                    desc = "".join(child.itertext()).strip()
+                    break
+            if not desc:
+                desc = "".join(elem.itertext()).strip()
+            if not desc:
+                continue
+            code = (
+                elem.attrib.get("id")
+                or elem.attrib.get("role")
+                or "schematron"
+            ).strip()
+            severity = (
+                Severity.WARNING
+                if name == "successful-report"
+                else Severity.ERROR
+            )
+            loc = elem.attrib.get("location") or ""
+            issues.append(
+                Issue(
+                    severity=severity,
+                    code=code,
+                    message=desc,
+                    location=_short_location(loc),
+                    source="DAISY Pipeline",
+                )
+            )
+    return issues

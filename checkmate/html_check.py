@@ -14,6 +14,7 @@ from .axe_html import (
     html_axe_available,
     run_axe_on_urls,
 )
+from .clipboard_markup import SNIPPET_AXE_CODES, is_clipboard_snippet_path
 from .html_crawl import (
     DEFAULT_CRAWL_CAP,
     LocalHtmlServer,
@@ -81,6 +82,31 @@ def _emit_progress(progress, message: str, *, announce: bool = True) -> None:
         progress(message, announce=announce)
     except TypeError:
         progress(message)
+
+
+def _verdict_from_counts(counts: dict[str, int]) -> Verdict:
+    if counts["fatals"] or counts["errors"]:
+        return Verdict.FAILED
+    if counts["warnings"]:
+        return Verdict.PASSED_WITH_WARNINGS
+    return Verdict.PASSED
+
+
+def drop_snippet_axe_issues(result: CheckResult) -> CheckResult:
+    """Drop page-chrome axe rules that are noise for a wrapped clipboard snippet."""
+    kept = [issue for issue in result.issues if issue.code not in SNIPPET_AXE_CODES]
+    if len(kept) == len(result.issues):
+        return result
+    counts = _counts_from_issues(kept)
+    result.issues = kept
+    result.fatals = counts["fatals"]
+    result.errors = counts["errors"]
+    result.warnings = counts["warnings"]
+    result.infos = counts["infos"]
+    result.usages = counts["usages"]
+    if result.verdict != Verdict.ERROR:
+        result.verdict = _verdict_from_counts(counts)
+    return result
 
 
 def _verdict_rank(verdict: Verdict) -> int:
@@ -213,7 +239,9 @@ def merge_vnu_and_axe(
     extra_meta: list[tuple[str, str]] = []
     if vnu_result is not None:
         extra_meta.extend(vnu_result.extra_meta)
-        if vnu_result.tool_version:
+        if vnu_result.tool_version and not any(
+            label == "Nu HTML Checker version" for label, _ in extra_meta
+        ):
             extra_meta.append(("Nu HTML Checker version", vnu_result.tool_version))
     if pages:
         extra_meta.append(("Pages checked", str(len(pages))))
@@ -308,7 +336,9 @@ def run_html_check(target: str, *, progress: ProgressCallback | None = None) -> 
         images: list[dict[str, Any]] = []
 
         if want_vnu:
-            vnu_result = run_vnu_on_urls(pages, progress=progress)
+            vnu_result = run_vnu_on_urls(
+                pages, progress=progress, local_root=local_root
+            )
 
         if want_axe:
             # Always attempt axe when the user selected it — do not skip silently
@@ -316,6 +346,14 @@ def run_html_check(target: str, *, progress: ProgressCallback | None = None) -> 
             axe_result, images = run_axe_on_urls(pages, progress=progress)
         elif html_axe_available():
             _, images = run_axe_on_urls(pages, progress=progress, images_only=True)
+
+        snippet = False
+        try:
+            snippet = is_clipboard_snippet_path(Path(text))
+        except OSError:
+            snippet = False
+        if snippet and axe_result is not None:
+            axe_result = drop_snippet_axe_issues(axe_result)
 
         merged = merge_vnu_and_axe(
             vnu_result if want_vnu else None,
@@ -338,6 +376,22 @@ def run_html_check(target: str, *, progress: ProgressCallback | None = None) -> 
             )
             merged.infos += 1
             merged.extra_meta.append(("Opened as", start_url))
+        if snippet:
+            merged.extra_meta.append(("Checked as", "HTML snippet"))
+        extra_paths: list[Path] = []
+        if local_root is not None:
+            from .html_crawl import url_to_local_path
+
+            for url in pages:
+                mapped = url_to_local_path(url, local_root)
+                if mapped is not None and mapped.is_file():
+                    extra_paths.append(mapped)
+        from .mathml_quality import attach_mathml_quality
+        from .settings import mathml_nordic_guidelines
+
+        if extra_paths and mathml_nordic_guidelines():
+            _emit_progress(progress, "Checking MathML quality…")
+        merged = attach_mathml_quality(merged, text, extra_paths=extra_paths)
         if not merged.tool_name:
             merged.tool_name = html_checkers_label(mode)
         remember_html_session(

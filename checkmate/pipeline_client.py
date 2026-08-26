@@ -1,4 +1,4 @@
-"""Optional DAISY Pipeline 2 webservice client (secret DAISY 2.02 path)."""
+"""Optional DAISY Pipeline 2 webservice client (DAISY 2.02 / 3 / DTBook / NIMAS)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from .subprocess_util import elapsed_progress_message
 
 PIPELINE_NS = "http://www.daisy.org/ns/pipeline/data"
 _NS = {"d": PIPELINE_NS}
-SCRIPT_ID = "daisy202-validator"
 DEFAULT_BASE_URLS = (
     "http://127.0.0.1:8181/ws",
     "http://localhost:8181/ws",
@@ -38,6 +37,54 @@ class PipelineStatus:
     version: str
     authentication: bool
     localfs: bool
+
+
+@dataclass(frozen=True)
+class PipelineScript:
+    """A Pipeline webservice validator script and its job-request shape."""
+
+    script_id: str
+    nicename: str
+    progress_label: str
+    options: tuple[tuple[str, str], ...] = ()
+
+
+DAISY202_SCRIPT = PipelineScript(
+    script_id="daisy202-validator",
+    nicename="DAISY 2.02 Validator",
+    progress_label="Running DAISY 2.02 Validator…",
+    options=(("timeToleranceMs", "500"),),
+)
+DTBOOK_SCRIPT = PipelineScript(
+    script_id="dtbook-validator",
+    nicename="DTBook Validator",
+    progress_label="Running DTBook Validator…",
+    options=(
+        ("mathml-version", "3.0"),
+        ("nimas", "false"),
+        ("check-images", "true"),
+    ),
+)
+NIMAS_SCRIPT = PipelineScript(
+    script_id="nimas-fileset-validator",
+    nicename="NIMAS Fileset Validator",
+    progress_label="Running NIMAS Fileset Validator…",
+    options=(
+        ("mathml-version", "3.0"),
+        ("check-images", "true"),
+    ),
+)
+# Pipeline 2 has no dedicated daisy3-validator; the NIMAS fileset script
+# validates the OPF + DTBook of a DAISY 3 fileset.
+DAISY3_SCRIPT = PipelineScript(
+    script_id="nimas-fileset-validator",
+    nicename="DAISY 3 Validator",
+    progress_label="Running DAISY 3 Validator…",
+    options=(
+        ("mathml-version", "3.0"),
+        ("check-images", "true"),
+    ),
+)
 
 
 def _local_appdata() -> Path:
@@ -127,8 +174,8 @@ def probe_pipeline(
 ) -> PipelineStatus | None:
     """Return status when a usable local Pipeline webservice is reachable.
 
-    Secret-feature rules: must be alive, localfs enabled, and authentication
-    disabled (Pipeline desktop local mode).
+    Must be alive, localfs enabled, and authentication disabled
+    (Pipeline desktop local mode).
     """
     global _PIPELINE_STATUS_CACHE, _PIPELINE_STATUS_CACHED_AT
     urls = [base_url.rstrip("/")] if base_url else candidate_base_urls()
@@ -182,18 +229,26 @@ def _file_uri(path: Path) -> str:
     return path.expanduser().resolve().as_uri()
 
 
-def _job_request_xml(*, base_url: str, ncc: Path) -> str:
-    script_href = f"{base_url.rstrip('/')}/scripts/{SCRIPT_ID}"
-    source = _file_uri(ncc)
+def _job_request_xml(
+    *,
+    base_url: str,
+    source: Path,
+    script: PipelineScript,
+) -> str:
+    script_href = f"{base_url.rstrip('/')}/scripts/{script.script_id}"
+    source_uri = _file_uri(source)
+    option_lines = "".join(
+        f'  <option name="{name}">{value}</option>\n' for name, value in script.options
+    )
     # Match Pipeline desktop jobRequest shape (see pipeline-ui app logs).
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n'
         f'<jobRequest xmlns="{PIPELINE_NS}">\n'
-        "  <nicename>DAISY 2.02 Validator</nicename>\n"
+        f"  <nicename>{script.nicename}</nicename>\n"
         "  <priority>medium</priority>\n"
         f'  <script href="{script_href}"/>\n'
-        f'  <input name="source"><item value="{source}"/></input>\n'
-        '  <option name="timeToleranceMs">500</option>\n'
+        f'  <input name="source"><item value="{source_uri}"/></input>\n'
+        f"{option_lines}"
         "</jobRequest>"
     )
 
@@ -246,9 +301,15 @@ def job_messages_text(xml_text: str) -> str:
     return "\n".join(lines)
 
 
-def create_daisy202_job(status: PipelineStatus, ncc: Path) -> str:
+def create_pipeline_job(
+    status: PipelineStatus,
+    source: Path,
+    script: PipelineScript,
+) -> str:
     url = f"{status.base_url}/jobs"
-    body = _job_request_xml(base_url=status.base_url, ncc=ncc)
+    body = _job_request_xml(
+        base_url=status.base_url, source=source, script=script
+    )
     resp = requests.post(
         url,
         data=body.encode("utf-8"),
@@ -263,6 +324,10 @@ def create_daisy202_job(status: PipelineStatus, ncc: Path) -> str:
     if not job_id:
         raise RuntimeError("Pipeline job create response missing job id")
     return job_id
+
+
+def create_daisy202_job(status: PipelineStatus, ncc: Path) -> str:
+    return create_pipeline_job(status, ncc, DAISY202_SCRIPT)
 
 
 def wait_for_job(
@@ -302,12 +367,12 @@ def wait_for_job(
     raise TimeoutError(f"Pipeline job timed out after {int(timeout)}s")
 
 
-def download_html_report(
+def download_job_outputs(
     status: PipelineStatus,
     job_id: str,
     dest_dir: Path,
-) -> Path | None:
-    """Download job result zip and return path to html-report.html if found."""
+) -> tuple[Path | None, list[Path]]:
+    """Download the job result zip. Return (html_report, xml_report_paths)."""
     url = f"{status.base_url}/jobs/{job_id}/result"
     dest_dir.mkdir(parents=True, exist_ok=True)
     zip_path = dest_dir / "result.zip"
@@ -317,7 +382,7 @@ def download_html_report(
         alt = f"{status.base_url}/jobs/{job_id}/result/port/html-report"
         resp = requests.get(alt, timeout=REQUEST_TIMEOUT)
         if resp.status_code != 200:
-            return None
+            return None, []
     zip_path.write_bytes(resp.content)
     try:
         with zipfile.ZipFile(zip_path) as zf:
@@ -327,18 +392,43 @@ def download_html_report(
         html_path = dest_dir / "html-report.html"
         if b"<html" in resp.content[:500].lower() or b"Validation Results" in resp.content:
             html_path.write_bytes(resp.content)
-            return html_path
-        return None
+            return html_path, []
+        return None, []
 
-    matches = sorted(dest_dir.rglob("html-report.html"))
-    if matches:
-        return matches[0]
-    # Any xhtml/html under the extract
-    for pattern in ("*.html", "*.xhtml"):
-        found = sorted(dest_dir.rglob(pattern))
-        if found:
-            return found[0]
-    return None
+    html_path = None
+    for name in (
+        "html-report.html",
+        "validation-report.xhtml",
+        "validation-report.html",
+        "dtbook-validation-report.xhtml",
+    ):
+        matches = sorted(dest_dir.rglob(name))
+        if matches:
+            html_path = matches[0]
+            break
+    if html_path is None:
+        for pattern in ("*.xhtml", "*.html"):
+            found = sorted(dest_dir.rglob(pattern))
+            if found:
+                html_path = found[0]
+                break
+
+    xml_paths = [
+        p
+        for p in sorted(dest_dir.rglob("*.xml"))
+        if "report" in p.name.lower() or p.name.lower().endswith("-report.xml")
+    ]
+    return html_path, xml_paths
+
+
+def download_html_report(
+    status: PipelineStatus,
+    job_id: str,
+    dest_dir: Path,
+) -> Path | None:
+    """Download job result zip and return path to an HTML report if found."""
+    html_path, _xml = download_job_outputs(status, job_id, dest_dir)
+    return html_path
 
 
 def fetch_job_log(status: PipelineStatus, job_id: str) -> str:

@@ -34,6 +34,8 @@ VERAPDF_INSTALLER_ZIP_URL = (
 DAISY_WEBSITE = "https://daisy.org/"
 EBRAILLE_STANDARD_PAGE = "https://daisy.org/activities/standards/ebraille/"
 EBRAILLE_SPEC_URL = "https://daisy.org/s/ebraille/"
+PIPELINE_HOME_PAGE = "https://daisy.github.io/pipeline/"
+NU_CHECKER_PAGE = "https://validator.github.io/validator/"
 
 BUNDLED_JAVA_DIRNAME = "runtime"
 BUNDLED_CHECKER_DIRNAME = "checker"

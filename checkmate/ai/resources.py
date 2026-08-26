@@ -89,6 +89,10 @@ RESOURCE_MAP: dict[str, list[tuple[str, str]]] = {
             "PDF/UA",
             "https://www.pdfa.org/resource/iso-14289-pdfua/",
         ),
+        (
+            "PDF/A",
+            "https://www.pdfa.org/resource/iso-19005-pdfa/",
+        ),
     ],
     "DAISY Pipeline": [
         (
@@ -98,6 +102,24 @@ RESOURCE_MAP: dict[str, list[tuple[str, str]]] = {
         (
             "DAISY Accessible Publishing Knowledge Base",
             "https://kb.daisy.org/publishing/",
+        ),
+        (
+            "DTBook / DAISY",
+            "https://daisy.org/info-help/guidance-training/standards/daisy-3-and-dtbook/",
+        ),
+    ],
+    "MathML quality": [
+        (
+            "Nordic MathML Guidelines",
+            "https://github.com/nlbdev/mathml-guidelines/blob/main/Nordic%20MathML%20Guidelines.md",
+        ),
+        (
+            "MathML Core",
+            "https://www.w3.org/TR/mathml-core/",
+        ),
+        (
+            "DAISY KB: MathML",
+            "https://kb.daisy.org/publishing/docs/html/mathml.html",
         ),
     ],
 }
@@ -118,8 +140,19 @@ _KB_URL_IN_TEXT = re.compile(
 
 def is_web_html_issue(issue: Issue) -> bool:
     """True for HTML-page checkers (axe, Nu HTML Checker), not EPUB Ace."""
+    if _looks_like_mathml_quality(issue):
+        return False
     source = (issue.source or "").strip().lower()
     return source == "axe" or source.startswith("nu html") or source == "vnu"
+
+
+def is_mathml_quality_issue(issue: Issue) -> bool:
+    return _looks_like_mathml_quality(issue)
+
+
+def _looks_like_mathml_quality(issue: Issue) -> bool:
+    source = (issue.source or "").strip().lower()
+    return source == "mathml quality" or (issue.code or "").startswith("mathml-")
 
 
 def _ace_family_source(source: str) -> bool:
@@ -257,6 +290,14 @@ def resources_for_issue(issue: Issue) -> list[tuple[str, str]]:
     if _looks_like_nu(issue):
         return _dedupe_resources(list(RESOURCE_MAP["Nu HTML Checker"]))
 
+    if _looks_like_mathml_quality(issue):
+        head: list[tuple[str, str]] = []
+        url = (getattr(issue, "help_url", "") or "").strip()
+        title = (getattr(issue, "help_title", "") or "").strip()
+        if url.startswith(("http://", "https://")):
+            head.append((title or "Nordic MathML Guidelines", url))
+        return _dedupe_resources([*head, *RESOURCE_MAP["MathML quality"]])
+
     if _looks_like_ace(issue):
         source = (issue.source or "").strip()
         base = list(RESOURCE_MAP.get(source) or RESOURCE_MAP["Ace"])
@@ -293,6 +334,13 @@ def primary_kb_resource(issue: Issue) -> tuple[str, str] | None:
     """
     if _looks_like_axe(issue):
         return _axe_engine_help(issue)
+    if _looks_like_mathml_quality(issue):
+        url = (getattr(issue, "help_url", "") or "").strip()
+        title = (getattr(issue, "help_title", "") or "").strip()
+        if url.startswith(("http://", "https://")):
+            return title or "Nordic MathML Guidelines", url
+        items = RESOURCE_MAP.get("MathML quality") or []
+        return items[0] if items else None
     if _looks_like_nu(issue):
         items = RESOURCE_MAP.get("Nu HTML Checker") or []
         return items[0] if items else None
@@ -319,6 +367,30 @@ def resources_prompt_block(issue: Issue) -> str:
 def authoritative_guidance_for_explain(issue: Issue) -> str:
     """System-prompt block: treat the primary reference as authoritative topic guidance."""
     primary = primary_kb_resource(issue)
+    if _looks_like_mathml_quality(issue):
+        host = (
+            "- This is a MathML quality warning (Nordic guidelines), not a schema error.\n"
+            "- Prefer MathML Core markup (mi/mo/mn, msqrt/mroot, mover). "
+            "Do not recommend OPF, EPUB package-document, or PDF tagging.\n"
+            "- These heuristics can false-positive; say when the expression may be "
+            "correct as written."
+        )
+        if not primary:
+            return (
+                "AUTHORITATIVE GUIDANCE:\n"
+                "- Do not invent conformance requirements. If unsure, say what to verify.\n"
+                f"{host}"
+            )
+        title, url = primary
+        return (
+            "AUTHORITATIVE GUIDANCE:\n"
+            f"- Primary reference for this issue: [{title}]({url})\n"
+            "- Align \"What this means\", \"Why it matters\", and \"How to fix\" with that "
+            "reference; do not invent requirements that conflict with it.\n"
+            f"{host}\n"
+            "- In Learn more, list that primary reference first as a markdown link; you may "
+            "add other trusted resources from the list below."
+        )
     if is_web_html_issue(issue):
         host = (
             "- This issue is on a web page (HTML), not an EPUB, eBraille file, "

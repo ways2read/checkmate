@@ -9,10 +9,40 @@ from typing import Any
 from .paths import app_data_dir
 
 # veraPDF --flavour values CheckMate exposes in Settings.
-VERAPDF_FLAVOURS: tuple[str, ...] = ("ua2", "ua1")
+# PDF/UA first (accessibility default), then PDF/A (archival), then WTPDF.
+VERAPDF_FLAVOURS: tuple[str, ...] = (
+    "ua2",
+    "ua1",
+    "1a",
+    "1b",
+    "2a",
+    "2b",
+    "2u",
+    "3a",
+    "3b",
+    "3u",
+    "4",
+    "4e",
+    "4f",
+    "wt1a",
+    "wt1r",
+)
 VERAPDF_FLAVOUR_LABELS: dict[str, str] = {
     "ua2": "PDF/UA-2",
     "ua1": "PDF/UA-1",
+    "1a": "PDF/A-1a",
+    "1b": "PDF/A-1b",
+    "2a": "PDF/A-2a",
+    "2b": "PDF/A-2b",
+    "2u": "PDF/A-2u",
+    "3a": "PDF/A-3a",
+    "3b": "PDF/A-3b",
+    "3u": "PDF/A-3u",
+    "4": "PDF/A-4",
+    "4e": "PDF/A-4e",
+    "4f": "PDF/A-4f",
+    "wt1a": "WTPDF 1.0 Accessibility",
+    "wt1r": "WTPDF 1.0 Reuse",
 }
 DEFAULT_VERAPDF_FLAVOUR = "ua2"
 
@@ -36,6 +66,9 @@ DEFAULT_HTML_CHECKERS = "both"
 
 # Follow same-site links when checking HTML (capped). Off: start page only.
 DEFAULT_HTML_FOLLOW_LINKS = False
+
+# MathML quality pass (Nordic guidelines). Off: Nu schema only.
+DEFAULT_MATHML_NORDIC_GUIDELINES = False
 
 # Check completion chimes (files: check-started/passed/failed-{n}.wav).
 SOUND_SCHEMES: tuple[str, ...] = ("1", "2", "off")
@@ -273,7 +306,7 @@ def single_instance_enabled() -> bool:
 
 
 def verapdf_flavour() -> str:
-    """Selected veraPDF validation flavour (``ua1`` or ``ua2``; default UA-2)."""
+    """Selected veraPDF validation flavour (PDF/UA, PDF/A, or WTPDF; default UA-2)."""
     value = str(read_settings().get("verapdf_flavour", DEFAULT_VERAPDF_FLAVOUR)).strip()
     return value if value in VERAPDF_FLAVOURS else DEFAULT_VERAPDF_FLAVOUR
 
@@ -311,3 +344,12 @@ def html_checkers_label(mode: str | None = None) -> str:
 def html_follow_links() -> bool:
     """True when HTML checks should follow same-site links (up to the crawl cap)."""
     return bool(read_settings().get("html_follow_links", DEFAULT_HTML_FOLLOW_LINKS))
+
+
+def mathml_nordic_guidelines() -> bool:
+    """True when MathML/HTML checks run the Nordic MathML quality pass."""
+    return bool(
+        read_settings().get(
+            "mathml_nordic_guidelines", DEFAULT_MATHML_NORDIC_GUIDELINES
+        )
+    )

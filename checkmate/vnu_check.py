@@ -27,6 +27,9 @@ VNU_DISPLAY_NAME = "Nu HTML Checker"
 VNU_JAR_URL = (
     "https://github.com/validator/validator/releases/latest/download/vnu.jar"
 )
+# Nu blocks 127.0.0.1 / localhost unless this JVM property is set. CheckMate
+# serves local HTML on loopback so axe is not limited by file://.
+VNU_ALLOW_FORBIDDEN_HOSTS = "-Dnu.validator.servlet.allow-forbidden-hosts=true"
 _VNU_TIMEOUT_S = 120.0
 _VERSION_RE = re.compile(r"(\d{2,4}[.\-]\d{1,2}[.\-]\d{1,2}|\d+\.\d+(?:\.\d+)?)")
 
@@ -71,6 +74,39 @@ def vnu_version_text(jar: Path | None = None) -> str:
 
 def vnu_available() -> bool:
     return find_vnu_jar() is not None
+
+
+def vnu_argv(
+    java_path: str,
+    jar: Path,
+    target: str,
+    *,
+    extra_args: list[str] | None = None,
+) -> list[str]:
+    """Command line for one document. Allows loopback hosts CheckMate serves."""
+    return [
+        java_path,
+        VNU_ALLOW_FORBIDDEN_HOSTS,
+        "-jar",
+        str(jar),
+        "--format",
+        "json",
+        "--stdout",
+        *(extra_args or ()),
+        target,
+    ]
+
+
+def document_arg_for_vnu(url: str, local_root: Path | None = None) -> str:
+    """Prefer a local file path so vnu need not fetch 127.0.0.1 over HTTP."""
+    if local_root is None:
+        return url
+    from .html_crawl import url_to_local_path
+
+    path = url_to_local_path(url, local_root)
+    if path is not None and path.is_file():
+        return str(path)
+    return url
 
 
 def ensure_vnu_jar(progress: ProgressCallback | None = None) -> Path:
@@ -270,8 +306,17 @@ def run_vnu_on_urls(
     *,
     jar: Path | None = None,
     progress: ProgressCallback | None = None,
+    extra_args: list[str] | None = None,
+    empty_message: str = "No HTML pages to check.",
+    local_root: Path | None = None,
 ) -> CheckResult:
-    """Check each URL with vnu.jar and merge messages into one result."""
+    """Check each URL or file with vnu.jar and merge messages into one result.
+
+    *extra_args* are inserted before the document list (e.g. ``--svg``, ``--css``).
+    *local_root* maps CheckMate's loopback crawl URLs back to files so Nu can
+    read them from disk. Loopback HTTP URLs still work via
+    ``allow-forbidden-hosts`` (user-pasted ``http://127.0.0.1`` sites).
+    """
     java = cached_java() or detect_java()
     if java is None:
         return CheckResult(
@@ -291,11 +336,11 @@ def run_vnu_on_urls(
             tool_name=VNU_DISPLAY_NAME,
         )
 
-    pages = [u for u in urls if u]
+    pages = [document_arg_for_vnu(u, local_root) for u in urls if u]
     if not pages:
         return CheckResult(
             verdict=Verdict.ERROR,
-            error_message="No HTML pages to check.",
+            error_message=empty_message,
             tool_name=VNU_DISPLAY_NAME,
         )
 
@@ -308,15 +353,7 @@ def run_vnu_on_urls(
     for index, url in enumerate(pages, start=1):
         label = f"Checking page {index} of {total}…"
         _emit_progress(progress, label)
-        cmd = [
-            java.path,
-            "-jar",
-            str(jar),
-            "--format",
-            "json",
-            "--stdout",
-            url,
-        ]
+        cmd = vnu_argv(java.path, jar, url, extra_args=extra_args)
         try:
             proc = run_capturing(
                 cmd,
@@ -386,6 +423,79 @@ def run_vnu_on_urls(
         checked_at=started,
         extra_meta=[("Nu HTML Checker version", version)] if version else [],
     )
+
+
+def run_vnu_document_check(
+    target: str,
+    *,
+    kind,
+    progress: ProgressCallback | None = None,
+) -> CheckResult:
+    """Check a single SVG, CSS, MathML, or XML file/URL with Nu (no crawl, no axe)."""
+    from .clipboard_markup import ClipboardKind, is_clipboard_snapshot_path, vnu_args_for_kind
+    from .publication import PublicationKind, is_html_url
+
+    text = (target or "").strip().strip('"')
+    checked_at = datetime.now().astimezone()
+    extra: list[str]
+    if kind == PublicationKind.SVG:
+        extra = ["--svg"]
+        profile = "SVG"
+        empty = "No SVG document to check."
+        label = "Checking SVG…"
+    elif kind == PublicationKind.CSS:
+        extra = ["--css"]
+        profile = "CSS"
+        empty = "No CSS stylesheet to check."
+        label = "Checking CSS…"
+    elif kind == PublicationKind.XML:
+        extra = ["--xml"]
+        profile = "XML"
+        empty = "No XML document to check."
+        label = "Checking XML…"
+    else:
+        extra = ["--html"]
+        profile = "MathML"
+        empty = "No MathML to check."
+        label = "Checking MathML…"
+        if not is_html_url(text):
+            try:
+                extra = vnu_args_for_kind(
+                    ClipboardKind.MATHML,
+                    Path(text).read_text(encoding="utf-8", errors="replace"),
+                )
+            except OSError:
+                extra = ["--html"]
+    _emit_progress(progress, label)
+    result = run_vnu_on_urls(
+        [text],
+        progress=progress,
+        extra_args=extra,
+        empty_message=empty,
+    )
+    if result.checked_at is None:
+        result.checked_at = checked_at
+    if not result.target_path:
+        result.target_path = text
+    existing = {meta_label for meta_label, _ in result.extra_meta}
+    if "Validation profile" not in existing:
+        result.extra_meta.append(("Validation profile", profile))
+    if is_html_url(text):
+        result.extra_meta.append(("Opened as", text))
+    else:
+        try:
+            if is_clipboard_snapshot_path(Path(text).expanduser().resolve()):
+                result.extra_meta.append(("Source", "Clipboard"))
+        except OSError:
+            pass
+    if kind in (PublicationKind.MATHML, PublicationKind.XML):
+        from .mathml_quality import attach_mathml_quality
+        from .settings import mathml_nordic_guidelines
+
+        if mathml_nordic_guidelines():
+            _emit_progress(progress, "Checking MathML quality…")
+        result = attach_mathml_quality(result, text)
+    return result
 
 
 def vnu_status_part() -> str | None:

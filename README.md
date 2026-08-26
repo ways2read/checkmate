@@ -3,29 +3,41 @@
 An accessible, cross-platform desktop front-end for the
 [DAISY eBraille Checker](https://github.com/daisy/ebraille-checker),
 [W3C EPUBCheck](https://github.com/w3c/epubcheck),
-[veraPDF](https://verapdf.org/) (PDF/UA), the
-[W3C Nu HTML Checker](https://github.com/validator/validator), and
-[axe-core](https://github.com/dequelabs/axe-core) (via Ace’s bundled Chrome).
+[veraPDF](https://verapdf.org/) (PDF/UA and PDF/A), the
+[W3C Nu HTML Checker](https://github.com/validator/validator),
+[axe-core](https://github.com/dequelabs/axe-core) (via Ace’s bundled Chrome),
+and [DAISY Pipeline 2](https://daisy.github.io/pipeline/) validators when a
+local Pipeline webservice is running.
 
 Those checkers are command-line tools. This app wraps them so you can open
 a publication and see a clear result — **Passed**, **Passed with warnings**, or
 **Failed** — without typing `java -jar` commands or reading a long console log
 first. `.ebrl` files use eBraille Checker; `.epub` files use stock EPUBCheck
-plus Ace by DAISY when available; `.pdf` files use veraPDF against the PDF/UA
-profile chosen in **Tools → Settings…** (default PDF/UA-2);
+plus Ace by DAISY when available; `.pdf` files use veraPDF against the
+profile chosen in **Tools → Settings…** (default PDF/UA-2; PDF/A and WTPDF
+profiles are also listed);
 `.html` / `.htm` / `.xhtml` files, HTML folders, and `http(s)` URLs use the
-Nu HTML Checker plus axe (same Chromium as Ace); exploded folders are
-classified automatically.
+Nu HTML Checker plus axe (same Chromium as Ace); `.svg` and `.css` files use
+Nu only; `.mml` and leftover `.xml` files use Nu (`--html` / `--xml`);
+DAISY 2.02 folders, DAISY 3 / NIMAS packages, and DTBook XML use
+Pipeline; exploded folders are classified automatically.
 
 Built with [wxPython](https://wxpython.org/) for native widgets and screen reader
 support on Windows, macOS, and Linux.
 
 ## Features
 
-- Open a packaged `.ebrl`, `.epub`, or `.pdf` file, an HTML file or folder, an
+- Open a packaged `.ebrl`, `.epub`, or `.pdf` file, an HTML, SVG, CSS, MathML,
+  or XML file or folder, a DTBook `.xml` or NIMAS/DAISY `.opf` package, an
   `http(s)` URL (paste into Path and press Enter / F5), or an exploded publication
   folder (**Select file…** / **Select folder…**, or drag and drop) — checking
   starts automatically with the matching engine
+- **File → Check clipboard…** (`Ctrl+Shift+V`) validates HTML, CSS, XML, SVG, or
+  MathML copied to the clipboard (type is detected; you are asked if it is unclear).
+  Fragments and skeleton `<html><body>` pages are wrapped so Nu/axe report problems
+  in the snippet, not missing doctype, title, or landmarks. **File → View clipboard
+  snapshot…** (`Ctrl+Shift+B`) shows the markup that was copied, not the wrapper
+  used for checking. A snapshot is saved so **F5** re-checks the same snippet
 - For `.epub` files, EPUBCheck always runs; [Ace by DAISY](https://daisy.github.io/ace/)
   runs next and results are merged into one list (tagged by source). Packaged
   builds bundle Ace (with its own Node runtime and Chromium); otherwise a
@@ -35,10 +47,28 @@ support on Windows, macOS, and Linux.
   (cap 25), then runs the [Nu HTML Checker](https://github.com/validator/validator)
   and axe-core in Ace’s Chrome (Settings: Nu + axe, Nu only, or axe only).
   Local files are served on `127.0.0.1` so axe is not limited by `file://`
-- On Windows, right-click an `.ebrl`, `.epub`, or `.pdf` → **Validate with
-  CheckMate**, or **Open with** → CheckMate (does not change the
-  double-click default)
+- For `.svg` and `.css` files (and `http(s)` URLs that end in those extensions),
+  Nu runs alone with `--svg` or `--css` — no crawl and no axe. MathML (`.mml`,
+  or `.xml` that looks like MathML) and other XML use Nu `--html` or `--xml`.
+  **Tools → Settings… → MathML** can enable a warning-only pass against the
+  [Nordic MathML Guidelines](https://github.com/nlbdev/mathml-guidelines/blob/main/Nordic%20MathML%20Guidelines.md)
+  (off by default). That flags hyphen vs minus, deprecated `mfenced`, missing
+  invisible operators, OCR-like tokens, and similar heuristics on MathML files,
+  clipboard MathML, and local HTML that contains `<math>`. Hits can
+  false-positive; Explain links the guidelines first.
+- DAISY 2.02 book folders (`ncc.html`), DAISY 3 / NIMAS packages, and DTBook
+  XML are checked through a local [DAISY Pipeline 2](https://daisy.github.io/pipeline/)
+  webservice when the desktop app is running in local mode
+  (`http://127.0.0.1:8181/ws`). Pipeline is not bundled; if it is not running,
+  CheckMate names the format and explains how to enable it. The status bar
+  shows the Pipeline version when it is detected
+- On Windows, right-click an `.ebrl`, `.epub`, `.pdf`, `.html`, `.svg`, or
+  `.css` file →
+  **Validate with CheckMate**, or **Open with** → CheckMate (does not change
+  the double-click default). On Windows 11 the command is on the classic menu
+  (**Show more options**, or Shift+F10 / the Menu key)
 - On macOS packaged builds, Finder **Open With** for `.ebrl` / `.epub` / `.pdf`
+  / `.html` / `.svg` / `.css`
   (does not take over double-click by default)
 - Result-first UI: multi-line verdict with counts; colour cues (green / orange /
   red) reinforce the text; a status icon beside the result (click to select a
@@ -92,11 +122,11 @@ support on Windows, macOS, and Linux.
 - Copy summary; view or save text / HTML reports (**Report** menu) — HTML
   reports embed an EPUB/eBraille cover image when present, or the first page
   of a PDF; reports and the result pane name the validation profile / ruleset
-  that ran (PDF/UA, ebraille, Ace axe-core); **Clear results**
+  that ran (PDF/UA, PDF/A, ebraille, Ace axe-core, DAISY Pipeline); **Clear results**
   returns to the launch state
 - **Tools → Settings…**: general preferences (show issues always, sound
   scheme, color theme — System / Light / Dark, AI features) and the veraPDF
-  PDF/UA profile (UA-1 or UA-2). eBraille always uses the `ebraille`
+  profile (PDF/UA-2 default; PDF/UA-1, PDF/A, and WTPDF are listed). eBraille always uses the `ebraille`
   EPUBCheck profile. System follows the computer light/dark setting; Light
   and Dark keep CheckMate on that theme (including HTML reports and
   progress-dialog text).
@@ -177,8 +207,9 @@ uv run checkmate
 
 1. **Select file…** or **Select folder…**, or **drag and drop** a publication
    onto the window — checking starts automatically. On Windows you can also
-   right-click an `.ebrl`, `.epub`, or `.pdf` → **Validate with CheckMate**,
-   or **Open with** → CheckMate. On macOS, use Finder **Open With** for a
+   right-click an `.ebrl`, `.epub`, `.pdf`, `.html`, `.svg`, or `.css` file → **Validate with
+   CheckMate**, or **Open with** → CheckMate. On Windows 11 use **Show more
+   options** (or Shift+F10). On macOS, use Finder **Open With** for a
    packaged `.app`.
 2. While a check runs, the **Result** pane shows living progress (Ace streams
    document status; other tools show elapsed time). When finished, focus moves
@@ -207,6 +238,8 @@ versions and Java information.
 |---|---|
 | `Ctrl+O` | Select file |
 | `Ctrl+Shift+O` | Select folder |
+| `Ctrl+Shift+V` | Check clipboard (HTML, CSS, XML, SVG, or MathML) |
+| `Ctrl+Shift+B` | View clipboard snapshot |
 | `Ctrl+Tab` | Leave AI explanation WebView (details/overview dialogs) |
 | `F5` | Re-check current publication |
 | `Ctrl+T` | View text report |
@@ -389,11 +422,16 @@ checkmate/
     accessibility.py   # Screen-reader speak helpers (accessible-output2)
     checker.py         # Run jar, parse JSON results
     cover_image.py     # EPUB cover / PDF first-page for HTML reports
-    publication.py     # Classify .ebrl / .epub / .pdf / HTML / exploded folders
+    publication.py     # Classify eBraille / EPUB / PDF / HTML / SVG / CSS / XML / DAISY
+    clipboard_markup.py # Detect/wrap clipboard HTML, CSS, XML, SVG, MathML
     html_crawl.py      # Same-site HTML crawl + localhost static server
     html_check.py      # Nu HTML Checker + axe orchestration
-    vnu_check.py       # vnu.jar JSON → issues
+    vnu_check.py       # vnu.jar JSON → issues (HTML, SVG, CSS, MathML, XML)
+    mathml_quality.py  # Optional Nordic MathML quality warnings after Nu
     axe_html.py        # Puppeteer axe runner for HTML pages
+    pipeline_client.py # DAISY Pipeline 2 webservice (local mode)
+    pipeline_check.py  # DAISY 2.02 / 3 / DTBook / NIMAS jobs
+    pipeline_report.py # Pipeline HTML/XML reports → issues
     epub_package.py    # Extract / rebuild .epub/.ebrl (Fix with AI apply)
     updater.py         # Tool download / update (GitHub + veraPDF installer)
     java_util.py       # Locate Java (bundled or PATH)
@@ -558,10 +596,11 @@ The installer:
   (`build_installer.ps1` refuses to compile if `runtime/`, `checker/`,
   `epubcheck/`, `verapdf/`, or `ace/` is missing from `dist/`)
 - Supports per-user install (default) or Program Files with elevation
-- Adds `.ebrl` / `.epub` / `.pdf` shell integration (optional task, on by default):
-  **Open with** → CheckMate, and context menu **Validate with
-  CheckMate** — does not change the double-click default for any
-  extension (EPUB/PDF readers stay as the default opener)
+- Adds `.ebrl` / `.epub` / `.pdf` / `.html` / `.svg` / `.css` shell integration (optional task,
+  on by default): **Open with** → CheckMate, and context menu **Validate with
+  CheckMate** — does not change the double-click default for any extension
+  (EPUB/PDF/HTML readers stay as the default opener). On Windows 11 the
+  command is under **Show more options**.
 - Offers an optional desktop shortcut and launch-on-finish
 - On uninstall, optionally removes `%LOCALAPPDATA%\CheckMate\`
   (settings and checker/EPUBCheck updates)
@@ -639,14 +678,14 @@ installed, remove `CheckMate.app` from Applications first (Trash → empty
 Trash), then drag again. The DMG also includes `Install CheckMate.txt`
 with these steps.
 
-`scripts/package.py` registers `.ebrl`, `.epub`, and `.pdf` document types in the
+`scripts/package.py` registers `.ebrl`, `.epub`, `.pdf`, `.html`, `.svg`, and `.css` document types in the
 `.app` `Info.plist` with rank **Alternate**, so the app appears under Finder
 **Open With** without becoming the default double-click handler. Opening a
 file that way launches the GUI and starts a check automatically.
 
 ## Test data
 
-Place your own `.ebrl` / `.epub` / `.pdf` files or exploded folders under `testdata/` for
+Place your own `.ebrl` / `.epub` / `.pdf` / `.html` / `.svg` files or exploded folders under `testdata/` for
 local testing. Sample publications are **not** included in the repository. See
 [`testdata/README.md`](testdata/README.md) for folder detection notes.
 
@@ -657,11 +696,18 @@ local testing. Sample publications are **not** included in the repository. See
   [DAISY Consortium](https://daisy.org/), based on EPUBCheck.
 - EPUB conformance checking is performed by
   [EPUBCheck](https://github.com/w3c/epubcheck) (W3C / DAISY).
-- PDF/UA checking is performed by [veraPDF](https://verapdf.org/).
+- PDF/UA and PDF/A checking is performed by [veraPDF](https://verapdf.org/).
 - When the [Ace by DAISY](https://daisy.github.io/ace/) CLI is installed, EPUB
   accessibility checks are merged with EPUBCheck results.
 - HTML validity is checked with the [Nu HTML Checker](https://github.com/validator/validator)
   (`vnu.jar`, MIT). HTML accessibility uses axe-core in Ace’s bundled Chromium.
+  SVG, CSS, MathML, and XML files use the same Nu checker
+  (`--svg` / `--css` / `--html` / `--xml`). An optional MathML quality pass
+  (Tools → Settings…, off by default) follows the
+  [Nordic MathML Guidelines](https://github.com/nlbdev/mathml-guidelines).
+- DAISY 2.02, DAISY 3, DTBook, and NIMAS checking uses
+  [DAISY Pipeline 2](https://daisy.github.io/pipeline/) when a local webservice
+  is running (not bundled).
 - PDF first-page previews in HTML reports use
   [PyMuPDF](https://pymupdf.readthedocs.io/) (`fitz`).
 - Learn about the [eBraille standard](https://daisy.org/activities/standards/ebraille/)
@@ -672,10 +718,12 @@ local testing. Sample publications are **not** included in the repository. See
 
 This project (CheckMate) is released under the [MIT License](LICENSE).
 
-The eBraille Checker, EPUBCheck, veraPDF, Nu HTML Checker, and Ace/axe tools
+The eBraille Checker, EPUBCheck, veraPDF, Nu HTML Checker, Ace/axe, and
+DAISY Pipeline tools
 downloaded at runtime remain under their own licenses; see the
 [eBraille Checker](https://github.com/daisy/ebraille-checker),
 [EPUBCheck](https://github.com/w3c/epubcheck),
 [veraPDF](https://verapdf.org/),
-[Nu HTML Checker](https://github.com/validator/validator), and
-[Ace by DAISY](https://github.com/daisy/ace) projects.
+[Nu HTML Checker](https://github.com/validator/validator),
+[Ace by DAISY](https://github.com/daisy/ace), and
+[DAISY Pipeline](https://daisy.github.io/pipeline/) projects.

@@ -19,7 +19,7 @@
 
 #define MyAppName "CheckMate"
 #define MyAppFullName "CheckMate"
-#define MyAppVersion "0.7.36"
+#define MyAppVersion "0.7.37"
 #define MyAppPublisher "ways2read"
 #define MyAppURL "https://github.com/ways2read/checkmate"
 #define MyAppExeName "CheckMate.exe"
@@ -71,7 +71,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "fileassoc"; Description: "Add .ebrl/.epub/.pdf Open with… and ""Validate with CheckMate"" context menu"; GroupDescription: "File associations:"; Flags: checkedonce
+Name: "fileassoc"; Description: "Add .ebrl/.epub/.pdf/.html/.svg/.css Open with… and ""Validate with CheckMate"" context menu"; GroupDescription: "File associations:"; Flags: checkedonce
 
 [Files]
 ; Entire PyInstaller onedir tree (exe + _internal + runtime + checker + epubcheck + verapdf)
@@ -83,11 +83,11 @@ Source: "CheckMate.ico"; DestDir: "{app}"; Flags: ignoreversion
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
   IconFilename: "{app}\CheckMate.ico"; \
-  Comment: "Check eBraille, EPUB, and PDF publications"
+  Comment: "Check eBraille, EPUB, PDF, HTML, and DAISY publications"
 Name: "{group}\{cm:UninstallProgram,{#MyAppFullName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
   IconFilename: "{app}\CheckMate.ico"; \
-  Comment: "Check eBraille, EPUB, and PDF publications"; Tasks: desktopicon
+  Comment: "Check eBraille, EPUB, PDF, HTML, and DAISY publications"; Tasks: desktopicon
 
 [Registry]
 ; Do not set Software\Classes\.ebrl / .epub / .pdf (default) — that would steal double-click.
@@ -112,6 +112,26 @@ Root: HKA; Subkey: "Software\Classes\.epub\OpenWithProgids"; ValueType: none; \
   ValueName: "eBrailleChecker.epub"; Flags: deletevalue; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\.pdf\OpenWithProgids"; ValueType: none; \
   ValueName: "eBrailleChecker.pdf"; Flags: deletevalue; Tasks: fileassoc
+; Remove leftover SystemFileAssociations verbs from older CheckMate installs
+; (HKCU stubs can linger after a per-user install; Validate now uses *\shell).
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.ebrl\shell\CheckMateValidate"; Flags: deletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.epub\shell\CheckMateValidate"; Flags: deletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\CheckMateValidate"; Flags: deletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.html\shell\CheckMateValidate"; Flags: deletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.htm\shell\CheckMateValidate"; Flags: deletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.xhtml\shell\CheckMateValidate"; Flags: deletekey
+Root: HKLM; Subkey: "Software\Classes\SystemFileAssociations\.ebrl\shell\CheckMateValidate"; \
+  Flags: deletekey; Check: IsAdminInstallMode
+Root: HKLM; Subkey: "Software\Classes\SystemFileAssociations\.epub\shell\CheckMateValidate"; \
+  Flags: deletekey; Check: IsAdminInstallMode
+Root: HKLM; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\CheckMateValidate"; \
+  Flags: deletekey; Check: IsAdminInstallMode
+Root: HKLM; Subkey: "Software\Classes\SystemFileAssociations\.html\shell\CheckMateValidate"; \
+  Flags: deletekey; Check: IsAdminInstallMode
+Root: HKLM; Subkey: "Software\Classes\SystemFileAssociations\.htm\shell\CheckMateValidate"; \
+  Flags: deletekey; Check: IsAdminInstallMode
+Root: HKLM; Subkey: "Software\Classes\SystemFileAssociations\.xhtml\shell\CheckMateValidate"; \
+  Flags: deletekey; Check: IsAdminInstallMode
 ; --- .ebrl: Open with… (ProgID + OpenWithProgids) ---
 Root: HKA; Subkey: "Software\Classes\CheckMate.ebrl"; \
   ValueType: string; ValueName: ""; ValueData: "eBraille Publication"; \
@@ -131,16 +151,6 @@ Root: HKA; Subkey: "Software\Classes\CheckMate.ebrl\shell\open\command"; \
 Root: HKA; Subkey: "Software\Classes\.ebrl\OpenWithProgids"; \
   ValueType: string; ValueName: "CheckMate.ebrl"; ValueData: ""; \
   Flags: uninsdeletevalue; Tasks: fileassoc
-; --- .ebrl: context menu "Validate with CheckMate" ---
-Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ebrl\shell\CheckMateValidate"; \
-  ValueType: string; ValueName: ""; ValueData: "Validate with CheckMate"; \
-  Flags: uninsdeletekey; Tasks: fileassoc
-Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ebrl\shell\CheckMateValidate"; \
-  ValueType: string; ValueName: "Icon"; ValueData: "{app}\CheckMate.ico,0"; \
-  Tasks: fileassoc
-Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.ebrl\shell\CheckMateValidate\command"; \
-  ValueType: string; ValueName: ""; \
-  ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc
 ; --- .epub: Open with… (do NOT clear Classes\.epub default — other apps own it) ---
 Root: HKA; Subkey: "Software\Classes\CheckMate.epub"; \
   ValueType: string; ValueName: ""; ValueData: "EPUB Publication"; \
@@ -160,16 +170,6 @@ Root: HKA; Subkey: "Software\Classes\CheckMate.epub\shell\open\command"; \
 Root: HKA; Subkey: "Software\Classes\.epub\OpenWithProgids"; \
   ValueType: string; ValueName: "CheckMate.epub"; ValueData: ""; \
   Flags: uninsdeletevalue; Tasks: fileassoc
-; --- .epub: context menu (same app; routes to stock EPUBCheck) ---
-Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.epub\shell\CheckMateValidate"; \
-  ValueType: string; ValueName: ""; ValueData: "Validate with CheckMate"; \
-  Flags: uninsdeletekey; Tasks: fileassoc
-Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.epub\shell\CheckMateValidate"; \
-  ValueType: string; ValueName: "Icon"; ValueData: "{app}\CheckMate.ico,0"; \
-  Tasks: fileassoc
-Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.epub\shell\CheckMateValidate\command"; \
-  ValueType: string; ValueName: ""; \
-  ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc
 ; --- .pdf: Open with… (do NOT clear Classes\.pdf default — other apps own it) ---
 Root: HKA; Subkey: "Software\Classes\CheckMate.pdf"; \
   ValueType: string; ValueName: ""; ValueData: "PDF Document"; \
@@ -189,14 +189,83 @@ Root: HKA; Subkey: "Software\Classes\CheckMate.pdf\shell\open\command"; \
 Root: HKA; Subkey: "Software\Classes\.pdf\OpenWithProgids"; \
   ValueType: string; ValueName: "CheckMate.pdf"; ValueData: ""; \
   Flags: uninsdeletevalue; Tasks: fileassoc
-; --- .pdf: context menu (same app; routes to veraPDF PDF/UA) ---
-Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\CheckMateValidate"; \
+; --- .html / .htm / .xhtml: Open with… (do NOT clear defaults — browsers own them) ---
+Root: HKA; Subkey: "Software\Classes\CheckMate.html"; \
+  ValueType: string; ValueName: ""; ValueData: "HTML Document"; \
+  Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\CheckMate.html"; \
+  ValueType: string; ValueName: "FriendlyTypeName"; ValueData: "HTML Document"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\CheckMate.html\DefaultIcon"; \
+  ValueType: string; ValueName: ""; ValueData: "{app}\CheckMate.ico,0"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\CheckMate.html\shell\open"; \
+  ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#MyAppFullName}"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\CheckMate.html\shell\open\command"; \
+  ValueType: string; ValueName: ""; \
+  ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.html\OpenWithProgids"; \
+  ValueType: string; ValueName: "CheckMate.html"; ValueData: ""; \
+  Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.htm\OpenWithProgids"; \
+  ValueType: string; ValueName: "CheckMate.html"; ValueData: ""; \
+  Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.xhtml\OpenWithProgids"; \
+  ValueType: string; ValueName: "CheckMate.html"; ValueData: ""; \
+  Flags: uninsdeletevalue; Tasks: fileassoc
+; --- .svg / .css: Open with… (do NOT clear defaults) ---
+Root: HKA; Subkey: "Software\Classes\CheckMate.svg"; \
+  ValueType: string; ValueName: ""; ValueData: "SVG Document"; \
+  Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\CheckMate.svg"; \
+  ValueType: string; ValueName: "FriendlyTypeName"; ValueData: "SVG Document"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\CheckMate.svg\DefaultIcon"; \
+  ValueType: string; ValueName: ""; ValueData: "{app}\CheckMate.ico,0"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\CheckMate.svg\shell\open"; \
+  ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#MyAppFullName}"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\CheckMate.svg\shell\open\command"; \
+  ValueType: string; ValueName: ""; \
+  ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.svg\OpenWithProgids"; \
+  ValueType: string; ValueName: "CheckMate.svg"; ValueData: ""; \
+  Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\CheckMate.css"; \
+  ValueType: string; ValueName: ""; ValueData: "CSS Stylesheet"; \
+  Flags: uninsdeletekey; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\CheckMate.css"; \
+  ValueType: string; ValueName: "FriendlyTypeName"; ValueData: "CSS Stylesheet"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\CheckMate.css\DefaultIcon"; \
+  ValueType: string; ValueName: ""; ValueData: "{app}\CheckMate.ico,0"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\CheckMate.css\shell\open"; \
+  ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#MyAppFullName}"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\CheckMate.css\shell\open\command"; \
+  ValueType: string; ValueName: ""; \
+  ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\.css\OpenWithProgids"; \
+  ValueType: string; ValueName: "CheckMate.css"; ValueData: ""; \
+  Flags: uninsdeletevalue; Tasks: fileassoc
+; --- Validate with CheckMate ---
+; *\shell so the verb is not tied to the current default handler (Edge/Adobe
+; UserChoice on .pdf/.epub/.html). AppliesTo must be AQS with OR: a semicolon
+; list (".html;.pdf;…") does not match .html, so the shortcut never appeared.
+Root: HKA; Subkey: "Software\Classes\*\shell\CheckMateValidate"; \
   ValueType: string; ValueName: ""; ValueData: "Validate with CheckMate"; \
   Flags: uninsdeletekey; Tasks: fileassoc
-Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\CheckMateValidate"; \
+Root: HKA; Subkey: "Software\Classes\*\shell\CheckMateValidate"; \
   ValueType: string; ValueName: "Icon"; ValueData: "{app}\CheckMate.ico,0"; \
   Tasks: fileassoc
-Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\CheckMateValidate\command"; \
+Root: HKA; Subkey: "Software\Classes\*\shell\CheckMateValidate"; \
+  ValueType: string; ValueName: "AppliesTo"; \
+  ValueData: "System.FileExtension:=.ebrl OR System.FileExtension:=.epub OR System.FileExtension:=.pdf OR System.FileExtension:=.html OR System.FileExtension:=.htm OR System.FileExtension:=.xhtml OR System.FileExtension:=.svg OR System.FileExtension:=.css"; \
+  Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\*\shell\CheckMateValidate\command"; \
   ValueType: string; ValueName: ""; \
   ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: fileassoc
 ; Also list under Applications\…\SupportedTypes for Open with… discovery
@@ -208,6 +277,21 @@ Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes
   Flags: uninsdeletevalue; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; \
   ValueType: string; ValueName: ".pdf"; ValueData: ""; \
+  Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; \
+  ValueType: string; ValueName: ".html"; ValueData: ""; \
+  Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; \
+  ValueType: string; ValueName: ".htm"; ValueData: ""; \
+  Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; \
+  ValueType: string; ValueName: ".xhtml"; ValueData: ""; \
+  Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; \
+  ValueType: string; ValueName: ".svg"; ValueData: ""; \
+  Flags: uninsdeletevalue; Tasks: fileassoc
+Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}\SupportedTypes"; \
+  ValueType: string; ValueName: ".css"; ValueData: ""; \
   Flags: uninsdeletevalue; Tasks: fileassoc
 Root: HKA; Subkey: "Software\Classes\Applications\{#MyAppExeName}"; \
   ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#MyAppFullName}"; \

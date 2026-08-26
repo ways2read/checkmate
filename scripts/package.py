@@ -287,7 +287,7 @@ def _save_info_plist(info_plist: Path, info: dict) -> None:
 
 
 def _patch_macos_document_types(app_bundle: Path) -> None:
-    """Declare .ebrl/.epub/.pdf for Finder Open With (Alternate — not the default)."""
+    """Declare .ebrl/.epub/.pdf/.html/.svg/.css for Finder Open With (Alternate)."""
     loaded = _load_info_plist(app_bundle)
     if loaded is None:
         return
@@ -315,6 +315,34 @@ def _patch_macos_document_types(app_bundle: Path) -> None:
             "LSItemContentTypes": ["com.adobe.pdf"],
             "CFBundleTypeExtensions": ["pdf"],
         },
+        {
+            "CFBundleTypeName": "HTML Document",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["public.html"],
+            "CFBundleTypeExtensions": ["html", "htm", "xhtml"],
+        },
+        {
+            "CFBundleTypeName": "SVG Document",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["public.svg-image"],
+            "CFBundleTypeExtensions": ["svg"],
+        },
+        {
+            "CFBundleTypeName": "CSS Stylesheet",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["public.css"],
+            "CFBundleTypeExtensions": ["css"],
+        },
+        {
+            "CFBundleTypeName": "MathML Document",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["public.xml"],
+            "CFBundleTypeExtensions": ["mml"],
+        },
     ]
     info["UTExportedTypeDeclarations"] = [
         {
@@ -330,7 +358,7 @@ def _patch_macos_document_types(app_bundle: Path) -> None:
     info["NSAppleScriptEnabled"] = True
 
     _save_info_plist(info_plist, info)
-    print(f"Registered .ebrl/.epub/.pdf document types in {info_plist}")
+    print(f"Registered .ebrl/.epub/.pdf/.html/.svg/.css/.mml document types in {info_plist}")
 
 
 def _read_build_counter() -> int:
@@ -549,7 +577,7 @@ def build(
         and not onefile
     ):
         print()
-        print("Registering .ebrl/.epub/.pdf document types in Info.plist…")
+        print("Registering .ebrl/.epub/.pdf/.html/.svg/.css document types in Info.plist…")
         _patch_macos_document_types(output)
         short_version = _project_version()
         bundle_build = build_number

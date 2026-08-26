@@ -28,6 +28,7 @@ from .settings import (
     epub_checkers,
     html_checkers,
     html_follow_links,
+    mathml_nordic_guidelines,
     show_issues_always,
     single_instance_enabled,
     sound_scheme,
@@ -213,6 +214,25 @@ class SettingsDialog(wx.Dialog):
         html_box.Add(self.html_follow_links_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         root.Add(html_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
 
+        math_box = wx.StaticBoxSizer(wx.VERTICAL, self, _("MathML"))
+        self.nordic_mathml_cb = wx.CheckBox(
+            self,
+            label=_("Check against the Nordic MathML Guidelines"),
+        )
+        self.nordic_mathml_cb.SetValue(mathml_nordic_guidelines())
+        self.nordic_mathml_cb.SetToolTip(
+            _(
+                "Off by default. When on, after the Nu HTML Checker CheckMate "
+                "flags MathML that likely breaks the Nordic MathML Guidelines "
+                "(hyphen vs minus, missing invisible operators, mfenced, "
+                "OCR-like tokens, and similar). Heuristic: some hits are "
+                "false positives. Applies to MathML files, clipboard MathML, "
+                "and local HTML that contains math."
+            )
+        )
+        math_box.Add(self.nordic_mathml_cb, 0, wx.ALL, 6)
+        root.Add(math_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+
         pdf_box = wx.StaticBoxSizer(wx.VERTICAL, self, _("PDF (veraPDF)"))
         pdf_hint = wx.StaticText(
             self,
@@ -233,7 +253,8 @@ class SettingsDialog(wx.Dialog):
         self.verapdf_choice.SetName(_("PDF validation profile"))
         self.verapdf_choice.SetToolTip(
             _(
-                "PDF/UA-2 is the default. If veraPDF hits an internal error on "
+                "PDF/UA-2 is the default (accessibility). PDF/A profiles are "
+                "archival conformance. If veraPDF hits an internal error on "
                 "UA-2, CheckMate falls back to PDF/UA-1 automatically."
             )
         )
@@ -295,6 +316,7 @@ class SettingsDialog(wx.Dialog):
             "epub_checkers": self.selected_epub_checkers(),
             "html_checkers": self.selected_html_checkers(),
             "html_follow_links": bool(self.html_follow_links_cb.GetValue()),
+            "mathml_nordic_guidelines": bool(self.nordic_mathml_cb.GetValue()),
             "verapdf_flavour": self.selected_verapdf_flavour(),
         }
         if fido_settings_present():

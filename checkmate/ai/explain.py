@@ -13,6 +13,7 @@ from .context import gather_issue_context
 from .litellm_client import ensure_credentials_ready, litellm_available
 from .resources import (
     authoritative_guidance_for_explain,
+    is_mathml_quality_issue,
     is_web_html_issue,
     kb_article_body_for_prompt,
     kb_article_body_prompt_block,
@@ -54,7 +55,18 @@ def build_system_prompt(issue: Issue) -> str:
     resources = resources_prompt_block(issue)
     guidance = authoritative_guidance_for_explain(issue)
     h1, h2, h3, h4, h5 = _section_headings()
-    if is_web_html_issue(issue):
+    if is_mathml_quality_issue(issue):
+        role = (
+            "You are a MathML accessibility assistant inside CheckMate. "
+            "Explain quality warnings clearly to people remediating MathML."
+        )
+        scope = (
+            "- This issue is MathML markup. Do not discuss EPUB package documents, "
+            "PDF tagging, or rewriting a whole book.\n"
+            "- Prefer the Nordic MathML Guidelines. Mention that the check can "
+            "false-positive."
+        )
+    elif is_web_html_issue(issue):
         role = (
             "You are a web accessibility assistant inside CheckMate. "
             "Explain checker messages clearly to people remediating HTML web pages."
@@ -114,6 +126,14 @@ def build_user_prompt(ctx: dict[str, str], *, kb_body: str = "") -> str:
         kind = ctx["publication_kind"]
         if kind == "html":
             lines.append("- Host: HTML web page (not a packaged publication)")
+        elif kind == "svg":
+            lines.append("- Host: SVG document")
+        elif kind == "css":
+            lines.append("- Host: CSS stylesheet")
+        elif kind == "xml":
+            lines.append("- Host: XML document")
+        elif kind == "mathml":
+            lines.append("- Host: MathML")
         else:
             lines.append(f"- Publication kind: {kind}")
     if ctx.get("tool"):
