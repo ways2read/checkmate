@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import re
+import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .models import CheckResult, Issue, Severity, Verdict
-from .publication import HTML_SUFFIXES, is_html_url
+from .publication import HTML_SUFFIXES, MATHML_SUFFIXES, is_html_url
 
 MATHML_QUALITY_DISPLAY_NAME = "MathML quality"
 MATHML_GUIDELINES_TITLE = "Nordic MathML Guidelines"
@@ -19,6 +20,8 @@ MATHML_CORE_URL = "https://www.w3.org/TR/mathml-core/"
 DAISY_KB_MATHML_URL = "https://kb.daisy.org/publishing/docs/html/mathml.html"
 
 MATH_NS = "http://www.w3.org/1998/Math/MathML"
+_PACKAGE_SUFFIXES = {".epub", ".ebrl", ".zip"}
+_MARKUP_SCAN_SUFFIXES = HTML_SUFFIXES | MATHML_SUFFIXES
 # ASCII hyphen, en dash, em dash — not the math minus U+2212.
 _ASCII_DASHES = ("-", "\u2013", "\u2014")
 _ROOT_SYMBOLS = ("\u221a", "\u221b", "\u221c")  # √ ∛ ∜
@@ -887,10 +890,53 @@ def _dedupe_issues(issues: list[Issue]) -> list[Issue]:
     return out
 
 
+def _relocate_issues(issues: list[Issue], prefix: str) -> list[Issue]:
+    """Point issue locations at *prefix* (zip member or relative path)."""
+    for issue in issues:
+        loc = (issue.location or "").strip()
+        issue.location = prefix if not loc else f"{prefix}:{loc}"
+    return issues
+
+
+def _looks_like_math_bytes(raw: bytes) -> bool:
+    low = raw.lower()
+    return b"<math" in low or b":math" in low
+
+
+def issues_from_package(path: Path) -> list[Issue]:
+    """Scan HTML/XHTML/MathML members inside a packaged EPUB/ZIP."""
+    collected: list[Issue] = []
+    try:
+        with zipfile.ZipFile(path, "r") as zf:
+            names = sorted(zf.namelist())
+            for name in names:
+                member = name.replace("\\", "/")
+                if member.endswith("/") or member.startswith("__MACOSX/"):
+                    continue
+                suffix = Path(member).suffix.lower()
+                if suffix not in _MARKUP_SCAN_SUFFIXES:
+                    continue
+                try:
+                    raw = zf.read(name)
+                except (KeyError, OSError, RuntimeError):
+                    continue
+                if not _looks_like_math_bytes(raw):
+                    continue
+                text = raw.decode("utf-8", errors="replace")
+                collected.extend(
+                    _relocate_issues(issues_from_mathml_text(text), member)
+                )
+    except (OSError, zipfile.BadZipFile):
+        return []
+    return collected
+
+
 def issues_from_path(path: Path) -> list[Issue]:
-    """Scan a file (or HTML files in a folder) for MathML quality warnings."""
+    """Scan a file, packaged EPUB, or HTML/XHTML files in a folder."""
     path = path.expanduser().resolve()
     if path.is_file():
+        if path.suffix.lower() in _PACKAGE_SUFFIXES:
+            return issues_from_package(path)
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -901,7 +947,7 @@ def issues_from_path(path: Path) -> list[Issue]:
     collected: list[Issue] = []
     try:
         for child in sorted(path.rglob("*")):
-            if not child.is_file() or child.suffix.lower() not in HTML_SUFFIXES:
+            if not child.is_file() or child.suffix.lower() not in _MARKUP_SCAN_SUFFIXES:
                 continue
             collected.extend(issues_from_path(child))
     except OSError:
@@ -958,12 +1004,7 @@ def merge_mathml_quality(result: CheckResult, issues: list[Issue]) -> CheckResul
         )
     name = (result.tool_name or "").strip()
     if name and "mathml quality" not in name.lower():
-        if name == "Nu HTML Checker + axe":
-            pass
-        elif name == "Nu HTML Checker":
-            result.tool_name = "Nu HTML Checker + MathML quality"
-        elif "Nu HTML Checker" in name:
-            result.tool_name = f"{name} + MathML quality"
+        result.tool_name = f"{name} + MathML quality"
     if result.raw_log:
         result.raw_log = (
             result.raw_log.rstrip()
@@ -982,9 +1023,10 @@ def attach_mathml_quality(
     extra_paths: list[Path] | None = None,
     enabled: bool | None = None,
 ) -> CheckResult:
-    """Run the quality pass on a local file/folder (no-op for http(s) URLs).
+    """Run the quality pass on a local file, folder, or packaged EPUB.
 
-    When *extra_paths* is passed (even empty), only those files are scanned.
+    When *extra_paths* is a non-empty list, only those files are scanned.
+    An empty list falls back to *target* (same as omitting *extra_paths*).
     Off unless *enabled* is true or the Nordic guidelines setting is on.
     """
     if enabled is None:
@@ -994,7 +1036,7 @@ def attach_mathml_quality(
     if not enabled:
         return result
     text = (target or "").strip().strip('"')
-    if extra_paths is not None:
+    if extra_paths:
         paths = list(extra_paths)
     else:
         paths = []

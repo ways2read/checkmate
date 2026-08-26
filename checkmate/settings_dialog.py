@@ -222,12 +222,12 @@ class SettingsDialog(wx.Dialog):
         self.nordic_mathml_cb.SetValue(mathml_nordic_guidelines())
         self.nordic_mathml_cb.SetToolTip(
             _(
-                "Off by default. When on, after the Nu HTML Checker CheckMate "
+                "Off by default. When on, after the usual checkers CheckMate "
                 "flags MathML that likely breaks the Nordic MathML Guidelines "
                 "(hyphen vs minus, missing invisible operators, mfenced, "
                 "OCR-like tokens, and similar). Heuristic: some hits are "
                 "false positives. Applies to MathML files, clipboard MathML, "
-                "and local HTML that contains math."
+                "local HTML and XHTML, and EPUB HTML/XHTML content documents."
             )
         )
         math_box.Add(self.nordic_mathml_cb, 0, wx.ALL, 6)

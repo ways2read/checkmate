@@ -387,11 +387,16 @@ def run_html_check(target: str, *, progress: ProgressCallback | None = None) -> 
                 if mapped is not None and mapped.is_file():
                     extra_paths.append(mapped)
         from .mathml_quality import attach_mathml_quality
+        from .publication import is_html_url
         from .settings import mathml_nordic_guidelines
 
-        if extra_paths and mathml_nordic_guidelines():
+        if mathml_nordic_guidelines() and (
+            extra_paths or (text and not is_html_url(text))
+        ):
             _emit_progress(progress, "Checking MathML quality…")
-        merged = attach_mathml_quality(merged, text, extra_paths=extra_paths)
+        merged = attach_mathml_quality(
+            merged, text, extra_paths=extra_paths or None
+        )
         if not merged.tool_name:
             merged.tool_name = html_checkers_label(mode)
         remember_html_session(

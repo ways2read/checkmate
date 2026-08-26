@@ -54,7 +54,8 @@ support on Windows, macOS, and Linux.
   [Nordic MathML Guidelines](https://github.com/nlbdev/mathml-guidelines/blob/main/Nordic%20MathML%20Guidelines.md)
   (off by default). That flags hyphen vs minus, deprecated `mfenced`, missing
   invisible operators, OCR-like tokens, and similar heuristics on MathML files,
-  clipboard MathML, and local HTML that contains `<math>`. Hits can
+  clipboard MathML, local HTML/XHTML, and EPUB HTML/XHTML content documents
+  that contain `<math>`. Hits can
   false-positive; Explain links the guidelines first.
 - DAISY 2.02 book folders (`ncc.html`), DAISY 3 / NIMAS packages, and DTBook
   XML are checked through a local [DAISY Pipeline 2](https://daisy.github.io/pipeline/)
@@ -704,7 +705,8 @@ local testing. Sample publications are **not** included in the repository. See
   SVG, CSS, MathML, and XML files use the same Nu checker
   (`--svg` / `--css` / `--html` / `--xml`). An optional MathML quality pass
   (Tools → Settings…, off by default) follows the
-  [Nordic MathML Guidelines](https://github.com/nlbdev/mathml-guidelines).
+  [Nordic MathML Guidelines](https://github.com/nlbdev/mathml-guidelines)
+  on MathML, HTML/XHTML, and EPUB content documents.
 - DAISY 2.02, DAISY 3, DTBook, and NIMAS checking uses
   [DAISY Pipeline 2](https://daisy.github.io/pipeline/) when a local webservice
   is running (not bundled).

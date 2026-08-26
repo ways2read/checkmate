@@ -347,7 +347,7 @@ def html_follow_links() -> bool:
 
 
 def mathml_nordic_guidelines() -> bool:
-    """True when MathML/HTML checks run the Nordic MathML quality pass."""
+    """True when MathML, HTML/XHTML, and EPUB checks run the Nordic quality pass."""
     return bool(
         read_settings().get(
             "mathml_nordic_guidelines", DEFAULT_MATHML_NORDIC_GUIDELINES

@@ -17,15 +17,22 @@ def report_title(result: CheckResult) -> str:
     """Human title for text/HTML reports based on which checker ran."""
     name = (result.tool_name or "").strip()
     key = name.lower()
+    mathml = "mathml quality" in key
     if "epubcheck" in key and "ace" in key:
+        if mathml:
+            return _("EPUBCheck + Ace + MathML quality report")
         return _("EPUBCheck + Ace report")
     if "nu html" in key and "axe" in key:
+        if mathml:
+            return _("Nu HTML Checker + axe + MathML quality report")
         return _("Nu HTML Checker + axe report")
     if "mathml quality" in key and "nu html" in key:
         return _("Nu HTML Checker + MathML quality report")
     if "nu html" in key:
         return _("Nu HTML Checker report")
     if key == EPUBCHECK_TOOL.display_name.lower() or "epubcheck" in key:
+        if mathml:
+            return _("EPUBCheck + MathML quality report")
         return _("EPUBCheck report")
     if key == EBRAILLE_TOOL.display_name.lower() or "ebraille" in key:
         return _("eBraille Checker report")
@@ -33,7 +40,9 @@ def report_title(result: CheckResult) -> str:
         return _("veraPDF report")
     if "pipeline" in key:
         return _("DAISY Pipeline report")
-    if key == "ace" or key.startswith("ace "):
+    if key == "ace" or key.startswith("ace ") or key.startswith("ace+"):
+        if mathml:
+            return _("Ace + MathML quality report")
         return _("Ace report")
     if key == "axe" or key.startswith("axe "):
         return _("axe report")

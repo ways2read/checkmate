@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 from unittest import mock
@@ -20,6 +21,7 @@ from checkmate.mathml_quality import (
     MATHML_QUALITY_DISPLAY_NAME,
     attach_mathml_quality,
     issues_from_mathml_text,
+    issues_from_path,
 )
 from checkmate.models import CheckResult, Issue, Severity, Verdict
 from checkmate.report_export import report_title
@@ -204,6 +206,93 @@ class NordicFullGuidelinesTests(unittest.TestCase):
             _math(f"<mn>2</mn><mo>{chr(0x2062)}</mo><mi>x</mi>")
         )
         self.assertFalse(any(i.code == "mathml-invisible-times" for i in issues))
+
+
+class HtmlXhtmlEpubScanTests(unittest.TestCase):
+    def _hyphen_page(self, *, xhtml: bool = False) -> str:
+        math = _math("<mi>x</mi><mo>-</mo><mi>y</mi>")
+        if xhtml:
+            return (
+                '<?xml version="1.0"?>'
+                '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+                f"{math}</body></html>"
+            )
+        return f"<!DOCTYPE html><html><body>{math}</body></html>"
+
+    def test_html_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "page.html"
+            path.write_text(self._hyphen_page(), encoding="utf-8")
+            issues = issues_from_path(path)
+        self.assertTrue(any(i.code == "mathml-hyphen-minus" for i in issues))
+
+    def test_xhtml_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "page.xhtml"
+            path.write_text(self._hyphen_page(xhtml=True), encoding="utf-8")
+            issues = issues_from_path(path)
+        self.assertTrue(any(i.code == "mathml-hyphen-minus" for i in issues))
+
+    def test_empty_extra_paths_still_scans_html_target(self) -> None:
+        result = CheckResult(verdict=Verdict.PASSED, tool_name="Nu HTML Checker + axe")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "page.html"
+            path.write_text(self._hyphen_page(), encoding="utf-8")
+            merged = attach_mathml_quality(
+                result, str(path), extra_paths=[], enabled=True
+            )
+        self.assertTrue(any(i.code == "mathml-hyphen-minus" for i in merged.issues))
+        self.assertIn("MathML quality", merged.tool_name)
+        self.assertEqual(
+            report_title(merged),
+            "Nu HTML Checker + axe + MathML quality report",
+        )
+
+    def test_epub_xhtml_member(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "book.epub"
+            with zipfile.ZipFile(epub, "w") as zf:
+                zf.writestr("OEBPS/ch.xhtml", self._hyphen_page(xhtml=True))
+                zf.writestr(
+                    "OEBPS/plain.xhtml",
+                    "<html xmlns='http://www.w3.org/1999/xhtml'><p>no math</p></html>",
+                )
+            issues = issues_from_path(epub)
+        self.assertTrue(any(i.code == "mathml-hyphen-minus" for i in issues))
+        self.assertTrue(any("OEBPS/ch.xhtml" in i.location for i in issues))
+        self.assertFalse(any("plain.xhtml" in i.location for i in issues))
+
+    def test_exploded_epub_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            chapter = Path(tmp) / "OEBPS" / "ch.xhtml"
+            chapter.parent.mkdir()
+            chapter.write_text(self._hyphen_page(xhtml=True), encoding="utf-8")
+            issues = issues_from_path(Path(tmp))
+        self.assertTrue(any(i.code == "mathml-hyphen-minus" for i in issues))
+
+    def test_attach_epub_updates_epubcheck_title(self) -> None:
+        result = CheckResult(verdict=Verdict.PASSED, tool_name="EPUBCheck + Ace")
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "book.epub"
+            with zipfile.ZipFile(epub, "w") as zf:
+                zf.writestr("EPUB/c.xhtml", self._hyphen_page(xhtml=True))
+            merged = attach_mathml_quality(result, str(epub), enabled=True)
+        self.assertEqual(merged.verdict, Verdict.PASSED_WITH_WARNINGS)
+        self.assertIn("MathML quality", merged.tool_name)
+        self.assertEqual(
+            report_title(merged),
+            "EPUBCheck + Ace + MathML quality report",
+        )
+
+    def test_attach_skips_epub_when_disabled(self) -> None:
+        result = CheckResult(verdict=Verdict.PASSED, tool_name="EPUBCheck")
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "book.epub"
+            with zipfile.ZipFile(epub, "w") as zf:
+                zf.writestr("EPUB/c.xhtml", self._hyphen_page(xhtml=True))
+            merged = attach_mathml_quality(result, str(epub), enabled=False)
+        self.assertEqual(merged.issues, [])
+        self.assertEqual(merged.verdict, Verdict.PASSED)
 
 
 if __name__ == "__main__":

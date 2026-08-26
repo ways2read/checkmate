@@ -1,6 +1,6 @@
 [project]
 name = "checkmate"
-version = "0.7.37"
+version = "0.7.38"
 description = "CheckMate — accessible cross-platform GUI for the DAISY eBraille Checker, W3C EPUBCheck, and veraPDF"
 readme = "README.md"
 requires-python = ">=3.10"

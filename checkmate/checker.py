@@ -1570,7 +1570,23 @@ def _run_ace_only_check(
         ace_result.checked_at = when
     if not ace_result.target_path:
         ace_result.target_path = str(target)
-    return ace_result
+    return _attach_optional_mathml_quality(ace_result, target, progress=progress)
+
+
+def _attach_optional_mathml_quality(
+    result: CheckResult,
+    target: Path,
+    *,
+    progress=None,
+) -> CheckResult:
+    """Append Nordic MathML quality warnings when the user has opted in."""
+    from .mathml_quality import attach_mathml_quality
+    from .settings import mathml_nordic_guidelines
+
+    if not mathml_nordic_guidelines():
+        return result
+    _emit_progress(progress, "Checking MathML quality…")
+    return attach_mathml_quality(result, str(target))
 
 
 def _with_optional_ace(
@@ -1585,7 +1601,9 @@ def _with_optional_ace(
         return epub_result
     # Settings → EPUB checkers: EPUBCheck only skips Ace.
     if epub_checkers() == "epubcheck":
-        return epub_result
+        return _attach_optional_mathml_quality(
+            epub_result, target, progress=progress
+        )
     # Skip Ace when EPUBCheck never really started (infra already surfaced).
     if (
         epub_result.verdict == Verdict.ERROR
@@ -1604,8 +1622,14 @@ def _with_optional_ace(
 
     ace_result = run_ace_check(target, progress=progress)
     if ace_result is None:
-        return epub_result
-    return _merge_epubcheck_and_ace(epub_result, ace_result)
+        return _attach_optional_mathml_quality(
+            epub_result, target, progress=progress
+        )
+    return _attach_optional_mathml_quality(
+        _merge_epubcheck_and_ace(epub_result, ace_result),
+        target,
+        progress=progress,
+    )
 
 
 def checker_status_text() -> str:
