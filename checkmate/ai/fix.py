@@ -32,6 +32,7 @@ from .litellm_client import (
 )
 from .resources import (
     authoritative_guidance_for_fix,
+    is_mathml_quality_issue,
     kb_article_body_for_prompt,
     kb_article_body_prompt_block,
 )
@@ -107,7 +108,7 @@ def fix_member_kind(member: str | None) -> str:
         return "opf"
     if name.startswith("package") and suffix in {".xml", ""}:
         return "opf"
-    if suffix in {".xhtml", ".html", ".htm"}:
+    if suffix in {".xhtml", ".html", ".htm", ".mml"}:
         return "html"
     if suffix == ".css":
         return "css"
@@ -154,6 +155,20 @@ def _member_kind_guidance(kind: str) -> str:
         "- Use insert-via-replace when adding content.\n"
         "- If the correct fix belongs in a related package member (such as the OPF), "
         "edit that file instead."
+    )
+
+
+def _mathml_quality_fix_guidance() -> str:
+    return (
+        "FILE TYPE: MathML quality warning (Nordic guidelines heuristic).\n"
+        "- Edit MathML in the reported HTML/XHTML/MathML file. Do not edit the OPF.\n"
+        "- Copy the smallest unique MathML fragment from Exact file text "
+        "(one token such as <mo>-</mo>, or one element such as <mfenced>…</mfenced>).\n"
+        "- Typical remediations: hyphen/en dash in mo → minus − (U+2212); replace "
+        "deprecated mfenced with mrow and <mo> fences; insert <mo>&#x2061;</mo> / "
+        "&#x2062; / &#x2064; between existing tokens for missing invisible operators.\n"
+        "- Keep the JSON valid: escape quotes inside attributes. Do not rewrite the "
+        "whole equation unless the excerpt is that small."
     )
 
 
@@ -258,9 +273,13 @@ def build_fix_user_prompt(
     if related_opf:
         lines.append(f"- Related package document: {related_opf}")
     lines.append("")
-    lines.append(_member_kind_guidance(kind))
-    lines.append("")
-    lines.append(_cross_file_fix_guidance())
+    mathml_quality = issue is not None and is_mathml_quality_issue(issue)
+    if mathml_quality:
+        lines.append(_mathml_quality_fix_guidance())
+    else:
+        lines.append(_member_kind_guidance(kind))
+        lines.append("")
+        lines.append(_cross_file_fix_guidance())
     raw = ctx.get("file_excerpt_raw") or ""
     numbered = ctx.get("file_excerpt") or ""
     if raw:
@@ -304,9 +323,15 @@ def _repair_user_prompt(
     *,
     reason: str | None = None,
     member_kind: str = "other",
+    mathml_quality: bool = False,
 ) -> str:
-    guidance = _member_kind_guidance(member_kind)
-    cross = _cross_file_fix_guidance()
+    if mathml_quality:
+        guidance = _mathml_quality_fix_guidance()
+        cross = ""
+    else:
+        guidance = _member_kind_guidance(member_kind)
+        cross = _cross_file_fix_guidance()
+    extra = f"\n\n{guidance}" + (f"\n\n{cross}" if cross else "")
     if reason == "no_match_in_file":
         return (
             "Your previous patch was rejected because \"original\" was not found in "
@@ -319,8 +344,8 @@ def _repair_user_prompt(
             "edit (reported File or Related package document). "
             "If you need to insert content, expand a short unique existing snippet "
             "(insert-via-replace); never use an empty original. "
-            "No thinking aloud. No drafts.\n\n"
-            f"{guidance}\n\n{cross}"
+            "No thinking aloud. No drafts."
+            f"{extra}"
         )
     return (
         "Your previous reply was unusable (incomplete JSON, truncated output, "
@@ -331,8 +356,8 @@ def _repair_user_prompt(
         '{"file","original","replacement"} — valid JSON, no truncation.\n'
         "No thinking aloud. No drafts. No braille-dot descriptions. "
         "Copy characters exactly from the Exact file text of the member you edit. "
-        "Never use an empty original; use insert-via-replace to add content.\n\n"
-        f"{guidance}\n\n{cross}"
+        "Never use an empty original; use insert-via-replace to add content."
+        f"{extra}"
     )
 
 
@@ -564,7 +589,10 @@ def build_batch_fix_user_prompt(
     if ctx.get("tool"):
         lines.append(f"- Checker: {ctx['tool']}")
     lines.append("")
-    lines.append(_cross_file_fix_guidance())
+    if issue is not None and is_mathml_quality_issue(issue):
+        lines.append(_mathml_quality_fix_guidance())
+    else:
+        lines.append(_cross_file_fix_guidance())
     instances = ctx.get("batch_instances") or ""
     if instances:
         lines.append("")
@@ -1089,7 +1117,11 @@ def propose_fix(
         _status(_("Suggesting fix…"))
         try:
             text = session.followup(
-                _repair_user_prompt(reason=err_key, member_kind=member_kind),
+                _repair_user_prompt(
+                    reason=err_key,
+                    member_kind=member_kind,
+                    mathml_quality=is_mathml_quality_issue(issue),
+                ),
                 max_tokens=_FIX_MAX_TOKENS,
             )
         except ProviderError as e:

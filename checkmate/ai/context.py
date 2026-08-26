@@ -138,20 +138,34 @@ def _issue_hint_tokens(issue: Issue) -> list[str]:
     return out
 
 
-def _parse_epubcheck_location(location: str) -> tuple[str | None, int | None]:
-    """Parse ``path (line,column)`` → (path, line)."""
-    loc = (location or "").strip()
+def _split_member_and_line(loc: str) -> tuple[str | None, int | None]:
+    """Parse ``path (line,col)``, ``path:line``, or ``path#line=N`` → (path, line)."""
+    loc = (loc or "").strip()
     if not loc:
         return None, None
-    m = re.match(r"^(.+?)\s+\((\d+)\s*,\s*\d+\)\s*$", loc)
+    loc_norm = loc.replace("\\", "/")
+    m = re.match(r"^(.+?)\s+\((\d+)\s*,\s*\d+\)\s*$", loc_norm)
     if m:
-        return m.group(1).strip().replace("\\", "/"), int(m.group(2))
-    # Bare path
-    if "/" in loc or "\\" in loc or loc.endswith(
-        (".xhtml", ".html", ".opf", ".css", ".xml")
+        return m.group(1).strip(), int(m.group(2))
+    m = re.match(r"^(.+?)#line=(\d+)\s*$", loc_norm, re.IGNORECASE)
+    if m:
+        return m.group(1).strip(), int(m.group(2))
+    m = re.match(r"^(.+):(\d+)\s*$", loc_norm)
+    if m:
+        member = m.group(1).strip()
+        # "C:12" is not a Windows path plus line number.
+        if not (len(member) == 1 and member.isalpha()):
+            return member, int(m.group(2))
+    if "/" in loc_norm or loc_norm.lower().endswith(
+        (".xhtml", ".html", ".htm", ".opf", ".css", ".xml", ".mml", ".svg")
     ):
-        return loc.replace("\\", "/"), None
+        return loc_norm, None
     return None, None
+
+
+def _parse_epubcheck_location(location: str) -> tuple[str | None, int | None]:
+    """Parse checker locations that name a package member (EPUBCheck, Nu, MathML)."""
+    return _split_member_and_line(location)
 
 
 def parse_issue_location(location: str) -> tuple[str | None, int | None]:
@@ -159,12 +173,50 @@ def parse_issue_location(location: str) -> tuple[str | None, int | None]:
     loc = location or ""
     # Ace uses a middle-dot separator; do not treat the whole string as a path.
     if "·" in loc or "\u00b7" in loc:
-        return _parse_ace_file(loc), None
-    return _parse_epubcheck_location(loc)
+        part = _parse_ace_file(loc)
+        if not part:
+            return None, None
+        member, line = _split_member_and_line(part)
+        return member or part, line
+    return _split_member_and_line(loc)
+
+
+def _publication_relative_member(target: Path, member: str) -> str:
+    """Map an absolute disk path onto a package-relative member when we can."""
+    member = (member or "").replace("\\", "/").strip()
+    if not member:
+        return member
+    try:
+        abs_member = Path(member)
+    except (OSError, ValueError):
+        return member
+    if not abs_member.is_absolute():
+        return member
+    try:
+        resolved = abs_member.expanduser().resolve()
+        root = target.expanduser().resolve()
+    except OSError:
+        return member
+    if root.is_dir():
+        try:
+            return resolved.relative_to(root).as_posix()
+        except ValueError:
+            return resolved.name
+    if root.is_file() and root.suffix.lower() in {".epub", ".ebrl", ".zip"}:
+        return resolved.name
+    if root.is_file() and resolved == root:
+        return root.name
+    return member
 
 
 def _read_member_text(target: Path, member: str) -> str | None:
     member = member.lstrip("/")
+    try:
+        abs_member = Path(member)
+        if abs_member.is_absolute() and abs_member.is_file():
+            return abs_member.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        pass
     if target.is_dir():
         path = target / member
         if not path.is_file():
@@ -215,7 +267,7 @@ def _is_package_member(member: str) -> bool:
 
 
 def _is_markup_member(member: str) -> bool:
-    return _member_suffix(member) in {".xhtml", ".html", ".htm"}
+    return _member_suffix(member) in {".xhtml", ".html", ".htm", ".mml"}
 
 
 def _is_css_member(member: str) -> bool:
@@ -512,6 +564,7 @@ def gather_issue_context(
         if send_file_context_enabled() and kind_allows_excerpt(kind_val):
             member, line = parse_issue_location(issue.location)
             if member:
+                member = _publication_relative_member(path, member)
                 text = _read_member_text(path, member)
                 if text:
                     # Ace has no line/column — locate via CSS selector / HTML snippet.
@@ -539,9 +592,12 @@ def gather_issue_context(
                         ctx["file_excerpt_raw"] = _raw_window_around_line(text, line)
 
                     # Content/CSS issues often need an OPF edit (metadata, manifest,
-                    # spine). Include a related package excerpt so Fix is not forced
-                    # into a wrong-file workaround.
-                    if not _is_package_member(member):
+                    # spine). MathML quality warnings are always in the content file.
+                    from .resources import is_mathml_quality_issue
+
+                    if not _is_package_member(member) and not is_mathml_quality_issue(
+                        issue
+                    ):
                         opf_member = _find_opf_member(path)
                         if opf_member and opf_member.replace("\\", "/") != member.replace(
                             "\\", "/"
@@ -663,6 +719,8 @@ def gather_batch_fix_context(
         member, _line = parse_issue_location(issue.location)
         if not member:
             continue
+        if path is not None:
+            member = _publication_relative_member(path, member)
         key = member.replace("\\", "/").lstrip("/")
         if key not in member_issues:
             if len(members) >= max_members:

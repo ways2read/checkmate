@@ -19,7 +19,7 @@
 
 #define MyAppName "CheckMate"
 #define MyAppFullName "CheckMate"
-#define MyAppVersion "0.7.38"
+#define MyAppVersion "0.7.39"
 #define MyAppPublisher "ways2read"
 #define MyAppURL "https://github.com/ways2read/checkmate"
 #define MyAppExeName "CheckMate.exe"
@@ -41,7 +41,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 LicenseFile=..\LICENSE
-InfoBeforeFile=welcome.txt
+InfoBeforeFile=welcome.rtf
 OutputDir=Output
 OutputBaseFilename=CheckMate-{#MyAppVersion}-setup
 SetupIconFile=CheckMate.ico

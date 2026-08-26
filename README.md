@@ -470,7 +470,7 @@ checkmate/
     CheckMate.ico         # App / setup icon (Windows)
     CheckMate.icns        # App / volume icon (macOS; rebuilt from icon.png)
     icon.png              # Blue CheckMate mark on white (macOS .icns master)
-    welcome.txt           # Setup wizard intro text
+    welcome.rtf           # Setup wizard intro (RTF; InfoBeforeFile)
   packaging/macos/
     entitlements.plist    # Hardened runtime + JVM entitlements (required)
     dmg_background.png    # Drag-install DMG window background

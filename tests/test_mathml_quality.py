@@ -10,7 +10,9 @@ from pathlib import Path
 from unittest import mock
 
 from checkmate import settings as settings_mod
+from checkmate.ai.context import gather_issue_context, parse_issue_location
 from checkmate.ai.explain import build_system_prompt
+from checkmate.ai.fix import build_fix_user_prompt
 from checkmate.ai.resources import (
     authoritative_guidance_for_explain,
     primary_kb_resource,
@@ -293,6 +295,52 @@ class HtmlXhtmlEpubScanTests(unittest.TestCase):
             merged = attach_mathml_quality(result, str(epub), enabled=False)
         self.assertEqual(merged.issues, [])
         self.assertEqual(merged.verdict, Verdict.PASSED)
+
+    def test_parse_colon_line_location(self) -> None:
+        self.assertEqual(
+            parse_issue_location("OEBPS/ch.xhtml:12"),
+            ("OEBPS/ch.xhtml", 12),
+        )
+        self.assertEqual(
+            parse_issue_location("EPUB/xhtml/ch1.xhtml#line=42"),
+            ("EPUB/xhtml/ch1.xhtml", 42),
+        )
+        self.assertEqual(
+            parse_issue_location("OEBPS/ch.xhtml (8,3)"),
+            ("OEBPS/ch.xhtml", 8),
+        )
+
+    def test_fix_context_uses_epub_member_from_quality_location(self) -> None:
+        body = self._hyphen_page(xhtml=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            epub = Path(tmp) / "book.epub"
+            with zipfile.ZipFile(epub, "w") as zf:
+                zf.writestr("OEBPS/ch.xhtml", body)
+            issues = issues_from_path(epub)
+            hyphen = [i for i in issues if i.code == "mathml-hyphen-minus"]
+            self.assertTrue(hyphen)
+            issue = hyphen[0]
+            member, line = parse_issue_location(issue.location)
+            self.assertEqual(member, "OEBPS/ch.xhtml")
+            self.assertIsNotNone(line)
+            result = CheckResult(
+                verdict=Verdict.PASSED_WITH_WARNINGS,
+                tool_name="EPUBCheck",
+                target_path=str(epub),
+                issues=[issue],
+            )
+            with mock.patch(
+                "checkmate.ai.context.send_file_context_enabled",
+                return_value=True,
+            ):
+                ctx = gather_issue_context(issue, result, target_path=str(epub))
+            self.assertEqual(ctx.get("file_member"), "OEBPS/ch.xhtml")
+            raw = ctx.get("file_excerpt_raw") or ""
+            self.assertIn("<mo>-</mo>", raw)
+            prompt = build_fix_user_prompt(ctx, issue=issue)
+            self.assertIn("MathML quality", prompt)
+            self.assertIn("<mo>-</mo>", prompt)
+            self.assertNotIn("CROSS-FILE FIXES", prompt)
 
 
 if __name__ == "__main__":
