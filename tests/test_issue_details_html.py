@@ -125,6 +125,19 @@ class IssueDetailsPageTests(unittest.TestCase):
         self.assertIn("image-alt", md)
         self.assertIn("2", md)
 
+    def test_snippet_shown_when_present(self) -> None:
+        issue = self._issue(snippet="<mo>-</mo>")
+        html = issue_details_page(issue, count=1)
+        self.assertIn(">Snippet<", html)
+        self.assertIn("&lt;mo&gt;-&lt;/mo&gt;", html)
+        md = issue_details_markdown(issue, count=1)
+        self.assertIn("## Snippet", md)
+        self.assertIn("<mo>-</mo>", md)
+
+    def test_snippet_omitted_when_empty(self) -> None:
+        html = issue_details_page(self._issue(snippet=""), count=1)
+        self.assertNotIn(">Snippet<", html)
+
 
 class IssueDetailFollowupI18nTests(unittest.TestCase):
     def test_fix_followup_does_not_shadow_gettext(self) -> None:

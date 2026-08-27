@@ -13,6 +13,7 @@ import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 _PACKAGE_SUFFIXES = {".epub", ".ebrl", ".zip"}
 _BACKUP_NAME_RE = re.compile(r"^(?P<stem>.+)(?P<bak>\.bak\d*)$", re.IGNORECASE)
@@ -44,9 +45,33 @@ def create_epub(source_dir: str | Path, output_path: str | Path) -> None:
                 epub.write(file_path, arcname)
 
 
+def normalize_member_ref(member: str) -> str:
+    """Strip checker URL wrappers so *member* is a relative file path."""
+    text = (member or "").strip()
+    if "·" in text or "\u00b7" in text:
+        text = re.split(r"\s*[·\u00b7]\s*", text, maxsplit=1)[0].strip()
+    text = text.replace("\\", "/")
+    lower = text.lower()
+    if lower.startswith("http://") or lower.startswith("https://"):
+        try:
+            parsed = urlparse(text)
+        except ValueError:
+            return text.lstrip("/")
+        path = unquote(parsed.path or "")
+        extra = re.match(r"^(.*):(\d+):(\d+)$", path)
+        if extra and extra.group(1):
+            path = extra.group(1)
+        else:
+            extra = re.match(r"^(.*):(\d+)$", path)
+            if extra and extra.group(1):
+                path = extra.group(1)
+        return path.lstrip("/")
+    return text.lstrip("/")
+
+
 def resolve_member_path(root: Path, member: str) -> Path | None:
     """Resolve a package-relative member path under an exploded directory."""
-    member = member.lstrip("/").replace("\\", "/")
+    member = normalize_member_ref(member)
     path = root / member
     if path.is_file():
         return path
@@ -62,8 +87,53 @@ def read_member_text(target: Path, member: str) -> tuple[str | None, str | None]
 
     Returns ``(resolved_member_name, text)`` or ``(None, None)``.
     """
-    member = member.lstrip("/").replace("\\", "/")
+    member = normalize_member_ref(member)
     target = Path(target)
+    try:
+        abs_member = Path(member)
+        if abs_member.is_absolute() and abs_member.is_file():
+            member = abs_member.name
+            if target.is_dir():
+                try:
+                    member = abs_member.resolve().relative_to(target.resolve()).as_posix()
+                except ValueError:
+                    return None, None
+            elif target.is_file() and not is_packaged_publication(target):
+                try:
+                    member = (
+                        abs_member.resolve()
+                        .relative_to(target.parent.resolve())
+                        .as_posix()
+                    )
+                except ValueError:
+                    return None, None
+    except OSError:
+        pass
+    if target.is_file() and not is_packaged_publication(target):
+        parent = target.parent
+        candidate: Path | None = None
+        if not member:
+            candidate = target
+        else:
+            nested = resolve_member_path(parent, member)
+            if nested is not None:
+                try:
+                    nested.resolve().relative_to(parent.resolve())
+                except ValueError:
+                    nested = None
+            candidate = nested
+            if candidate is None and Path(member).name == target.name:
+                candidate = target
+        if candidate is None or not candidate.is_file():
+            return None, None
+        try:
+            rel = candidate.resolve().relative_to(parent.resolve()).as_posix()
+        except ValueError:
+            rel = candidate.name
+        try:
+            return rel, candidate.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None, None
     if target.is_dir():
         path = resolve_member_path(target, member)
         if path is None:
@@ -234,6 +304,15 @@ def apply_text_replacements(
         return ApplyResult(ok=False, error_key="no_target")
     if not patches:
         return ApplyResult(ok=False, error_key="no_match")
+
+    if target.is_file() and not is_packaged_publication(target):
+        remapped: list[tuple[str, str, str]] = []
+        for member, original, replacement in patches:
+            resolved, _text = read_member_text(target, member)
+            if resolved is None:
+                return ApplyResult(ok=False, error_key="no_member", member=member)
+            remapped.append((resolved, original, replacement))
+        return apply_text_replacements(target.parent, remapped, backup=backup)
 
     # Plan final text per resolved member.
     planned: dict[str, str] = {}

@@ -1956,6 +1956,13 @@ class IssueDetailDialog(wx.Dialog):
                 "",
                 _("Location"),
                 issue.location or _("(none)"),
+            ]
+        )
+        snippet = (getattr(issue, "snippet", "") or "").strip()
+        if snippet:
+            lines.extend(["", _("Snippet"), snippet])
+        lines.extend(
+            [
                 "",
                 _("Message"),
                 issue.message or _("(none)"),
@@ -5092,16 +5099,37 @@ class AboutDialog(wx.Dialog):
         )
         root.Add(version, 0, wx.LEFT | wx.RIGHT | wx.TOP, 16)
 
+        labs_note = wx.StaticText(
+            self,
+            label=_(
+                "CheckMate is released from the DAISY Labs to help explore "
+                "how AI can help when checking digital publications."
+            ),
+        )
+        labs_note.Wrap(420)
+        root.Add(labs_note, 0, wx.LEFT | wx.RIGHT | wx.TOP, 16)
+
         desc = wx.StaticText(
             self,
             label=_(
                 "An accessible, cross-platform front-end for the DAISY "
                 "eBraille Checker, W3C EPUBCheck, veraPDF, the Nu HTML "
-                "Checker, and DAISY Pipeline."
+                "Checker, and validators via the DAISY Pipeline."
             ),
         )
         desc.Wrap(420)
         root.Add(desc, 0, wx.LEFT | wx.RIGHT | wx.TOP, 16)
+
+        ai_note = wx.StaticText(
+            self,
+            label=_(
+                "If Fido is installed with working AI credentials, CheckMate can "
+                "use that AI to explain issues, suggest fixes, analyse images, "
+                "and translate to other languages."
+            ),
+        )
+        ai_note.Wrap(420)
+        root.Add(ai_note, 0, wx.LEFT | wx.RIGHT | wx.TOP, 16)
 
         links_label = wx.StaticText(self, label=_("Links"))
         links_font = links_label.GetFont()

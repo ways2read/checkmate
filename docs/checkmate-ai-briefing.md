@@ -212,14 +212,14 @@ Rules: authoritative guidance when available (else “don’t invent conformance
 
 ## 4. Proposing an AI fix
 
-**Purpose:** Propose a **minimal, unique text replacement** for one issue (EPUB / eBraille only).
+**Purpose:** Propose a **minimal, unique text replacement** for one issue (EPUB / eBraille / HTML, SVG, CSS, or MathML on disk).
 
 **Entry:** `propose_fix()` in `ai/fix.py`.
 
 ### Flow
 
 1. Credentials + connection check  
-2. Gather issue context + member kind (`opf` / `html` / `css` / `other`)  
+2. Gather issue context + member kind (`opf` / `html` / `css` / `svg` / `mathml` / `other`)  
 3. Ask with fix system/user prompts (`max_tokens` 8192)  
 4. Parse markdown rationale + a single ` ```json ` fence → `FixProposal(file, original, replacement, rationale)`  
 5. Validate: complete (not truncated/draft); `original` non-empty; occurs **exactly once** in the package member  
@@ -261,7 +261,8 @@ Single-issue **Suggest fix with AI** is unchanged.
 1. User clicks **Apply fix and validate** → `apply_proposed_fix()` / `apply_proposed_fixes()` → `epub_package.apply_text_replacement(s)()`  
 2. Exact once-replace (with CRLF-normalized fallback); multi-patch applies sequentially per member  
 3. Write `.bak` backup(s), then:
-   - Exploded folder: edit member(s) in place (extra member `.bak` files recorded for revert)  
+   - Exploded folder or local HTML site folder: edit member(s) in place (extra member `.bak` files recorded for revert)  
+   - Local HTML/SVG/CSS/MathML file: edit that file (or a sibling under the same folder for HTML)  
    - Packaged `.epub` / `.ebrl`: extract → edit → rebuild  
 4. Append an **edit changelog** entry (`edit_log.py`) beside the publication naming the backup file, issue, member(s), and excerpts  
 5. On success: issue dialog closes with apply; main window stores `PendingFixVerify` and **re-checks** the publication

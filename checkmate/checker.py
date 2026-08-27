@@ -1436,6 +1436,7 @@ def _merge_epubcheck_and_ace(
             help_text=issue.help_text,
             impact=issue.impact,
             ruleset=issue.ruleset,
+            snippet=issue.snippet,
         )
         for issue in epub_result.issues
     ]
@@ -1451,6 +1452,7 @@ def _merge_epubcheck_and_ace(
             help_text=issue.help_text,
             impact=issue.impact,
             ruleset=issue.ruleset,
+            snippet=issue.snippet,
         )
         for issue in ace_result.issues
     ]

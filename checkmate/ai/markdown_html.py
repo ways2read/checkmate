@@ -1367,12 +1367,12 @@ def issue_details_markdown(issue: "Issue", *, count: int = 1) -> str:
     parts.append(f"## {_('Source')}\n\n{issue.source or '—'}\n")
     if count > 1:
         parts.append(f"## {_('Occurrences')}\n\n{count}\n")
-    parts.extend(
-        [
-            f"## {_('Location')}\n\n{issue.location or none}\n",
-            f"## {_('Message')}\n\n{issue.message or none}\n",
-        ]
-    )
+    parts.append(f"## {_('Location')}\n\n{issue.location or none}\n")
+    snippet = (getattr(issue, "snippet", "") or "").strip()
+    if snippet:
+        safe = snippet.replace("```", "'''")
+        parts.append(f"## {_('Snippet')}\n\n```\n{safe}\n```\n")
+    parts.append(f"## {_('Message')}\n\n{issue.message or none}\n")
     help_title, help_text, help_url = _issue_help_fields(issue)
     if help_title or help_text or help_url:
         help_bits: list[str] = [f"## {_('Help')}\n"]
@@ -1527,6 +1527,14 @@ def _issue_details_dialog_css() -> str:
       font-weight: 700;
       line-height: 1.35;
     }
+    .snippet-block pre {
+      margin: 0;
+      padding: 0.5rem 0.6rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 0.88rem;
+    }
     .code-text {
       font-family: var(--mono);
       font-size: 0.92em;
@@ -1593,6 +1601,15 @@ def issue_details_page(
 """
     location = esc(issue.location or none)
     message = esc(issue.message or none)
+    snippet = (getattr(issue, "snippet", "") or "").strip()
+    snippet_html = ""
+    if snippet:
+        snippet_html = f"""
+<section class="field-block snippet-block">
+<h2>{esc(_("Snippet"))}</h2>
+<pre><code>{esc(snippet)}</code></pre>
+</section>
+"""
     help_title, help_text, help_url = _issue_help_fields(issue)
     help_html = ""
     if help_title or help_text or help_url:
@@ -1637,6 +1654,7 @@ def issue_details_page(
 <h2>{esc(_("Location"))}</h2>
 <p class="field-value">{location}</p>
 </section>
+{snippet_html}
 <section class="field-block">
 <h2>{esc(_("Message"))}</h2>
 <p class="field-value">{message}</p>

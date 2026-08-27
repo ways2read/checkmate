@@ -82,6 +82,8 @@ class Issue:
     impact: str = ""
     # Ace ruleset label(s) e.g. "WCAG 2.0 A", "EPUB"; empty when unknown.
     ruleset: str = ""
+    # Compact source extract at the hit (MathML quality, Nu extract, …).
+    snippet: str = ""
 
     def summary_line(self) -> str:
         parts = [self.severity.label]

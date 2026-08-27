@@ -153,6 +153,7 @@ def _clone_issues(issues: list[Issue], *, default_source: str) -> list[Issue]:
             help_text=issue.help_text,
             impact=issue.impact,
             ruleset=issue.ruleset,
+            snippet=issue.snippet,
         )
         for issue in issues
     ]

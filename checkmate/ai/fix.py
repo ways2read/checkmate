@@ -1,4 +1,4 @@
-"""Propose and apply Fix with AI for EPUB / eBraille validation issues."""
+"""Propose and apply Fix with AI for EPUB, eBraille, and local HTML/SVG/CSS/MathML."""
 
 from __future__ import annotations
 
@@ -19,8 +19,9 @@ from ..epub_package import (
     _replace_once,
 )
 from ..i18n import _, get_language, language_display_name
-from ..models import CheckResult, Issue
+from ..models import CheckResult, Issue, Verdict
 from .context import (
+    fix_allowed_for_result,
     gather_batch_fix_context,
     gather_issue_context,
     parse_issue_location,
@@ -96,7 +97,7 @@ def fix_member_kind(member: str | None) -> str:
     """
     Classify the flagged package member for Fix prompt specialization.
 
-    Returns one of: ``opf``, ``html``, ``css``, ``other``.
+    Returns one of: ``opf``, ``html``, ``css``, ``svg``, ``mathml``, ``other``.
     ``html`` covers ``.xhtml``, ``.html``, and ``.htm`` content documents.
     """
     if not member:
@@ -108,14 +109,18 @@ def fix_member_kind(member: str | None) -> str:
         return "opf"
     if name.startswith("package") and suffix in {".xml", ""}:
         return "opf"
-    if suffix in {".xhtml", ".html", ".htm", ".mml"}:
+    if suffix in {".xhtml", ".html", ".htm"}:
         return "html"
+    if suffix == ".mml":
+        return "mathml"
+    if suffix == ".svg":
+        return "svg"
     if suffix == ".css":
         return "css"
     return "other"
 
 
-def _member_kind_guidance(kind: str) -> str:
+def _member_kind_guidance(kind: str, *, include_opf: bool = True) -> str:
     """English propose hints keyed off the flagged member type."""
     if kind == "opf":
         return (
@@ -127,35 +132,62 @@ def _member_kind_guidance(kind: str) -> str:
             "- Prefer one small meta/item/itemref change; do not rewrite the package."
         )
     if kind in {"html", "xhtml"}:
-        return (
+        lines = [
             "FILE TYPE: HTML/XHTML content document (where the issue was reported).\n"
             "- Prefer fixing attributes or wrapping the flagged element locally when "
             "that resolves the issue.\n"
             "- Keep well-formed markup (quoted attributes; matched tags).\n"
             "- For a missing attribute, expand the existing start tag as \"original\".\n"
-            "- Do not rewrite the whole document or unrelated sections.\n"
-            "- If the correct fix belongs in the package document (OPF) — for example "
-            "metadata, manifest, or spine — edit that file using the Related package "
-            "document excerpt. Do not invent content-document workarounds for "
-            "package-level requirements."
-        )
+            "- Do not rewrite the whole document or unrelated sections."
+        ]
+        if include_opf:
+            lines.append(
+                "- If the correct fix belongs in the package document (OPF) — for example "
+                "metadata, manifest, or spine — edit that file using the Related package "
+                "document excerpt. Do not invent content-document workarounds for "
+                "package-level requirements."
+            )
+        return "\n".join(lines)
     if kind == "css":
-        return (
+        lines = [
             "FILE TYPE: CSS stylesheet.\n"
             "- Prefer editing the flagged rule or declaration only.\n"
             "- Keep selectors exactly as in the excerpt.\n"
             "- For a new declaration, expand the unique rule block as \"original\".\n"
-            "- Do not restyle the whole stylesheet or unrelated rules.\n"
-            "- If the correct fix belongs in the package document (OPF), edit that file "
-            "using the Related package document excerpt instead."
+            "- Do not restyle the whole stylesheet or unrelated rules."
+        ]
+        if include_opf:
+            lines.append(
+                "- If the correct fix belongs in the package document (OPF), edit that file "
+                "using the Related package document excerpt instead."
+            )
+        return "\n".join(lines)
+    if kind == "svg":
+        return (
+            "FILE TYPE: SVG document.\n"
+            "- Prefer fixing the flagged element or attribute locally.\n"
+            "- Keep well-formed XML (quoted attributes; matched tags; existing namespaces).\n"
+            "- For a missing attribute, expand the existing start tag as \"original\".\n"
+            "- Do not rewrite the whole graphic."
         )
-    return (
+    if kind == "mathml":
+        return (
+            "FILE TYPE: MathML document.\n"
+            "- Prefer a local token or element edit in the reported MathML.\n"
+            "- Keep well-formed markup (quoted attributes; matched tags).\n"
+            "- Do not rewrite the whole expression unless the excerpt is that small."
+        )
+    other = (
         "FILE TYPE: other package member.\n"
         "- Make the smallest unique text edit that addresses the issue.\n"
-        "- Use insert-via-replace when adding content.\n"
-        "- If the correct fix belongs in a related package member (such as the OPF), "
-        "edit that file instead."
+        "- Use insert-via-replace when adding content."
     )
+    if include_opf:
+        other += (
+            "\n- If the correct fix belongs in a related package member (such as the OPF), "
+            "edit that file instead."
+        )
+    return other
 
 
 def _mathml_quality_fix_guidance() -> str:
@@ -170,6 +202,24 @@ def _mathml_quality_fix_guidance() -> str:
         "- Keep the JSON valid: escape quotes inside attributes. Do not rewrite the "
         "whole equation unless the excerpt is that small."
     )
+
+
+def _packaged_publication(ctx: dict[str, str]) -> bool:
+    kind = (ctx.get("publication_kind") or "").lower()
+    return kind in {"epub", "ebraille"}
+
+
+def _flagged_markup_prompt_lines(ctx: dict[str, str]) -> list[str]:
+    snippet = (ctx.get("snippet") or "").strip()
+    if not snippet:
+        return []
+    return [
+        "",
+        "Flagged markup at the reported location (may be compacted):",
+        "```",
+        snippet,
+        "```",
+    ]
 
 
 def _cross_file_fix_guidance() -> str:
@@ -190,7 +240,8 @@ def build_fix_system_prompt() -> str:
     lang = _language_name()
     lang_code = get_language()
     return f"""You are an accessibility publishing assistant inside CheckMate.
-Propose a minimal, concrete fix for one validation issue in an EPUB or eBraille publication.
+Propose a minimal, concrete fix for one validation issue in an EPUB, eBraille,
+or local HTML, SVG, CSS, or MathML file.
 
 LANGUAGE (mandatory):
 - The CheckMate UI language is {lang} (code: {lang_code}).
@@ -202,8 +253,8 @@ OUTPUT FORMAT (mandatory — final answer only):
 1. A short markdown section titled exactly "## {_('Proposed fix')}" with 2–4 short bullets or sentences.
 2. Immediately after that, exactly ONE fenced JSON code block with the language tag json.
    The JSON object must contain only these string fields:
-   - "file": package-relative path of the member you edit (the flagged File, or a
-     Related package document such as the OPF when that is where the fix belongs)
+   - "file": path of the file you edit (package-relative for EPUB/eBraille, or the
+     document file name for local HTML/SVG/CSS/MathML)
    - "original": exact substring copied from the Exact file text of that same member
    - "replacement": the corrected substring
 
@@ -274,14 +325,18 @@ def build_fix_user_prompt(
         lines.append(f"- Related package document: {related_opf}")
     lines.append("")
     mathml_quality = issue is not None and is_mathml_quality_issue(issue)
+    packaged = _packaged_publication(ctx)
     if mathml_quality:
         lines.append(_mathml_quality_fix_guidance())
     else:
-        lines.append(_member_kind_guidance(kind))
-        lines.append("")
-        lines.append(_cross_file_fix_guidance())
+        lines.append(_member_kind_guidance(kind, include_opf=packaged))
+        if packaged:
+            lines.append("")
+            lines.append(_cross_file_fix_guidance())
+    lines.extend(_flagged_markup_prompt_lines(ctx))
     raw = ctx.get("file_excerpt_raw") or ""
     numbered = ctx.get("file_excerpt") or ""
+    snippet = (ctx.get("snippet") or "").strip()
     if raw:
         lines.append("")
         lines.append(
@@ -298,7 +353,7 @@ def build_fix_user_prompt(
         lines.append("```")
         lines.append(numbered)
         lines.append("```")
-    else:
+    elif not snippet:
         lines.append("")
         lines.append(
             "No file excerpt is available for the reported location. Only propose a "
@@ -520,7 +575,7 @@ def build_batch_fix_system_prompt() -> str:
     lang_code = get_language()
     return f"""You are an accessibility publishing assistant inside CheckMate.
 Propose minimal, concrete fixes for EVERY listed instance of the same validation
-issue code across an EPUB or eBraille publication.
+issue code across an EPUB, eBraille, or local HTML, SVG, CSS, or MathML file.
 
 LANGUAGE (mandatory):
 - The CheckMate UI language is {lang} (code: {lang_code}).
@@ -591,8 +646,9 @@ def build_batch_fix_user_prompt(
     lines.append("")
     if issue is not None and is_mathml_quality_issue(issue):
         lines.append(_mathml_quality_fix_guidance())
-    else:
+    elif _packaged_publication(ctx):
         lines.append(_cross_file_fix_guidance())
+    lines.extend(_flagged_markup_prompt_lines(ctx))
     instances = ctx.get("batch_instances") or ""
     if instances:
         lines.append("")
@@ -824,8 +880,6 @@ def propose_batch_fix(
     status_callback: Callable[[str], None] | None = None,
 ) -> FixResult:
     """Propose unique replacements for all issues sharing this source+code."""
-    from ..publication import classify_publication
-    from .context import kind_allows_excerpt
     from .session import ProviderError
 
     def _cancelled() -> bool:
@@ -842,11 +896,8 @@ def propose_batch_fix(
     path_for_gate = target_path or (result.target_path if result else None)
     if not path_for_gate:
         return FixResult(ok=False, error_key="wrong_format")
-    try:
-        kind = classify_publication(Path(path_for_gate)).value
-    except Exception:
-        kind = ""
-    if not kind_allows_excerpt(kind):
+    gate = CheckResult(verdict=Verdict.PASSED, target_path=str(path_for_gate))
+    if not fix_allowed_for_result(gate):
         return FixResult(ok=False, error_key="wrong_format")
 
     if _cancelled():
@@ -1008,8 +1059,6 @@ def propose_fix(
     cancel_event: threading.Event | None = None,
     status_callback: Callable[[str], None] | None = None,
 ) -> FixResult:
-    from ..publication import classify_publication
-    from .context import kind_allows_excerpt
     from .session import ProviderError
 
     def _cancelled() -> bool:
@@ -1026,11 +1075,8 @@ def propose_fix(
     path_for_gate = target_path or (result.target_path if result else None)
     if not path_for_gate:
         return FixResult(ok=False, error_key="wrong_format")
-    try:
-        kind = classify_publication(Path(path_for_gate)).value
-    except Exception:
-        kind = ""
-    if not kind_allows_excerpt(kind):
+    gate = CheckResult(verdict=Verdict.PASSED, target_path=str(path_for_gate))
+    if not fix_allowed_for_result(gate):
         return FixResult(ok=False, error_key="wrong_format")
 
     if _cancelled():
@@ -1490,7 +1536,8 @@ def error_message_for_key(key: str | None, detail: str = "") -> str:
 
     mapping = {
         "wrong_format": _(
-            "Fix with AI is only available for EPUB and eBraille publications."
+            "Fix with AI is only available for EPUB, eBraille, and HTML, SVG, CSS, "
+            "or MathML on disk (not web URLs or clipboard checks)."
         ),
         "no_patch": _(
             "The AI did not return an applicable patch. Try Fix with AI again, "

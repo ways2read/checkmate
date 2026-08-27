@@ -44,7 +44,9 @@ class ScanRulesTests(unittest.TestCase):
 
     def test_hyphen_minus_in_mo(self) -> None:
         issues = issues_from_mathml_text(_math("<mi>x</mi><mo>-</mo><mi>y</mi>"))
-        self.assertTrue(any(i.code == "mathml-hyphen-minus" for i in issues))
+        hyphen = [i for i in issues if i.code == "mathml-hyphen-minus"]
+        self.assertTrue(hyphen)
+        self.assertIn("<mo>-</mo>", hyphen[0].snippet)
 
     def test_math_minus_not_flagged(self) -> None:
         issues = issues_from_mathml_text(_math("<mi>x</mi><mo>\u2212</mo><mi>y</mi>"))
@@ -337,6 +339,7 @@ class HtmlXhtmlEpubScanTests(unittest.TestCase):
             self.assertEqual(ctx.get("file_member"), "OEBPS/ch.xhtml")
             raw = ctx.get("file_excerpt_raw") or ""
             self.assertIn("<mo>-</mo>", raw)
+            self.assertIn("<mo>-</mo>", ctx.get("snippet") or issue.snippet)
             prompt = build_fix_user_prompt(ctx, issue=issue)
             self.assertIn("MathML quality", prompt)
             self.assertIn("<mo>-</mo>", prompt)

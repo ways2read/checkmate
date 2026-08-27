@@ -248,11 +248,28 @@ def _help_fields() -> dict[str, str]:
     }
 
 
+def _source_snippet(text: str, index: int, *, limit: int = 180) -> str:
+    """Compact markup starting at the flagged tag, for details and AI."""
+    if not text:
+        return ""
+    n = len(text)
+    i = 0 if index < 0 else min(index, max(n - 1, 0))
+    lt = text.rfind("<", 0, i + 1)
+    if lt >= 0 and i - lt < 120:
+        i = lt
+    raw = text[i : min(n, i + max(limit * 2, 80))]
+    compact = " ".join(raw.split())
+    if len(compact) > limit:
+        compact = compact[: limit - 1].rstrip() + "…"
+    return compact
+
+
 def _issue(
     *,
     code: str,
     message: str,
     location: str,
+    snippet: str = "",
 ) -> Issue:
     help_fields = _help_fields()
     return Issue(
@@ -265,10 +282,11 @@ def _issue(
         help_title=help_fields["help_title"],
         help_text=help_fields["help_text"],
         ruleset="Nordic MathML Guidelines",
+        snippet=snippet,
     )
 
 
-def _scan_siblings(parent: ET.Element, *, location: str) -> list[Issue]:
+def _scan_siblings(parent: ET.Element, *, location: str, snippet: str = "") -> list[Issue]:
     """Nordic sequence heuristics on consecutive children of *parent*."""
     issues: list[Issue] = []
     kids = list(parent)
@@ -287,7 +305,7 @@ def _scan_siblings(parent: ET.Element, *, location: str) -> list[Issue]:
                         "Number looks split across adjacent mn elements. "
                         "Keep decimal/thousands separators inside one mn."
                     ),
-                    location=location,
+                    location=location, snippet=snippet,
                 )
             )
         if a_local == "mtext" and b_local == "mtext":
@@ -295,7 +313,7 @@ def _scan_siblings(parent: ET.Element, *, location: str) -> list[Issue]:
                 _issue(
                     code="mathml-adjacent-mtext",
                     message="Adjacent mtext elements. Merge them, or use HTML for commentary.",
-                    location=location,
+                    location=location, snippet=snippet,
                 )
             )
         if a_local == "mn" and (_is_open_paren(b) or b_local == "mi"):
@@ -306,7 +324,7 @@ def _scan_siblings(parent: ET.Element, *, location: str) -> list[Issue]:
                         "Missing invisible times (U+2062) between a number and "
                         "the following identifier or parenthesis."
                     ),
-                    location=location,
+                    location=location, snippet=snippet,
                 )
             )
         if _is_one_letter_mi(a) and _is_one_letter_mi(b):
@@ -317,7 +335,7 @@ def _scan_siblings(parent: ET.Element, *, location: str) -> list[Issue]:
                         "Missing invisible times (U+2062) between adjacent "
                         "one-letter mi elements."
                     ),
-                    location=location,
+                    location=location, snippet=snippet,
                 )
             )
         if a_local == "mfrac" and b_local == "msup":
@@ -325,7 +343,7 @@ def _scan_siblings(parent: ET.Element, *, location: str) -> list[Issue]:
                 _issue(
                     code="mathml-invisible-times",
                     message="Missing invisible times (U+2062) between mfrac and msup.",
-                    location=location,
+                    location=location, snippet=snippet,
                 )
             )
         if (_is_named_function_mi(a) or _is_fgh(a)) and _needs_function_arg(b):
@@ -336,7 +354,7 @@ def _scan_siblings(parent: ET.Element, *, location: str) -> list[Issue]:
                         "Missing invisible function application (U+2061) after "
                         "a function name."
                     ),
-                    location=location,
+                    location=location, snippet=snippet,
                 )
             )
         if a_local == "mn" and b_local == "mfrac":
@@ -347,7 +365,7 @@ def _scan_siblings(parent: ET.Element, *, location: str) -> list[Issue]:
                         "Missing invisible plus (U+2064) for a mixed number "
                         "(whole number followed by a fraction)."
                     ),
-                    location=location,
+                    location=location, snippet=snippet,
                 )
             )
         if a_local == "mn" and b_local == "msup":
@@ -365,7 +383,7 @@ def _scan_siblings(parent: ET.Element, *, location: str) -> list[Issue]:
                             "msup base looks like 0 after a 1 (1 0⁴). "
                             "The base is probably 10, not 0."
                         ),
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
 
@@ -380,7 +398,7 @@ def _scan_siblings(parent: ET.Element, *, location: str) -> list[Issue]:
                             "Five or more adjacent one-letter mi elements. "
                             "This is often words that should be mtext."
                         ),
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
         else:
@@ -388,7 +406,7 @@ def _scan_siblings(parent: ET.Element, *, location: str) -> list[Issue]:
     return issues
 
 
-def _scan_html_context(el: ET.Element, *, location: str) -> list[Issue]:
+def _scan_html_context(el: ET.Element, *, location: str, snippet: str = "") -> list[Issue]:
     """Space-between-math / adjacent-math checks on HTML parents."""
     issues: list[Issue] = []
     kids = list(el)
@@ -401,7 +419,7 @@ def _scan_html_context(el: ET.Element, *, location: str) -> list[Issue]:
                         "Two math elements next to each other. Put a space "
                         "between them, or join them in one math element."
                     ),
-                    location=location,
+                    location=location, snippet=snippet,
                 )
             )
         if _local(b.tag) == "math":
@@ -415,7 +433,7 @@ def _scan_html_context(el: ET.Element, *, location: str) -> list[Issue]:
                             "space. Nordic guidelines want a space between text "
                             "and MathML."
                         ),
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
             elif not tail and _local(a.tag) != "math":
@@ -430,7 +448,7 @@ def _scan_html_context(el: ET.Element, *, location: str) -> list[Issue]:
                                 "space. Nordic guidelines want a space between text "
                                 "and MathML."
                             ),
-                            location=location,
+                            location=location, snippet=snippet,
                         )
                     )
         if _local(a.tag) == "math":
@@ -444,7 +462,7 @@ def _scan_html_context(el: ET.Element, *, location: str) -> list[Issue]:
                             "space. Nordic guidelines want a space between "
                             "MathML and text."
                         ),
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
     return issues
@@ -465,6 +483,7 @@ def _scan_element(
     next_search = (tag_at + 1) if tag_at >= 0 else search_at
     now_inside = inside_math or local == "math"
     location = _location(path, text, loc_index)
+    snippet = _source_snippet(text, loc_index)
 
     if now_inside:
         if local == "mfenced":
@@ -475,7 +494,7 @@ def _scan_element(
                         "Deprecated mfenced. Use mrow with mo fences instead "
                         "(MathML Core / Nordic guidelines)."
                     ),
-                    location=location,
+                    location=location, snippet=snippet,
                 )
             )
 
@@ -493,7 +512,7 @@ def _scan_element(
                             "Use math minus − (U+2212) in mo, not hyphen-minus, "
                             "en dash, or em dash."
                         ),
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
 
@@ -505,7 +524,7 @@ def _scan_element(
                         "Combining macron (U+0304) in mi/mtext. Use mover for "
                         "a bar over a symbol."
                     ),
-                    location=location,
+                    location=location, snippet=snippet,
                 )
             )
 
@@ -520,7 +539,7 @@ def _scan_element(
                         "Unicode root symbol (√, ∛, or ∜). Use msqrt or mroot "
                         "so the radicand is in the markup."
                     ),
-                    location=location,
+                    location=location, snippet=snippet,
                 )
             )
 
@@ -529,7 +548,7 @@ def _scan_element(
                 _issue(
                     code="mathml-empty",
                     message=f"Empty {local}. Token elements need content.",
-                    location=location,
+                    location=location, snippet=snippet,
                 )
             )
 
@@ -547,7 +566,7 @@ def _scan_element(
                         _issue(
                             code="mathml-empty",
                             message=f"Empty {name} in {local}.",
-                            location=location,
+                            location=location, snippet=snippet,
                         )
                     )
 
@@ -562,7 +581,7 @@ def _scan_element(
                             "math should declare xmlns="
                             f'"{MATH_NS}".'
                         ),
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
             start = text[loc_index : loc_index + 24].lower()
@@ -574,7 +593,7 @@ def _scan_element(
                             "Prefixed MathML (m:math). Declare the MathML "
                             "namespace on the math element instead."
                         ),
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
             if _attr(el, "alttext") or _attr(el, "altimg"):
@@ -585,7 +604,7 @@ def _scan_element(
                             "Do not use alttext or altimg on math. Support is "
                             "poor; rely on the MathML itself."
                         ),
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
             kids = list(el)
@@ -597,7 +616,7 @@ def _scan_element(
                             "math whose only child is mrow. Avoid unnecessary "
                             "outer grouping."
                         ),
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
 
@@ -606,7 +625,7 @@ def _scan_element(
                 _issue(
                     code="mathml-singleton-mrow",
                     message="mrow with only one child. Avoid unnecessary grouping.",
-                    location=location,
+                    location=location, snippet=snippet,
                 )
             )
 
@@ -618,7 +637,7 @@ def _scan_element(
                         "mtable with only one cell. Use mrow unless this is "
                         "really a table."
                     ),
-                    location=location,
+                    location=location, snippet=snippet,
                 )
             )
 
@@ -630,7 +649,7 @@ def _scan_element(
                         "semantics/annotation markup. Nordic production does "
                         "not use these unless the Ordering Agency asks."
                     ),
-                    location=location,
+                    location=location, snippet=snippet,
                 )
             )
 
@@ -642,7 +661,7 @@ def _scan_element(
                         f"Content MathML element {local}. Nordic production "
                         "uses presentation MathML unless specified."
                     ),
-                    location=location,
+                    location=location, snippet=snippet,
                 )
             )
 
@@ -656,7 +675,7 @@ def _scan_element(
                             "Sentence punctuation in mo. Nordic guidelines "
                             "wrap period, comma, and colon in mtext."
                         ),
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
             if "'" in body or "\u0027" in body:
@@ -667,7 +686,7 @@ def _scan_element(
                             "ASCII apostrophe in mo. Use prime ′ (U+2032) for "
                             "derivatives."
                         ),
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
 
@@ -678,7 +697,7 @@ def _scan_element(
                     _issue(
                         code="mathml-mn-spaces",
                         message="mn contains multiple consecutive spaces.",
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
 
@@ -690,7 +709,7 @@ def _scan_element(
                     _issue(
                         code="mathml-mtext-letter",
                         message="Single letter in mtext. Use mi for identifiers.",
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
             if low in _NAMED_FUNCTIONS:
@@ -701,7 +720,7 @@ def _scan_element(
                             f"Function name {body!r} in mtext. Use mi "
                             "(or mo for lim)."
                         ),
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
             if body in _MTEXT_OPERATORS:
@@ -709,7 +728,7 @@ def _scan_element(
                     _issue(
                         code="mathml-mtext-operator",
                         message="Operator in mtext. Use mo.",
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
             if _UNIT_RE.match(body):
@@ -717,7 +736,7 @@ def _scan_element(
                     _issue(
                         code="mathml-mtext-unit",
                         message="Unit in mtext. Use mi (mathvariant=normal).",
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
             if body and _NUMBERISH_RE.match(body) and re.search(r"\d", body):
@@ -725,7 +744,7 @@ def _scan_element(
                     _issue(
                         code="mathml-mtext-number",
                         message="Number in mtext. Use mn.",
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
 
@@ -740,7 +759,7 @@ def _scan_element(
                             f"Token {raw_token!r} looks like OCR for {mapped}. "
                             "Check ln/lg/log/lim."
                         ),
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
             if local == "mi" and raw_token.lower() == "lim":
@@ -748,7 +767,7 @@ def _scan_element(
                     _issue(
                         code="mathml-lim-mo",
                         message="lim in mi. Nordic guidelines mark lim as mo.",
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
 
@@ -762,7 +781,7 @@ def _scan_element(
                             "msup exponent is the letter o/O. This is often "
                             "OCR for 0."
                         ),
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
 
@@ -775,7 +794,7 @@ def _scan_element(
                             "ASCII apostrophe in mi. Use prime ′ (U+2032) for "
                             "derivatives."
                         ),
-                        location=location,
+                        location=location, snippet=snippet,
                     )
                 )
 
@@ -789,9 +808,9 @@ def _scan_element(
         )
         issues.extend(child_issues)
     if now_inside and local in _SEQUENCE_PARENTS:
-        issues.extend(_scan_siblings(el, location=location))
+        issues.extend(_scan_siblings(el, location=location, snippet=snippet))
     elif not now_inside:
-        issues.extend(_scan_html_context(el, location=location))
+        issues.extend(_scan_html_context(el, location=location, snippet=snippet))
     return issues, next_search
 
 

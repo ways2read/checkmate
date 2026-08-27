@@ -140,6 +140,13 @@ def build_user_prompt(ctx: dict[str, str], *, kb_body: str = "") -> str:
         lines.append(f"- Checker: {ctx['tool']}")
     if ctx.get("file_member"):
         lines.append(f"- File: {ctx['file_member']}")
+    snippet = (ctx.get("snippet") or "").strip()
+    if snippet:
+        lines.append("")
+        lines.append("Flagged markup at the reported location (may be compacted):")
+        lines.append("```")
+        lines.append(snippet)
+        lines.append("```")
     if ctx.get("file_excerpt"):
         lines.append("")
         lines.append("Relevant file excerpt (line numbers when available):")

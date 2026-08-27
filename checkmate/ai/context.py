@@ -7,9 +7,30 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from urllib.parse import unquote, urlparse
+
 from ..models import CheckResult, Issue
-from ..publication import PublicationKind, classify_publication, find_package_document
+from ..publication import PublicationKind, classify_publication, find_package_document, is_html_url
 from ..settings import read_settings
+
+_EXCERPT_KINDS = frozenset(
+    {
+        PublicationKind.EPUB.value,
+        PublicationKind.EBRAILLE.value,
+        PublicationKind.HTML.value,
+        PublicationKind.SVG.value,
+        PublicationKind.CSS.value,
+        PublicationKind.MATHML.value,
+    }
+)
+_LOOSE_DOCUMENT_KINDS = frozenset(
+    {
+        PublicationKind.HTML.value,
+        PublicationKind.SVG.value,
+        PublicationKind.CSS.value,
+        PublicationKind.MATHML.value,
+    }
+)
 
 _MAX_EXCERPT_CHARS = 6000
 # Package documents are usually small; Fix works better with most/all of the OPF.
@@ -138,11 +159,41 @@ def _issue_hint_tokens(issue: Issue) -> list[str]:
     return out
 
 
+def _http_member_and_line(loc: str) -> tuple[str, int | None] | None:
+    """Map ``http(s)://host[:port]/path[:line[:col]]`` to (relative path, line)."""
+    text = (loc or "").strip()
+    lower = text.lower()
+    if not (lower.startswith("http://") or lower.startswith("https://")):
+        return None
+    try:
+        parsed = urlparse(text)
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    path = unquote(parsed.path or "")
+    line: int | None = None
+    extra = re.match(r"^(.*):(\d+):(\d+)$", path)
+    if extra and extra.group(1):
+        path = extra.group(1)
+        line = int(extra.group(2))
+    else:
+        extra = re.match(r"^(.*):(\d+)$", path)
+        if extra and extra.group(1):
+            path = extra.group(1)
+            line = int(extra.group(2))
+    return path.lstrip("/"), line
+
+
 def _split_member_and_line(loc: str) -> tuple[str | None, int | None]:
-    """Parse ``path (line,col)``, ``path:line``, or ``path#line=N`` → (path, line)."""
+    """Parse ``path (line,col)``, ``path:line``, ``path:line:col``, or ``path#line=N``."""
     loc = (loc or "").strip()
     if not loc:
         return None, None
+    http = _http_member_and_line(loc)
+    if http is not None:
+        member, line = http
+        return member or None, line
     loc_norm = loc.replace("\\", "/")
     m = re.match(r"^(.+?)\s+\((\d+)\s*,\s*\d+\)\s*$", loc_norm)
     if m:
@@ -150,6 +201,11 @@ def _split_member_and_line(loc: str) -> tuple[str | None, int | None]:
     m = re.match(r"^(.+?)#line=(\d+)\s*$", loc_norm, re.IGNORECASE)
     if m:
         return m.group(1).strip(), int(m.group(2))
+    m = re.match(r"^(.+):(\d+):(\d+)\s*$", loc_norm)
+    if m:
+        member = m.group(1).strip()
+        if not (len(member) == 1 and member.isalpha()):
+            return member, int(m.group(2))
     m = re.match(r"^(.+):(\d+)\s*$", loc_norm)
     if m:
         member = m.group(1).strip()
@@ -186,6 +242,9 @@ def _publication_relative_member(target: Path, member: str) -> str:
     member = (member or "").replace("\\", "/").strip()
     if not member:
         return member
+    http = _http_member_and_line(member)
+    if http is not None:
+        member = http[0] or member
     try:
         abs_member = Path(member)
     except (OSError, ValueError):
@@ -206,52 +265,26 @@ def _publication_relative_member(target: Path, member: str) -> str:
         return resolved.name
     if root.is_file() and resolved == root:
         return root.name
+    if root.is_file():
+        try:
+            return resolved.relative_to(root.parent.resolve()).as_posix()
+        except ValueError:
+            return resolved.name
     return member
 
 
 def _read_member_text(target: Path, member: str) -> str | None:
-    member = member.lstrip("/")
+    from ..epub_package import normalize_member_ref, read_member_text as read_editable_member
+
+    member = normalize_member_ref(member)
     try:
         abs_member = Path(member)
         if abs_member.is_absolute() and abs_member.is_file():
             return abs_member.read_text(encoding="utf-8", errors="replace")
     except OSError:
         pass
-    if target.is_dir():
-        path = target / member
-        if not path.is_file():
-            # Try basename match
-            candidates = list(target.rglob(Path(member).name))
-            path = candidates[0] if len(candidates) == 1 else None
-        if path is None or not path.is_file():
-            return None
-        try:
-            return path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            return None
-    if target.is_file() and target.suffix.lower() in {".epub", ".ebrl", ".zip"}:
-        try:
-            with zipfile.ZipFile(target, "r") as zf:
-                names = zf.namelist()
-                if member in names:
-                    name = member
-                else:
-                    matches = [
-                        n for n in names if n.replace("\\", "/").endswith(member)
-                    ]
-                    if len(matches) == 1:
-                        name = matches[0]
-                    else:
-                        base = Path(member).name
-                        matches = [n for n in names if Path(n).name == base]
-                        if len(matches) != 1:
-                            return None
-                        name = matches[0]
-                raw = zf.read(name)
-            return raw.decode("utf-8", errors="replace")
-        except (OSError, zipfile.BadZipFile, KeyError):
-            return None
-    return None
+    _name, text = read_editable_member(target, member)
+    return text
 
 
 def _member_suffix(member: str) -> str:
@@ -267,7 +300,7 @@ def _is_package_member(member: str) -> bool:
 
 
 def _is_markup_member(member: str) -> bool:
-    return _member_suffix(member) in {".xhtml", ".html", ".htm", ".mml"}
+    return _member_suffix(member) in {".xhtml", ".html", ".htm", ".mml", ".svg"}
 
 
 def _is_css_member(member: str) -> bool:
@@ -538,6 +571,9 @@ def gather_issue_context(
         "location": issue.location or "",
         "source": issue.source or "",
     }
+    snippet = (getattr(issue, "snippet", "") or "").strip()
+    if snippet:
+        ctx["snippet"] = snippet
     path: Path | None = None
     if target_path:
         path = Path(target_path)
@@ -595,8 +631,10 @@ def gather_issue_context(
                     # spine). MathML quality warnings are always in the content file.
                     from .resources import is_mathml_quality_issue
 
-                    if not _is_package_member(member) and not is_mathml_quality_issue(
-                        issue
+                    if (
+                        not _is_package_member(member)
+                        and not is_mathml_quality_issue(issue)
+                        and kind_val not in _LOOSE_DOCUMENT_KINDS
                     ):
                         opf_member = _find_opf_member(path)
                         if opf_member and opf_member.replace("\\", "/") != member.replace(
@@ -614,11 +652,21 @@ def gather_issue_context(
 
 
 def fix_allowed_for_result(result: CheckResult | None) -> bool:
-    """True when Fix with AI may run (EPUB / eBraille only)."""
+    """True when Fix with AI may run on a local EPUB, eBraille, or document file."""
     if result is None or not result.target_path:
         return False
-    path = Path(result.target_path)
+    raw = (result.target_path or "").strip().strip('"')
+    if is_html_url(raw):
+        return False
+    path = Path(raw)
     if not path.exists():
+        return False
+    try:
+        from ..clipboard_markup import is_clipboard_snapshot_path
+
+        if is_clipboard_snapshot_path(path):
+            return False
+    except OSError:
         return False
     try:
         kind = classify_publication(path).value
@@ -777,10 +825,4 @@ def gather_batch_fix_context(
 
 
 def kind_allows_excerpt(kind: str) -> bool:
-    k = (kind or "").lower()
-    return k in {
-        PublicationKind.EPUB.value,
-        PublicationKind.EBRAILLE.value,
-        "epub",
-        "ebraille",
-    }
+    return (kind or "").lower() in _EXCERPT_KINDS

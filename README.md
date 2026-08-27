@@ -104,10 +104,11 @@ support on Windows, macOS, and Linux.
   analysis ran, you can chat about the JSON report in the same window.
   HTML, eBraille, DAISY, folders, and URLs do not offer image reports.
   Older Fido builds that lack this CLI leave **Images** disabled.
-- **Suggest fix with AI** (EPUB and eBraille only, when FIDO AI settings are present):
+- **Suggest fix with AI** (EPUB, eBraille, and HTML / SVG / CSS / MathML on disk, when FIDO AI settings are present):
   from the same issue details dialog, ask for a minimal suggested markup patch,
-  preview before/after, then **Apply fix and validate** to the exploded folder or packaged
-  `.epub`/`.ebrl` (creates a `.bak` backup).   When the report has more than one
+  preview before/after, then **Apply fix and validate** to the exploded folder, packaged
+  `.epub`/`.ebrl`, or local HTML/SVG/CSS/MathML file (creates a `.bak` backup). Web URLs and clipboard
+  checks are explain-only. When the report has more than one
   issue with the same checker code, **Suggest fix for many** suggests up to 20
   unique replacements across matching instances in one backup/rebuild cycle.
   The details dialog closes and the
@@ -433,7 +434,7 @@ checkmate/
     pipeline_client.py # DAISY Pipeline 2 webservice (local mode)
     pipeline_check.py  # DAISY 2.02 / 3 / DTBook / NIMAS jobs
     pipeline_report.py # Pipeline HTML/XML reports → issues
-    epub_package.py    # Extract / rebuild .epub/.ebrl (Fix with AI apply)
+    epub_package.py    # Extract / rebuild .epub/.ebrl; in-place HTML edits (Fix with AI)
     updater.py         # Tool download / update (GitHub + veraPDF installer)
     java_util.py       # Locate Java (bundled or PATH)
     models.py          # Verdict and issue models
