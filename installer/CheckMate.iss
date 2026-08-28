@@ -19,7 +19,7 @@
 
 #define MyAppName "CheckMate"
 #define MyAppFullName "CheckMate"
-#define MyAppVersion "0.7.40"
+#define MyAppVersion "0.7.41"
 #define MyAppPublisher "ways2read"
 #define MyAppURL "https://github.com/ways2read/checkmate"
 #define MyAppExeName "CheckMate.exe"

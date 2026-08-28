@@ -490,16 +490,16 @@ def build(
             file=sys.stderr,
         )
 
-    # Same telemetry secrets file FIDO uses (OpenPanel / PostHog). Optional at
-    # build time; without it, CheckMate still runs but cloud telemetry is a no-op.
-    secrets = ROOT / "fido.secrets.json"
+    # CheckMate telemetry secrets (OpenPanel / PostHog). Optional at build
+    # time; without it, CheckMate still runs but cloud telemetry is a no-op.
+    secrets = ROOT / "checkmate.secrets.json"
     if secrets.is_file():
         sep = ";" if sys.platform == "win32" else ":"
         cmd.extend(["--add-data", f"{secrets}{sep}."])
         print(f"Bundling telemetry secrets: {secrets.name}")
     else:
         print(
-            "Note: fido.secrets.json not found — packaged builds will not "
+            "Note: checkmate.secrets.json not found — packaged builds will not "
             "send usage telemetry until the file is present at build time.",
             file=sys.stderr,
         )

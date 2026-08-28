@@ -50,4 +50,5 @@ Thumbs.db
 *.EPUB
 *.pdf
 *.PDF
+checkmate.secrets.json
 fido.secrets.json

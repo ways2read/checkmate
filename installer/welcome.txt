@@ -1,14 +1,12 @@
 ﻿Welcome to the CheckMate Setup Wizard.
 
-CheckMate is released from the DAISY Labs to help explore how AI can help when checking digital publications.
+CheckMate is an accessible desktop front-end for the DAISY eBraille Checker, W3C EPUBCheck, Ace by DAISY, the W3C Nu HTML Checker, veraPDF, and validators via the DAISY Pipeline (when installed). It lets you open an .ebrl, .epub, .pdf, .html, .svg, or .css file, a DTBook XML or NIMAS/DAISY package, or an exploded publication folder, and see a clear Passed / Passed with warnings / Failed result. .ebrl files are checked with eBraille Checker; .epub files with EPUBCheck and Ace; .pdf files with veraPDF (PDF/UA or PDF/A); .html files with the Nu HTML Checker and axe; .svg and .css with Nu. DAISY 2.02, DAISY 3, DTBook, and NIMAS are checked with validators via a local DAISY Pipeline 2 webservice when it is running.
 
-This application is an accessible desktop front-end for the DAISY eBraille Checker, W3C EPUBCheck, Ace by DAISY, the W3C Nu HTML Checker, veraPDF, and validators via the DAISY Pipeline (when installed). It lets you open an .ebrl, .epub, .pdf, .html, .svg, or .css file, a DTBook XML or NIMAS/DAISY package, or an exploded publication folder, and see a clear Passed / Passed with warnings / Failed result. .ebrl files are checked with eBraille Checker; .epub files with EPUBCheck and Ace; .pdf files with veraPDF (PDF/UA or PDF/A); .html files with the Nu HTML Checker and axe; .svg and .css with Nu. DAISY 2.02, DAISY 3, DTBook, and NIMAS are checked with validators via a local DAISY Pipeline 2 webservice when it is running.
-
-You can also check HTML, CSS, XML, SVG, or MathML copied to the clipboard (File → Check clipboard…). Fragments are checked as snippets, so the tools report problems in the markup you copied, not a missing doctype, title, or landmarks.
+You can also check HTML, CSS, XML, SVG, or MathML copied to the clipboard (File → Check clipboard…). 
 
 On Windows you can right-click an .ebrl, .epub, .pdf, .html, .svg, or .css file and choose "Validate with CheckMate", or use Open with → CheckMate. On Windows 11 that command is on the classic menu (right-click → Show more options, or Shift+F10).
 
-If Fido is installed with working AI credentials, CheckMate can use that AI to explain issues, suggest fixes, analyse images, and translate to other languages.
+CheckMate is released from the DAISY Labs to help explore how AI can help when checking digital publications. If Fido is installed with working AI credentials, CheckMate can use that AI to explain issues, suggest fixes, analyse images, and translate to other languages.
 
 What this installer includes:
   • CheckMate

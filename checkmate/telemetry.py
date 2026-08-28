@@ -1,11 +1,11 @@
-"""Anonymous usage telemetry aligned with FIDO (shared consent + secrets).
+"""Anonymous usage telemetry aligned with FIDO (shared consent).
 
-CheckMate does **not** import the FIDO package. It reads the same opt-in and
-credentials FIDO uses, then sends events itself:
+CheckMate does **not** import the FIDO package. It reads FIDO's opt-in, then
+sends events itself using CheckMate's own credentials:
 
 * Consent: ``telemetry_consent`` in FIDO's ``user_settings.json`` (set in FIDO)
-* Secrets: ``fido.secrets.json`` (bundled with CheckMate builds / beside the exe)
-  or ``FIDO_OPENPANEL_*`` / ``FIDO_POSTHOG_*`` environment variables
+* Secrets: ``checkmate.secrets.json`` (bundled with CheckMate builds / beside the exe)
+  or ``CHECKMATE_OPENPANEL_*`` / ``CHECKMATE_POSTHOG_*`` environment variables
 * Local counters: FIDO's ``last_run.json`` (CheckMate-specific keys)
 
 If consent is missing/false, or no provider credentials exist, calls are no-ops
@@ -30,7 +30,7 @@ _TELEMETRY_CONSENT_SETTING = "telemetry_consent"
 _LAST_STARTED_VERSION_KEY = "last_started_checkmate_version"
 _APP_START_TOTAL_KEY = "checkmate_app_start_total"
 _INSTALL_ID_KEY = "installId"
-_SECRETS_BASENAME = "fido.secrets.json"
+_SECRETS_BASENAME = "checkmate.secrets.json"
 _DEFAULT_OPENPANEL_URL = "https://api.openpanel.dev"
 
 _LAST_RUN_LOCK = threading.Lock()
@@ -148,7 +148,7 @@ def _ensure_install_id() -> str:
 
 
 def _iter_secrets_paths() -> list[Path]:
-    """Locations for ``fido.secrets.json`` (first existing wins)."""
+    """Locations for ``checkmate.secrets.json`` (first existing wins)."""
     paths: list[Path] = []
     try:
         import sys
@@ -163,11 +163,10 @@ def _iter_secrets_paths() -> list[Path]:
         paths.append(application_dir() / _SECRETS_BASENAME)
     except Exception:
         pass
-    # Dev: CheckMate repo root and sibling FIDO checkout
+    # Dev: CheckMate repo root
     try:
         repo_root = Path(__file__).resolve().parents[1]
         paths.append(repo_root / _SECRETS_BASENAME)
-        paths.append(repo_root.parent / "FIDO" / _SECRETS_BASENAME)
     except Exception:
         pass
     # Deduplicate while preserving order
@@ -211,27 +210,27 @@ def _string_from_mapping(block: Any, *keys: str) -> str:
 
 def _resolve_openpanel_credentials() -> tuple[str, str, Optional[str]]:
     block = _load_secrets_dict().get("openpanel")
-    f_id = _string_from_mapping(block, "CLIENT_ID", "client_id")
-    f_secret = _string_from_mapping(block, "CLIENT_SECRET", "client_secret")
-    f_url = _string_from_mapping(block, "API_URL", "api_url")
-    e_id = os.environ.get("FIDO_OPENPANEL_CLIENT_ID", "").strip()
-    e_secret = os.environ.get("FIDO_OPENPANEL_CLIENT_SECRET", "").strip()
-    e_url = os.environ.get("FIDO_OPENPANEL_API_URL", "").strip()
-    client_id = e_id or f_id
-    client_secret = e_secret or f_secret
-    api_url = (e_url or f_url or "").strip() or None
+    file_id = _string_from_mapping(block, "CLIENT_ID", "client_id")
+    file_secret = _string_from_mapping(block, "CLIENT_SECRET", "client_secret")
+    file_url = _string_from_mapping(block, "API_URL", "api_url")
+    e_id = os.environ.get("CHECKMATE_OPENPANEL_CLIENT_ID", "").strip()
+    e_secret = os.environ.get("CHECKMATE_OPENPANEL_CLIENT_SECRET", "").strip()
+    e_url = os.environ.get("CHECKMATE_OPENPANEL_API_URL", "").strip()
+    client_id = e_id or file_id
+    client_secret = e_secret or file_secret
+    api_url = (e_url or file_url or "").strip() or None
     return client_id, client_secret, api_url
 
 
 def _resolve_posthog_credentials() -> tuple[str, str]:
     block = _load_secrets_dict().get("posthog")
-    f_token = _string_from_mapping(
+    file_token = _string_from_mapping(
         block, "PROJECT_TOKEN", "project_token", "API_KEY", "api_key"
     )
-    f_host = _string_from_mapping(block, "API_HOST", "api_host", "HOST", "host")
-    e_token = os.environ.get("FIDO_POSTHOG_PROJECT_TOKEN", "").strip()
-    e_host = os.environ.get("FIDO_POSTHOG_API_HOST", "").strip()
-    return (e_token or f_token), ((e_host or f_host or "").strip())
+    file_host = _string_from_mapping(block, "API_HOST", "api_host", "HOST", "host")
+    e_token = os.environ.get("CHECKMATE_POSTHOG_PROJECT_TOKEN", "").strip()
+    e_host = os.environ.get("CHECKMATE_POSTHOG_API_HOST", "").strip()
+    return (e_token or file_token), ((e_host or file_host or "").strip())
 
 
 # --- HTTP senders -----------------------------------------------------------------

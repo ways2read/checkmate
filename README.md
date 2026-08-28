@@ -439,7 +439,7 @@ checkmate/
     java_util.py       # Locate Java (bundled or PATH)
     models.py          # Verdict and issue models
     report_export.py   # Text / HTML report export
-    telemetry.py       # FIDO-consent usage telemetry (shared secrets/sender)
+    telemetry.py       # FIDO-consent usage telemetry (checkmate.secrets.json)
     i18n.py            # UI language registry + catalog load/merge
     i18n_ai.py         # AI translation of UI language catalogs
     locales/           # Shipped checkmate-ui-i18n JSON catalogs (*.json)
