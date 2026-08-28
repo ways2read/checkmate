@@ -23,6 +23,17 @@ _EXCERPT_KINDS = frozenset(
         PublicationKind.MATHML.value,
     }
 )
+# Location snippets / explain excerpts also apply to XML and DAISY Pipeline kinds.
+_SNIPPET_KINDS = _EXCERPT_KINDS | frozenset(
+    {
+        PublicationKind.XML.value,
+        PublicationKind.DAISY202.value,
+        PublicationKind.DAISY3.value,
+        PublicationKind.DTBOOK.value,
+        PublicationKind.NIMAS.value,
+    }
+)
+_SNIPPET_LIMIT = 180
 _LOOSE_DOCUMENT_KINDS = frozenset(
     {
         PublicationKind.HTML.value,
@@ -159,8 +170,10 @@ def _issue_hint_tokens(issue: Issue) -> list[str]:
     return out
 
 
-def _http_member_and_line(loc: str) -> tuple[str, int | None] | None:
-    """Map ``http(s)://host[:port]/path[:line[:col]]`` to (relative path, line)."""
+def _http_member_line_col(
+    loc: str,
+) -> tuple[str, int | None, int | None] | None:
+    """Map ``http(s)://host[:port]/path[:line[:col]]`` to (relative path, line, col)."""
     text = (loc or "").strip()
     lower = text.lower()
     if not (lower.startswith("http://") or lower.startswith("https://")):
@@ -173,68 +186,81 @@ def _http_member_and_line(loc: str) -> tuple[str, int | None] | None:
         return None
     path = unquote(parsed.path or "")
     line: int | None = None
+    column: int | None = None
     extra = re.match(r"^(.*):(\d+):(\d+)$", path)
     if extra and extra.group(1):
         path = extra.group(1)
         line = int(extra.group(2))
+        column = int(extra.group(3))
     else:
         extra = re.match(r"^(.*):(\d+)$", path)
         if extra and extra.group(1):
             path = extra.group(1)
             line = int(extra.group(2))
-    return path.lstrip("/"), line
+    return path.lstrip("/"), line, column
 
 
-def _split_member_and_line(loc: str) -> tuple[str | None, int | None]:
+def _split_member_line_col(
+    loc: str,
+) -> tuple[str | None, int | None, int | None]:
     """Parse ``path (line,col)``, ``path:line``, ``path:line:col``, or ``path#line=N``."""
     loc = (loc or "").strip()
     if not loc:
-        return None, None
-    http = _http_member_and_line(loc)
+        return None, None, None
+    http = _http_member_line_col(loc)
     if http is not None:
-        member, line = http
-        return member or None, line
+        member, line, column = http
+        return member or None, line, column
     loc_norm = loc.replace("\\", "/")
-    m = re.match(r"^(.+?)\s+\((\d+)\s*,\s*\d+\)\s*$", loc_norm)
+    m = re.match(r"^(.+?)\s+\((\d+)\s*,\s*(\d+)\)\s*$", loc_norm)
     if m:
-        return m.group(1).strip(), int(m.group(2))
+        return m.group(1).strip(), int(m.group(2)), int(m.group(3))
     m = re.match(r"^(.+?)#line=(\d+)\s*$", loc_norm, re.IGNORECASE)
     if m:
-        return m.group(1).strip(), int(m.group(2))
+        return m.group(1).strip(), int(m.group(2)), None
     m = re.match(r"^(.+):(\d+):(\d+)\s*$", loc_norm)
     if m:
         member = m.group(1).strip()
         if not (len(member) == 1 and member.isalpha()):
-            return member, int(m.group(2))
+            return member, int(m.group(2)), int(m.group(3))
     m = re.match(r"^(.+):(\d+)\s*$", loc_norm)
     if m:
         member = m.group(1).strip()
         # "C:12" is not a Windows path plus line number.
         if not (len(member) == 1 and member.isalpha()):
-            return member, int(m.group(2))
+            return member, int(m.group(2)), None
     if "/" in loc_norm or loc_norm.lower().endswith(
         (".xhtml", ".html", ".htm", ".opf", ".css", ".xml", ".mml", ".svg")
     ):
-        return loc_norm, None
-    return None, None
+        return loc_norm, None, None
+    return None, None, None
 
 
 def _parse_epubcheck_location(location: str) -> tuple[str | None, int | None]:
     """Parse checker locations that name a package member (EPUBCheck, Nu, MathML)."""
-    return _split_member_and_line(location)
+    member, line, _column = _split_member_line_col(location)
+    return member, line
 
 
-def parse_issue_location(location: str) -> tuple[str | None, int | None]:
-    """Parse checker location → (member path, line number or None)."""
+def parse_issue_location_parts(
+    location: str,
+) -> tuple[str | None, int | None, int | None]:
+    """Parse checker location → (member path, line, column). Line/column may be None."""
     loc = location or ""
     # Ace uses a middle-dot separator; do not treat the whole string as a path.
     if "·" in loc or "\u00b7" in loc:
         part = _parse_ace_file(loc)
         if not part:
-            return None, None
-        member, line = _split_member_and_line(part)
-        return member or part, line
-    return _split_member_and_line(loc)
+            return None, None, None
+        member, line, column = _split_member_line_col(part)
+        return member or part, line, column
+    return _split_member_line_col(loc)
+
+
+def parse_issue_location(location: str) -> tuple[str | None, int | None]:
+    """Parse checker location → (member path, line number or None)."""
+    member, line, _column = parse_issue_location_parts(location)
+    return member, line
 
 
 def _publication_relative_member(target: Path, member: str) -> str:
@@ -242,7 +268,7 @@ def _publication_relative_member(target: Path, member: str) -> str:
     member = (member or "").replace("\\", "/").strip()
     if not member:
         return member
-    http = _http_member_and_line(member)
+    http = _http_member_line_col(member)
     if http is not None:
         member = http[0] or member
     try:
@@ -285,6 +311,108 @@ def _read_member_text(target: Path, member: str) -> str | None:
         pass
     _name, text = read_editable_member(target, member)
     return text
+
+
+def compact_source_snippet(
+    text: str,
+    line: int | None,
+    column: int | None = None,
+    *,
+    limit: int = _SNIPPET_LIMIT,
+) -> str:
+    """Compact source extract at a 1-based line/column for details and AI."""
+    if not text or line is None or line < 1:
+        return ""
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = normalized.split("\n")
+    if line > len(lines):
+        return ""
+    line_start = sum(len(lines[i]) + 1 for i in range(line - 1))
+    line_text = lines[line - 1]
+    if column is not None and column > 0:
+        index = line_start + min(column - 1, max(len(line_text), 0))
+    else:
+        stripped = line_text.lstrip()
+        index = line_start + (len(line_text) - len(stripped))
+    n = len(normalized)
+    i = 0 if index < 0 else min(index, max(n - 1, 0))
+    lt = normalized.rfind("<", 0, i + 1)
+    if lt >= 0 and i - lt < 120:
+        i = lt
+    raw = normalized[i : min(n, i + max(limit * 2, 80))]
+    compact = " ".join(raw.split())
+    if len(compact) > limit:
+        compact = compact[: limit - 1].rstrip() + "…"
+    return compact
+
+
+def _ace_html_fallback_snippet(location: str) -> str:
+    parts = _ace_location_parts(location)
+    if len(parts) < 3:
+        return ""
+    tail = parts[-1]
+    if tail.startswith("<") or tail.startswith("&lt;"):
+        return tail
+    return ""
+
+
+def snippet_for_issue(
+    target: Path,
+    issue: Issue,
+    *,
+    cache: dict[str, str | None] | None = None,
+) -> str:
+    """Source snippet at the issue location, or empty when it cannot be read."""
+    member, line, column = parse_issue_location_parts(issue.location)
+    if not member:
+        return _ace_html_fallback_snippet(issue.location)
+    member = _publication_relative_member(target, member)
+    store = cache if cache is not None else {}
+    if member not in store:
+        store[member] = _read_member_text(target, member)
+    text = store[member]
+    if not text:
+        return _ace_html_fallback_snippet(issue.location)
+    if line is None and (
+        "·" in (issue.location or "") or "\u00b7" in (issue.location or "")
+    ):
+        hints = _ace_location_parts(issue.location)[1:]
+        line = _find_line_for_hints(text, hints)
+    if line is None and (_is_markup_member(member) or _is_css_member(member)):
+        line = _find_line_for_hints(text, _issue_hint_tokens(issue))
+    snippet = compact_source_snippet(text, line, column)
+    return snippet or _ace_html_fallback_snippet(issue.location)
+
+
+def attach_location_snippets(result: CheckResult | None) -> None:
+    """Fill empty ``Issue.snippet`` from source at the reported location."""
+    if result is None or not result.issues:
+        return
+    raw = (result.target_path or "").strip().strip('"')
+    if not raw or is_html_url(raw):
+        return
+    path = Path(raw)
+    try:
+        if not path.exists():
+            return
+    except OSError:
+        return
+    kind_val = ""
+    try:
+        kind_val = classify_publication(path).value
+    except Exception:
+        kind_val = ""
+    if result.html_pages:
+        kind_val = PublicationKind.HTML.value
+    if not kind_allows_snippet(kind_val):
+        return
+    cache: dict[str, str | None] = {}
+    for issue in result.issues:
+        if (getattr(issue, "snippet", "") or "").strip():
+            continue
+        snippet = snippet_for_issue(path, issue, cache=cache)
+        if snippet:
+            issue.snippet = snippet
 
 
 def _member_suffix(member: str) -> str:
@@ -597,8 +725,8 @@ def gather_issue_context(
         except Exception:
             kind_val = ctx.get("publication_kind", "")
 
-        if send_file_context_enabled() and kind_allows_excerpt(kind_val):
-            member, line = parse_issue_location(issue.location)
+        if send_file_context_enabled() and kind_allows_snippet(kind_val):
+            member, line, column = parse_issue_location_parts(issue.location)
             if member:
                 member = _publication_relative_member(path, member)
                 text = _read_member_text(path, member)
@@ -626,6 +754,15 @@ def gather_issue_context(
                     else:
                         ctx["file_excerpt"] = _window_around_line(text, line)
                         ctx["file_excerpt_raw"] = _raw_window_around_line(text, line)
+
+                    if not snippet:
+                        derived = compact_source_snippet(text, line, column)
+                        if not derived:
+                            derived = _ace_html_fallback_snippet(issue.location)
+                        if derived:
+                            snippet = derived
+                            issue.snippet = derived
+                            ctx["snippet"] = derived
 
                     # Content/CSS issues often need an OPF edit (metadata, manifest,
                     # spine). MathML quality warnings are always in the content file.
@@ -826,3 +963,7 @@ def gather_batch_fix_context(
 
 def kind_allows_excerpt(kind: str) -> bool:
     return (kind or "").lower() in _EXCERPT_KINDS
+
+
+def kind_allows_snippet(kind: str) -> bool:
+    return (kind or "").lower() in _SNIPPET_KINDS

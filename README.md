@@ -587,9 +587,17 @@ Certification Kit and the USB signing token (one PIN prompt). Skip with
 with `CHECKMATE_SIGNTOOL` / `CHECKMATE_SIGN_TIMESTAMP_URL`.
 
 After a successful sign (or `-SkipSign`), the script also copies
-`CheckMate-*-setup.exe` to the shared **development builds** folder
-(the same DAISY path as Fido). Override with `CHECKMATE_DEV_BUILDS_DIR`,
-or skip with `CHECKMATE_SKIP_DEV_BUILDS_COPY=1`.
+`CheckMate-*-setup.exe` and a stable `CheckMate-setup.exe` to the shared
+**development builds** folder (the same DAISY path as Fido). Override with
+`CHECKMATE_DEV_BUILDS_DIR`, or skip with `CHECKMATE_SKIP_DEV_BUILDS_COPY=1`.
+
+It then uploads `CheckMate-setup.exe` to Azure Blob Storage at
+`Fido/checkmate/` (sibling of Fido betas under `Fido/`), public URL
+`https://dl.daisy.org/tools/Fido/checkmate/CheckMate-setup.exe`. Credentials
+match Fido unlock/beta publish (`az login` plus `unlock_publish` in
+`checkmate.secrets.json` or sibling `FIDO/fido.secrets.json`, or
+`CHECKMATE_`/`FIDO_UNLOCK_PUBLISH_*` / `FIDO_AZURE_BLOB_SAS`). Skip with
+`-SkipAzurePublish` or `CHECKMATE_SKIP_AZURE_PUBLISH=1`.
 
 The installer:
 

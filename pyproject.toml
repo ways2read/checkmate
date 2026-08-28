@@ -1,6 +1,6 @@
 [project]
 name = "checkmate"
-version = "0.7.41"
+version = "0.7.42"
 description = "CheckMate — accessible cross-platform GUI for the DAISY eBraille Checker, W3C EPUBCheck, and veraPDF"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,6 +20,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pyinstaller>=6.0",
+    "azure-identity>=1.25.0",
+    "azure-storage-blob>=12.24.0",
 ]
 
 [project.urls]

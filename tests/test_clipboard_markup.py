@@ -140,13 +140,28 @@ class PrepareClipboardTests(unittest.TestCase):
         self.assertIn(src, out)
         self.assertEqual(vnu_args_for_kind(ClipboardKind.MATHML, out), ["--html"])
 
-    def test_mathml_xml_uses_xml_flag(self) -> None:
+    def test_namespaced_mathml_is_wrapped_as_html_snippet(self) -> None:
+        src = (
+            '<math xmlns="http://www.w3.org/1998/Math/MathML" display="inline">'
+            "<mi>x</mi></math>"
+        )
+        out = prepare_clipboard_document(src, ClipboardKind.MATHML)
+        self.assertIn("<!DOCTYPE html>", out)
+        self.assertIn("<!--CHECKMATE-SNIPPET-->", out)
+        self.assertIn(src, out)
+        self.assertNotIn("<?xml", out)
+        self.assertEqual(vnu_args_for_kind(ClipboardKind.MATHML, out), ["--html"])
+
+    def test_xml_prolog_mathml_is_wrapped_without_prolog(self) -> None:
         src = (
             '<?xml version="1.0"?>\n'
             '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math>'
         )
-        self.assertEqual(prepare_clipboard_document(src, ClipboardKind.MATHML), src)
-        self.assertEqual(vnu_args_for_kind(ClipboardKind.MATHML, src), ["--xml"])
+        out = prepare_clipboard_document(src, ClipboardKind.MATHML)
+        self.assertIn("<!DOCTYPE html>", out)
+        self.assertIn('<math xmlns="http://www.w3.org/1998/Math/MathML">', out)
+        self.assertNotIn("<?xml", out)
+        self.assertEqual(vnu_args_for_kind(ClipboardKind.MATHML, out), ["--html"])
 
     def test_svg_fragment_wrapped(self) -> None:
         out = prepare_clipboard_document('<circle r="1"/>', ClipboardKind.SVG)

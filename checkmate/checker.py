@@ -98,6 +98,9 @@ def _stamp_result(
         for issue in result.issues:
             if not issue.source:
                 issue.source = tool.display_name
+    from .ai.context import attach_location_snippets
+
+    attach_location_snippets(result)
     return result
 
 
@@ -1013,7 +1016,11 @@ def run_check(
             result.checked_at = checked_at
         if not result.target_path:
             result.target_path = raw
-        return _annotate_clipboard_source(result, raw)
+        from .ai.context import attach_location_snippets
+
+        annotated = _annotate_clipboard_source(result, raw)
+        attach_location_snippets(annotated)
+        return annotated
 
     if is_vnu_document_kind(kind):
         from .vnu_check import run_vnu_document_check
@@ -1035,6 +1042,9 @@ def run_check(
             result.checked_at = checked_at
         if not result.target_path:
             result.target_path = raw
+        from .ai.context import attach_location_snippets
+
+        attach_location_snippets(result)
         return result
 
     target = Path(raw).expanduser().resolve()
@@ -1051,8 +1061,11 @@ def run_check(
     kind = classify_publication(target)
     if is_pipeline_kind(kind):
         from .pipeline_check import run_pipeline_check
+        from .ai.context import attach_location_snippets
 
-        return run_pipeline_check(target, kind=kind, progress=progress)
+        result = run_pipeline_check(target, kind=kind, progress=progress)
+        attach_location_snippets(result)
+        return result
 
     # EPUB Ace-only: skip EPUBCheck/Java entirely (Settings → EPUB checkers).
     if kind == PublicationKind.EPUB and epub_checkers() == "ace":
@@ -1586,9 +1599,16 @@ def _attach_optional_mathml_quality(
     from .settings import mathml_nordic_guidelines
 
     if not mathml_nordic_guidelines():
+        from .ai.context import attach_location_snippets
+
+        attach_location_snippets(result)
         return result
     _emit_progress(progress, "Checking MathML quality…")
-    return attach_mathml_quality(result, str(target))
+    result = attach_mathml_quality(result, str(target))
+    from .ai.context import attach_location_snippets
+
+    attach_location_snippets(result)
+    return result
 
 
 def _with_optional_ace(

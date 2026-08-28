@@ -4,6 +4,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipPackage
 #   powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipSign
+#   powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipAzurePublish
 #
 # Requires: uv, and Inno Setup 6 (ISCC.exe on PATH or in the default install dir).
 #
@@ -18,12 +19,19 @@
 #   CHECKMATE_DEV_BUILDS_DIR         — destination folder
 #                                      (default: D:\DAISY Consortium\Shared Projects - Documents\Exploring AI\Experimentation app\development builds)
 #   CHECKMATE_SKIP_DEV_BUILDS_COPY=1 — do not copy to that folder
+# Azure Blob (after development-builds copy), as CheckMate-setup.exe:
+#   Sibling of Fido betas (Fido/beta/) → Fido/checkmate/CheckMate-setup.exe
+#   Public URL: https://dl.daisy.org/tools/Fido/checkmate/CheckMate-setup.exe
+#   CHECKMATE_SKIP_AZURE_PUBLISH=1 or -SkipAzurePublish — skip upload
+#   Credentials: same as Fido unlock/beta publish (az login + unlock_publish,
+#   CHECKMATE_/FIDO_UNLOCK_PUBLISH_*, or FIDO_AZURE_BLOB_SAS + azcopy)
 
 [CmdletBinding()]
 param(
     [switch]$SkipPackage,
     [switch]$NoClean,
-    [switch]$SkipSign
+    [switch]$SkipSign,
+    [switch]$SkipAzurePublish
 )
 
 $ErrorActionPreference = "Stop"
@@ -169,11 +177,27 @@ else {
     }
     try {
         Copy-Item -LiteralPath $setup.FullName -Destination $devBuildsDir -Force -ErrorAction Stop
+        Copy-Item -LiteralPath $setup.FullName -Destination (Join-Path $devBuildsDir "CheckMate-setup.exe") -Force -ErrorAction Stop
     }
     catch {
         Write-Error "Failed to copy installer to `"$devBuildsDir`": $_"
     }
     Write-Host "Copied installer to: $devBuildsDir"
+    Write-Host "    $($setup.Name) and CheckMate-setup.exe"
+}
+
+# Upload CheckMate-setup.exe next to Fido betas (Fido/checkmate/ on the tools container).
+if ($SkipAzurePublish -or $env:CHECKMATE_SKIP_AZURE_PUBLISH -eq "1") {
+    $reason = if ($SkipAzurePublish) { "-SkipAzurePublish" } else { "CHECKMATE_SKIP_AZURE_PUBLISH=1" }
+    Write-Host "Skipping Azure publish ($reason)" -ForegroundColor Yellow
+}
+elseif (-not $setup) {
+    Write-Error "Cannot publish to Azure: CheckMate-*-setup.exe not found in $outputDir"
+}
+else {
+    Write-Host "==> Publishing installer to Azure Blob (Fido/checkmate/CheckMate-setup.exe)…" -ForegroundColor Cyan
+    & uv run python scripts/publish_installer_azure.py --setup-exe $setup.FullName
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
 Write-Host ""

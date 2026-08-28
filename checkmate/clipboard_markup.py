@@ -339,9 +339,10 @@ def detect_clipboard_kind(text: str) -> ClipboardKind:
 def prepare_clipboard_document(text: str, kind: ClipboardKind) -> str:
     """Normalize clipboard text into a document Nu (or HTML check) can open.
 
-    HTML/MathML fragments and skeleton ``<html><body>`` documents are wrapped
-    in a complete page (doctype, lang, title, ``<main>``) so checkers report
-    markup problems in the snippet, not missing page chrome.
+    HTML and MathML fragments (including a standalone ``<math>`` root, with or
+    without xmlns / XML prolog) are wrapped in a complete page so Nu reports
+    problems in the snippet, not missing page chrome or 'math not allowed as
+    root'. Skeleton ``<html><body>`` documents are wrapped the same way.
     """
     raw = (text or "").strip()
     if kind == ClipboardKind.HTML:
@@ -351,9 +352,8 @@ def prepare_clipboard_document(text: str, kind: ClipboardKind) -> str:
     if kind == ClipboardKind.MATHML:
         if clipboard_document_is_snippet(raw) or _is_complete_html(raw):
             return raw
-        if _is_xml_mathml_document(raw):
-            return raw
-        return _insert_snippet(_MATHML_WRAPPER, html_snippet_content(raw))
+        inner = _strip_xml_prolog(raw) if _is_mathml_document(raw) else html_snippet_content(raw)
+        return _insert_snippet(_MATHML_WRAPPER, inner or raw)
     if kind == ClipboardKind.SVG:
         low = raw.lstrip().lower()
         if low.startswith("<svg") or low.startswith("<?xml"):
@@ -371,6 +371,10 @@ def vnu_args_for_kind(kind: ClipboardKind, document: str = "") -> list[str]:
     if kind == ClipboardKind.XML:
         return ["--xml"]
     if kind == ClipboardKind.MATHML:
+        # Standalone ``<math>`` (even with xmlns) is wrapped as an HTML snippet
+        # for Nu. Only unwrapped XML MathML files still use ``--xml``.
+        if document and clipboard_document_is_snippet(document):
+            return ["--html"]
         if document and _is_xml_mathml_document(document):
             return ["--xml"]
         return ["--html"]
