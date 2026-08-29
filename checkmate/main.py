@@ -79,6 +79,12 @@ from .paths import (
     images_dir,
     is_frozen,
 )
+from .app_update import (
+    AppUpdateInfo,
+    check_for_app_update,
+    download_app_installer,
+    start_app_installer,
+)
 from .publication import is_checkable_path, is_html_url
 from .report_export import format_text_report, report_title, save_report
 from .settings import (
@@ -6081,6 +6087,12 @@ class MainFrame(wx.Frame):
         self.menu_update = tools_menu.Append(
             wx.ID_ANY, _("Check for &updates…")
         )
+        self.menu_update.SetHelp(
+            _(
+                "Check for a newer CheckMate app and for eBraille Checker, "
+                "EPUBCheck, and veraPDF updates"
+            )
+        )
         self.menu_install = tools_menu.Append(
             wx.ID_ANY, _("&Download / reinstall checkers…")
         )
@@ -7270,8 +7282,11 @@ class MainFrame(wx.Frame):
         def update_worker() -> None:
             try:
                 # Short timeouts: silent probe must not linger on bad networks.
+                app_update = check_for_app_update(timeout=8.0)
                 updates = check_for_updates(timeout=8.0)
-                available = any(u.available for u in updates)
+                available = any(u.available for u in updates) or bool(
+                    app_update.available
+                )
                 wx.PostEvent(
                     self,
                     UpdateInfoEvent(
@@ -7280,6 +7295,7 @@ class MainFrame(wx.Frame):
                         silent=True,
                         error=None,
                         force=False,
+                        app_update=app_update,
                     ),
                 )
             except Exception:  # noqa: BLE001
@@ -9359,8 +9375,11 @@ class MainFrame(wx.Frame):
 
         def worker() -> None:
             try:
+                app_update = check_for_app_update()
                 updates = check_for_updates()
-                available = any(u.available for u in updates)
+                available = any(u.available for u in updates) or bool(
+                    app_update.available
+                )
                 errors = [u.error for u in updates if u.error]
                 wx.PostEvent(
                     self,
@@ -9370,6 +9389,7 @@ class MainFrame(wx.Frame):
                         silent=False,
                         error="; ".join(errors) if errors and not available else None,
                         force=False,
+                        app_update=app_update,
                     ),
                 )
             except Exception as exc:  # noqa: BLE001
@@ -9381,6 +9401,7 @@ class MainFrame(wx.Frame):
                         silent=False,
                         error=str(exc),
                         force=False,
+                        app_update=None,
                     ),
                 )
 
@@ -9399,6 +9420,18 @@ class MainFrame(wx.Frame):
             self._set_busy(False)
             self._restore_result_display()
             self._update_status_bar()
+
+        app_update = getattr(event, "app_update", None)
+        force = bool(getattr(event, "force", False))
+        if (
+            not force
+            and isinstance(app_update, AppUpdateInfo)
+            and app_update.available
+            and app_update.download_url
+        ):
+            if self._prompt_and_maybe_start_app_update(app_update):
+                return
+
         if getattr(event, "error", None):
             if not event.silent:
                 wx.MessageBox(
@@ -9413,7 +9446,6 @@ class MainFrame(wx.Frame):
             return
 
         updates: list[ToolUpdateInfo] = list(getattr(event, "updates", None) or [])
-        force = bool(getattr(event, "force", False))
         to_install = [
             u for u in updates if u.latest is not None and (force or u.available)
         ]
@@ -9425,11 +9457,29 @@ class MainFrame(wx.Frame):
                     ver = f" ({u.installed})" if u.installed else ""
                     lines.append(f"{u.tool.display_name}{ver}")
                 detail = "\n".join(lines)
-                wx.MessageBox(
+                parts: list[str] = []
+                if isinstance(app_update, AppUpdateInfo) and app_update.latest:
+                    parts.append(
+                        _(
+                            "CheckMate {version} is the latest.",
+                            version=app_update.current,
+                        )
+                    )
+                elif isinstance(app_update, AppUpdateInfo) and app_update.error:
+                    parts.append(
+                        _(
+                            "Could not check for a CheckMate app update:\n{error}",
+                            error=app_update.error,
+                        )
+                    )
+                parts.append(
                     _(
                         "You have the latest checkers.\n\n{detail}",
                         detail=detail or _("none"),
-                    ),
+                    )
+                )
+                wx.MessageBox(
+                    "\n\n".join(parts),
                     _("Up to date"),
                     wx.OK | wx.ICON_INFORMATION,
                     self,
@@ -9475,6 +9525,139 @@ class MainFrame(wx.Frame):
         releases = [u.latest for u in to_install if u.latest is not None]
         self._start_install(releases)
 
+    def _prompt_and_maybe_start_app_update(self, info: AppUpdateInfo) -> bool:
+        """Ask to download a newer CheckMate. True if a download was started."""
+        latest = info.latest or ""
+        if is_frozen():
+            msg = _(
+                "A newer CheckMate is available.\n\n"
+                "Installed: {current}\n"
+                "Latest: {latest}\n\n"
+                "Download and install it now?",
+                current=info.current,
+                latest=latest,
+            )
+        else:
+            msg = _(
+                "A newer CheckMate is available.\n\n"
+                "You are running {current} from source.\n"
+                "Latest packaged build: {latest}\n\n"
+                "Download the installer now?",
+                current=info.current,
+                latest=latest,
+            )
+        if (
+            wx.MessageBox(
+                msg, _("CheckMate update available"), wx.YES_NO | wx.ICON_QUESTION, self
+            )
+            != wx.YES
+        ):
+            return False
+        self._start_app_update(info)
+        return True
+
+    def _start_app_update(self, info: AppUpdateInfo) -> None:
+        url = (info.download_url or "").strip()
+        if not url:
+            wx.MessageBox(
+                _("No CheckMate installer URL is available for this platform."),
+                _("Update failed"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+        self._set_busy(True)
+        self._show_result_text(_("Downloading CheckMate…"), update_title=False)
+        cancel = threading.Event()
+        progress = wx.ProgressDialog(
+            _("Downloading CheckMate"),
+            _("Starting…"),
+            100,
+            self,
+            wx.PD_APP_MODAL | wx.PD_CAN_ABORT | wx.PD_AUTO_HIDE,
+        )
+        progress.Show()
+
+        def on_progress(received: int, total: int | None) -> None:
+            def upd() -> None:
+                try:
+                    if cancel.is_set():
+                        return
+                    if total and total > 0:
+                        pct = min(99, int(100 * received / total))
+                    else:
+                        pct = min(99, (received // 524288) % 99)
+                    mb = received // 1048576
+                    msg = _("Downloaded {mb} MB", mb=mb)
+                    ret = progress.Update(pct, msg)
+                    keep_going = ret[0] if isinstance(ret, tuple) else bool(ret)
+                    if not keep_going:
+                        cancel.set()
+                except Exception:
+                    cancel.set()
+
+            wx.CallAfter(upd)
+
+        def on_finished(path: Path | None, err: str | None) -> None:
+            try:
+                if not self:
+                    return
+            except RuntimeError:
+                return
+            self._set_busy(False)
+            self._restore_result_display()
+            self._update_status_bar()
+            try:
+                progress.Destroy()
+            except Exception:
+                pass
+            if cancel.is_set() and not path:
+                return
+            if err:
+                wx.MessageBox(
+                    _("Could not download CheckMate:\n{error}", error=err),
+                    _("Download failed"),
+                    wx.OK | wx.ICON_ERROR,
+                    self,
+                )
+                return
+            if path is None:
+                return
+            try:
+                start_app_installer(path)
+            except Exception as exc:
+                wx.MessageBox(
+                    _(
+                        "Could not start the CheckMate installer:\n{error}",
+                        error=exc,
+                    ),
+                    _("Update failed"),
+                    wx.OK | wx.ICON_ERROR,
+                    self,
+                )
+                return
+            wx.MessageBox(
+                _(
+                    "The CheckMate installer has started. Follow the prompts to "
+                    "update. Close this window if the installer asks you to."
+                ),
+                _("Installer started"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+
+        def worker() -> None:
+            dest, err = download_app_installer(
+                url,
+                cancel_event=cancel,
+                progress_cb=on_progress,
+            )
+            wx.CallAfter(on_finished, dest, err)
+
+        threading.Thread(
+            target=worker, daemon=True, name="checkmate-app-update"
+        ).start()
+
     def on_reinstall_checker(self, _event: wx.CommandEvent) -> None:
         if self._busy:
             return
@@ -9494,6 +9677,7 @@ class MainFrame(wx.Frame):
                         silent=False,
                         error=None,
                         force=True,
+                        app_update=None,
                     ),
                 )
             except Exception as exc:  # noqa: BLE001
@@ -9505,6 +9689,7 @@ class MainFrame(wx.Frame):
                         silent=False,
                         error=str(exc),
                         force=False,
+                        app_update=None,
                     ),
                 )
 

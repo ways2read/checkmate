@@ -1,15 +1,28 @@
 #!/usr/bin/env bash
-# One-shot macOS release: app build → codesign → zip → drag-install .dmg →
-# DMG codesign → notarize + staple → copy to the development builds folder.
+# One-shot macOS installer: app build → codesign → zip → drag-install .dmg →
+# DMG codesign → notarize + staple → copy to the development builds folder →
+# publish CheckMate-setup.dmg + version.json to Azure (Fido/checkmate/).
 #
 # Usage:
-#   ./scripts/build_macos_release.sh [marketing-version]
+#   ./scripts/build_macos_release.sh [marketing-version] [--skip-azure-publish]
 # Example:
 #   EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh 0.1.0
 #
 # Installer filenames always include the marketing version and build counter:
 #   dist/CheckMate-macos-<version>.<build>-<arch>.dmg
 #   development builds/setupcheckmate_<version>.<build>-<arch>.dmg
+#   development builds/CheckMate-setup.dmg
+#
+# Azure Blob (after development-builds copy):
+#   Fido/checkmate/CheckMate-setup.dmg and Fido/checkmate/version.json
+#   Public URL: https://dl.daisy.org/tools/Fido/checkmate/CheckMate-setup.dmg
+#   version.json keeps windows_latest_version and macos_latest_version separate
+#   so a macOS publish merges with the existing blob and does not overwrite the
+#   Windows version field. The published macos_latest_version includes the build
+#   number (e.g. 0.7.42.15) to match in-app update checks.
+#   CHECKMATE_SKIP_AZURE_PUBLISH=1 or --skip-azure-publish — skip upload
+#   Credentials: same as Fido unlock/beta publish (az login + unlock_publish,
+#   CHECKMATE_/FIDO_UNLOCK_PUBLISH_*, or FIDO_AZURE_BLOB_SAS + azcopy)
 #
 # Environment (all optional):
 #   EBC_APP_SIGN_IDENTITY     — Developer ID Application (name or SHA-1)
@@ -28,6 +41,7 @@
 #   EBC_NOTARY_ALSO_SUBMIT_ZIP=1 — also notarize the zip archive
 #   EBC_BUILD_NUMBER          — stamp this CFBundleVersion instead of incrementing build_counter.txt
 #   EBC_SKIP_ONEDRIVE_COPY=1  — do not copy the .dmg to the dev builds folder
+#   CHECKMATE_SKIP_AZURE_PUBLISH=1 — do not upload the .dmg / version.json
 #   EBC_MACOS_RELEASE_ARCH_SUFFIX / EBC_NO_MACOS_RELEASE_ARCH_SUFFIX — see
 #     scripts/macos_release_arch_suffix.inc.sh
 
@@ -48,12 +62,30 @@ read_project_version() {
   fi
 }
 
-if [[ -n "${1:-}" ]]; then
-  VERSION="$1"
-else
+SKIP_AZURE_PUBLISH=0
+VERSION=""
+for arg in "$@"; do
+  case "$arg" in
+    --skip-azure-publish)
+      SKIP_AZURE_PUBLISH=1
+      ;;
+    -*)
+      echo "ERROR: unknown option: $arg" >&2
+      echo "Usage: $0 [marketing-version] [--skip-azure-publish]" >&2
+      exit 1
+      ;;
+    *)
+      VERSION="$arg"
+      ;;
+  esac
+done
+if [[ -z "$VERSION" ]]; then
   VERSION="$(read_project_version)"
 fi
 VERSION="${VERSION:-dev}"
+if [[ "${CHECKMATE_SKIP_AZURE_PUBLISH:-}" == "1" ]]; then
+  SKIP_AZURE_PUBLISH=1
+fi
 
 # shellcheck source=macos_release_arch_suffix.inc.sh
 source "$REPO_ROOT/scripts/macos_release_arch_suffix.inc.sh"
@@ -293,7 +325,8 @@ echo "=== 3/5 Disk image (.dmg) ==="
 chmod +x "$REPO_ROOT/scripts/build_macos_dmg.sh"
 "$REPO_ROOT/scripts/build_macos_dmg.sh" "$SETUP_VER"
 
-DMG="$REPO_ROOT/dist/CheckMate-macos-$(installer_version_tag "$SETUP_VER")${EBC_MACOS_RELEASE_ARCH_SUFFIX}.dmg"
+INSTALLER_TAG="$(installer_version_tag "$SETUP_VER")"
+DMG="$REPO_ROOT/dist/CheckMate-macos-${INSTALLER_TAG}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.dmg"
 if [[ ! -f "$DMG" ]]; then
   echo "WARNING: Expected dmg not found at $DMG"
 else
@@ -379,17 +412,50 @@ fi
 # Copy dmg to shared OneDrive development builds (version + build in the filename).
 DEFAULT_DEV_BUILDS_DIR="$HOME/Library/CloudStorage/OneDrive-SharedLibraries-DAISYConsortium/Shared Projects - Documents/Exploring AI/Experimentation app/development builds"
 DEV_BUILDS_DIR="${EBC_DEV_BUILDS_DIR:-$DEFAULT_DEV_BUILDS_DIR}"
+VERSION_JSON="$REPO_ROOT/installer/Output/version.json"
 if [[ "${EBC_SKIP_ONEDRIVE_COPY:-}" == "1" ]]; then
   echo "Skipping OneDrive dev copy (EBC_SKIP_ONEDRIVE_COPY=1)."
 elif [[ ! -f "$DMG" ]]; then
   echo "ERROR: Cannot copy installer — dmg not found: $DMG"
   exit 1
 else
-  SETUP_NAME="setupcheckmate_$(installer_version_tag "$SETUP_VER")${EBC_MACOS_RELEASE_ARCH_SUFFIX}.dmg"
+  SETUP_NAME="setupcheckmate_${INSTALLER_TAG}${EBC_MACOS_RELEASE_ARCH_SUFFIX}.dmg"
   echo "Copying disk image to development builds: $DEV_BUILDS_DIR/$SETUP_NAME"
   mkdir -p "$DEV_BUILDS_DIR"
   cp -f "$DMG" "$DEV_BUILDS_DIR/$SETUP_NAME"
-  echo "Copied: $DEV_BUILDS_DIR/$SETUP_NAME"
+  cp -f "$DMG" "$DEV_BUILDS_DIR/CheckMate-setup.dmg"
+  echo "Copied: $DEV_BUILDS_DIR/$SETUP_NAME and CheckMate-setup.dmg"
+fi
+
+# Upload CheckMate-setup.dmg and version.json next to Fido betas (Fido/checkmate/).
+mkdir -p "$(dirname "$VERSION_JSON")"
+if [[ "$SKIP_AZURE_PUBLISH" -eq 1 ]]; then
+  reason="--skip-azure-publish"
+  if [[ "${CHECKMATE_SKIP_AZURE_PUBLISH:-}" == "1" ]]; then
+    reason="CHECKMATE_SKIP_AZURE_PUBLISH=1"
+  fi
+  echo "Skipping Azure publish ($reason)"
+  echo "=== Writing local version.json (no Azure upload) ==="
+  uv run --extra dev python scripts/publish_installer_azure.py \
+    --platform macos \
+    --version "$INSTALLER_TAG" \
+    --write-version-json "$VERSION_JSON" \
+    --skip-upload
+elif [[ ! -f "$DMG" ]]; then
+  echo "ERROR: Cannot publish to Azure — dmg not found: $DMG"
+  exit 1
+else
+  echo "=== Publishing installer and version.json to Azure Blob (Fido/checkmate/) ==="
+  uv run --extra dev python scripts/publish_installer_azure.py \
+    --platform macos \
+    --setup-dmg "$DMG" \
+    --version "$INSTALLER_TAG" \
+    --write-version-json "$VERSION_JSON"
+fi
+
+if [[ "${EBC_SKIP_ONEDRIVE_COPY:-}" != "1" && -f "$VERSION_JSON" && -d "$DEV_BUILDS_DIR" ]]; then
+  cp -f "$VERSION_JSON" "$DEV_BUILDS_DIR/checkmate-version.json"
+  echo "Copied checkmate-version.json to: $DEV_BUILDS_DIR"
 fi
 
 echo ""

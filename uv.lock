@@ -507,7 +507,7 @@ wheels = [
 
 [[package]]
 name = "checkmate"
-version = "0.7.42"
+version = "0.7.43"
 source = { editable = "." }
 dependencies = [
     { name = "accessible-output2" },

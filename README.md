@@ -227,7 +227,9 @@ uv run checkmate
    fix issues.
 5. **Report → Clear results** (`Ctrl+Shift+N`) clears the path, verdict, issues,
    and log back to the launch state.
-6. **Tools → Check for updates…** offers to download newer eBraille Checker,
+6. **Tools → Check for updates…** checks for a newer CheckMate app (from
+   `version.json` on daisy.org) and offers to download the Windows or macOS
+   installer when one is available. It also offers newer eBraille Checker,
    EPUBCheck, and/or veraPDF releases when they exist.
 
 The **title bar** keeps the app name and appends the verdict (for example
@@ -460,10 +462,11 @@ checkmate/
     ace_bundle.py            # Download Node + Ace (Puppeteer) + Chrome
     axe_html_runner.js       # Puppeteer axe + image inventory for HTML pages
     verapdf_bundle.py        # Download/install veraPDF into verapdf/
-    build_installer.ps1      # Windows: package + Inno Setup compile + Authenticode
+    build_installer.ps1      # Windows: package + Inno Setup compile + Authenticode + Azure
     build_macos.sh           # macOS: package .app + zip
     build_macos_dmg.sh       # macOS: drag-to-Applications .dmg
-    build_macos_release.sh   # macOS: sign + .dmg + notarize
+    build_macos_release.sh   # macOS: sign + .dmg + notarize + Azure
+    publish_installer_azure.py  # Azure Blob: CheckMate-setup.exe/.dmg + version.json
     make_icns.py             # Build .icns/.ico from installer/icon.png (blue on white)
     macos_release_arch_suffix.inc.sh
   installer/
@@ -588,16 +591,27 @@ with `CHECKMATE_SIGNTOOL` / `CHECKMATE_SIGN_TIMESTAMP_URL`.
 
 After a successful sign (or `-SkipSign`), the script also copies
 `CheckMate-*-setup.exe` and a stable `CheckMate-setup.exe` to the shared
-**development builds** folder (the same DAISY path as Fido). Override with
-`CHECKMATE_DEV_BUILDS_DIR`, or skip with `CHECKMATE_SKIP_DEV_BUILDS_COPY=1`.
+**development builds** folder (the same DAISY path as Fido), plus
+`checkmate-version.json` (named so it does not collide with Fido’s
+`version.json`). Override with `CHECKMATE_DEV_BUILDS_DIR`, or skip with
+`CHECKMATE_SKIP_DEV_BUILDS_COPY=1`.
 
-It then uploads `CheckMate-setup.exe` to Azure Blob Storage at
-`Fido/checkmate/` (sibling of Fido betas under `Fido/`), public URL
-`https://dl.daisy.org/tools/Fido/checkmate/CheckMate-setup.exe`. Credentials
-match Fido unlock/beta publish (`az login` plus `unlock_publish` in
-`checkmate.secrets.json` or sibling `FIDO/fido.secrets.json`, or
-`CHECKMATE_`/`FIDO_UNLOCK_PUBLISH_*` / `FIDO_AZURE_BLOB_SAS`). Skip with
-`-SkipAzurePublish` or `CHECKMATE_SKIP_AZURE_PUBLISH=1`.
+It then uploads `CheckMate-setup.exe` and a small `version.json` to Azure
+Blob Storage at `Fido/checkmate/` (sibling of Fido betas under `Fido/`).
+Public URLs:
+
+- `https://dl.daisy.org/tools/Fido/checkmate/CheckMate-setup.exe`
+- `https://dl.daisy.org/tools/Fido/checkmate/version.json`
+
+`version.json` stores `windows_latest_version` and `macos_latest_version`
+separately (plus the matching `windows_download_url` / `macos_download_url`)
+so Fido can report the latest CheckMate build on its install/update button.
+A Windows publish merges with the existing blob and does not overwrite the
+macOS version field. Credentials match Fido unlock/beta publish (`az login`
+plus `unlock_publish` in `checkmate.secrets.json` or sibling
+`FIDO/fido.secrets.json`, or `CHECKMATE_`/`FIDO_UNLOCK_PUBLISH_*` /
+`FIDO_AZURE_BLOB_SAS`). Skip with `-SkipAzurePublish` or
+`CHECKMATE_SKIP_AZURE_PUBLISH=1`.
 
 The installer:
 
@@ -638,13 +652,15 @@ and the GUI reports Java as missing. `scripts/build_macos_release.sh` applies
 this plist automatically. PyMuPDF native libraries collected into the app
 bundle are signed with the rest of `Contents/` by the same release script.
 
-One-shot release (package → sign → DMG → notarize → staple):
+One-shot installer (package → sign → DMG → notarize → staple → Azure):
 
 ```bash
 chmod +x scripts/build_macos_release.sh
 EBC_NOTARY_PROFILE=fido-notary ./scripts/build_macos_release.sh
 # optional explicit version:
 EBC_NOTARY_PROFILE=fido-notary ./scripts/build_macos_release.sh 0.2.2
+# skip Azure upload (still writes local version.json):
+EBC_NOTARY_PROFILE=fido-notary ./scripts/build_macos_release.sh --skip-azure-publish
 ```
 
 Outputs (arch suffix is `-AppleSilicon` or `-Intel`):
@@ -654,8 +670,26 @@ Outputs (arch suffix is `-AppleSilicon` or `-Intel`):
 - `dist/CheckMate-macos-<version>.<build>-<arch>.dmg` (signed + notarized when credentials are set)
 
 The finished `.dmg` is also copied to the shared **development builds** folder as
-`setupcheckmate_<version>.<build>-<arch>.dmg` (override with `EBC_DEV_BUILDS_DIR`,
-or skip with `EBC_SKIP_ONEDRIVE_COPY=1`).
+`setupcheckmate_<version>.<build>-<arch>.dmg` and a stable `CheckMate-setup.dmg`
+(override with `EBC_DEV_BUILDS_DIR`, or skip with `EBC_SKIP_ONEDRIVE_COPY=1`).
+`checkmate-version.json` is copied there after Azure publish (or the local
+write when upload is skipped).
+
+It then uploads `CheckMate-setup.dmg` and a small `version.json` to Azure
+Blob Storage at `Fido/checkmate/` (same prefix as the Windows installer).
+Public URLs:
+
+- `https://dl.daisy.org/tools/Fido/checkmate/CheckMate-setup.dmg`
+- `https://dl.daisy.org/tools/Fido/checkmate/version.json`
+
+`macos_latest_version` is the marketing version plus build number
+(e.g. `0.7.42.15`) so in-app update checks can tell builds apart. A macOS
+publish merges with the existing blob and does not overwrite the Windows
+version field. Credentials match Fido unlock/beta publish (`az login`
+plus `unlock_publish` in `checkmate.secrets.json` or sibling
+`FIDO/fido.secrets.json`, or `CHECKMATE_`/`FIDO_UNLOCK_PUBLISH_*` /
+`FIDO_AZURE_BLOB_SAS`). Skip with `--skip-azure-publish` or
+`CHECKMATE_SKIP_AZURE_PUBLISH=1`.
 
 Step by step:
 
@@ -680,6 +714,7 @@ Useful environment variables:
 | `EBC_SKIP_APPLICATION_BUILD=1` | Re-sign / notarize an existing `dist/CheckMate_App/` |
 | `EBC_DEV_BUILDS_DIR` | Folder for the versioned `.dmg` copy (default: OneDrive development builds) |
 | `EBC_SKIP_ONEDRIVE_COPY=1` | Do not copy the `.dmg` to the development builds folder |
+| `CHECKMATE_SKIP_AZURE_PUBLISH=1` | Do not upload `CheckMate-setup.dmg` / `version.json` (same as `--skip-azure-publish`) |
 
 **Upgrading / reinstalling:** macOS compares `CFBundleVersion` (an integer build
 number from `build_counter.txt`, bumped on each `build_macos.sh` run) when you

@@ -19,9 +19,12 @@
 #   CHECKMATE_DEV_BUILDS_DIR         — destination folder
 #                                      (default: D:\DAISY Consortium\Shared Projects - Documents\Exploring AI\Experimentation app\development builds)
 #   CHECKMATE_SKIP_DEV_BUILDS_COPY=1 — do not copy to that folder
-# Azure Blob (after development-builds copy), as CheckMate-setup.exe:
-#   Sibling of Fido betas (Fido/beta/) → Fido/checkmate/CheckMate-setup.exe
+# Azure Blob (after development-builds copy):
+#   Fido/checkmate/CheckMate-setup.exe and Fido/checkmate/version.json
 #   Public URL: https://dl.daisy.org/tools/Fido/checkmate/CheckMate-setup.exe
+#   version.json keeps windows_latest_version and macos_latest_version separate
+#   so Fido can report the latest CheckMate build. Windows publish merges with
+#   the existing blob and does not overwrite the macOS version field.
 #   CHECKMATE_SKIP_AZURE_PUBLISH=1 or -SkipAzurePublish — skip upload
 #   Credentials: same as Fido unlock/beta publish (az login + unlock_publish,
 #   CHECKMATE_/FIDO_UNLOCK_PUBLISH_*, or FIDO_AZURE_BLOB_SAS + azcopy)
@@ -186,18 +189,36 @@ else {
     Write-Host "    $($setup.Name) and CheckMate-setup.exe"
 }
 
-# Upload CheckMate-setup.exe next to Fido betas (Fido/checkmate/ on the tools container).
+$versionJson = Join-Path $outputDir "version.json"
+
+# Upload CheckMate-setup.exe and version.json next to Fido betas (Fido/checkmate/).
 if ($SkipAzurePublish -or $env:CHECKMATE_SKIP_AZURE_PUBLISH -eq "1") {
     $reason = if ($SkipAzurePublish) { "-SkipAzurePublish" } else { "CHECKMATE_SKIP_AZURE_PUBLISH=1" }
     Write-Host "Skipping Azure publish ($reason)" -ForegroundColor Yellow
+    Write-Host "==> Writing local version.json (no Azure upload)…" -ForegroundColor Cyan
+    & uv run --extra dev python scripts/publish_installer_azure.py --platform windows --write-version-json $versionJson --skip-upload
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 elseif (-not $setup) {
     Write-Error "Cannot publish to Azure: CheckMate-*-setup.exe not found in $outputDir"
 }
 else {
-    Write-Host "==> Publishing installer to Azure Blob (Fido/checkmate/CheckMate-setup.exe)…" -ForegroundColor Cyan
-    & uv run python scripts/publish_installer_azure.py --setup-exe $setup.FullName
+    Write-Host "==> Publishing installer and version.json to Azure Blob (Fido/checkmate/)…" -ForegroundColor Cyan
+    & uv run --extra dev python scripts/publish_installer_azure.py --platform windows --setup-exe $setup.FullName --write-version-json $versionJson
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
+if ((-not $env:CHECKMATE_SKIP_DEV_BUILDS_COPY) -or ($env:CHECKMATE_SKIP_DEV_BUILDS_COPY -ne "1")) {
+    if ((Test-Path -LiteralPath $versionJson) -and $setup) {
+        $devBuildsDir = $env:CHECKMATE_DEV_BUILDS_DIR
+        if (-not $devBuildsDir) {
+            $devBuildsDir = "D:\DAISY Consortium\Shared Projects - Documents\Exploring AI\Experimentation app\development builds"
+        }
+        if (Test-Path -LiteralPath $devBuildsDir) {
+            Copy-Item -LiteralPath $versionJson -Destination (Join-Path $devBuildsDir "checkmate-version.json") -Force
+            Write-Host "Copied checkmate-version.json to: $devBuildsDir"
+        }
+    }
 }
 
 Write-Host ""
