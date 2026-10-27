@@ -32,17 +32,37 @@ def extract_epub(epub_path: str | Path, extract_to: str | Path) -> None:
 
 
 def create_epub(source_dir: str | Path, output_path: str | Path) -> None:
-    """Repackage a directory as a valid EPUB (mimetype first and uncompressed)."""
+    """Repackage a directory as a valid EPUB (mimetype first and uncompressed).
+
+    The OCF spec requires the ``mimetype`` entry to be the zip's first member,
+    stored (not deflated); synthesize it when the source folder lacks one so
+    the result is still a valid package.
+    """
     source_dir = Path(source_dir)
     output_path = Path(output_path)
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as epub:
         mimetype_path = source_dir / "mimetype"
         if mimetype_path.is_file():
             epub.write(mimetype_path, "mimetype", compress_type=zipfile.ZIP_STORED)
+        else:
+            epub.writestr(
+                zipfile.ZipInfo("mimetype"),
+                b"application/epub+zip",
+                compress_type=zipfile.ZIP_STORED,
+            )
         for file_path in source_dir.rglob("*"):
-            if file_path.is_file() and file_path.name != "mimetype":
-                arcname = str(file_path.relative_to(source_dir)).replace("\\", "/")
-                epub.write(file_path, arcname)
+            if not file_path.is_file() or file_path.name == "mimetype":
+                continue
+            if _is_checkmate_artifact(file_path):
+                continue
+            arcname = str(file_path.relative_to(source_dir)).replace("\\", "/")
+            epub.write(file_path, arcname)
+
+
+def _is_checkmate_artifact(path: Path) -> bool:
+    """Fix backups and the edit changelog CheckMate leaves in exploded folders."""
+    name = path.name
+    return name.lower() == "checkmate-changelog.md" or bool(_BACKUP_NAME_RE.match(name))
 
 
 def normalize_member_ref(member: str) -> str:

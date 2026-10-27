@@ -6073,6 +6073,16 @@ class MainFrame(wx.Frame):
         self.menu_check = tools_menu.Append(
             wx.ID_ANY, _("&Re-check publication\tF5")
         )
+        tools_menu.AppendSeparator()
+        self.menu_package_epub = tools_menu.Append(
+            wx.ID_ANY, _("&Package folder as EPUB…")
+        )
+        self.menu_package_epub.SetHelp(
+            _(
+                "Zip an exploded EPUB folder into a valid .epub package "
+                "(mimetype stored first and uncompressed)"
+            )
+        )
         if sys.platform != "darwin":
             tools_menu.AppendSeparator()
             self.menu_settings = tools_menu.Append(
@@ -6253,6 +6263,7 @@ class MainFrame(wx.Frame):
         self.menu_view_changelog.Enable(changelog_ok)
         self.menu_view_clipboard.Enable(clipboard_ok)
         self.menu_view_clipboard_report.Enable(current_clipboard)
+        self.menu_package_epub.Enable(self._current_target_is_epub_folder())
         # AI overview is hidden when features are off; only enable when shown.
         if self.ai_overview_btn is not None and ai_features_enabled():
             self.ai_overview_btn.Enable(enabled)
@@ -6365,6 +6376,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_copy_summary, self.menu_copy)
         self.Bind(wx.EVT_MENU, self.on_clear_results, self.menu_clear)
         self.Bind(wx.EVT_MENU, self.on_check, self.menu_check)
+        self.Bind(wx.EVT_MENU, self.on_package_epub_folder, self.menu_package_epub)
         self.Bind(wx.EVT_MENU, self.on_settings, self.menu_settings)
         self.Bind(wx.EVT_MENU, self.on_settings, id=wx.ID_PREFERENCES)
         self.Bind(wx.EVT_MENU, self.on_view_full_log, self.menu_view_log)
@@ -7411,6 +7423,18 @@ class MainFrame(wx.Frame):
 
         return classify_target(text) == PublicationKind.HTML
 
+    def _current_target_is_epub_folder(self) -> bool:
+        """True when the path field is an exploded EPUB publication folder."""
+        path = self._current_path()
+        if path is None or not path.is_dir():
+            return False
+        from .publication import PublicationKind, classify_publication
+
+        try:
+            return classify_publication(path) == PublicationKind.EPUB
+        except OSError:
+            return False
+
     def open_publication_paths(
         self,
         filenames: list[str],
@@ -7753,6 +7777,73 @@ class MainFrame(wx.Frame):
             if dlg.ShowModal() != wx.ID_OK:
                 return
             self.path_ctrl.SetValue(dlg.GetPath())
+            self._update_report_actions_enabled()
+            self.on_check(None)
+
+    def on_package_epub_folder(self, _event: wx.CommandEvent | None) -> None:
+        """Zip the selected exploded EPUB folder into a valid .epub package."""
+        if self._busy:
+            return
+        folder = self._current_path()
+        if folder is None or not folder.is_dir():
+            wx.MessageBox(
+                _("Select an exploded EPUB folder first."),
+                _("Package folder as EPUB"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        from .publication import PublicationKind, classify_publication
+
+        if classify_publication(folder) != PublicationKind.EPUB:
+            wx.MessageBox(
+                _(
+                    "{path}\n\ndoes not look like an exploded EPUB folder "
+                    "(no META-INF/container.xml or package document found).",
+                    path=folder,
+                ),
+                _("Package folder as EPUB"),
+                wx.OK | wx.ICON_WARNING,
+                self,
+            )
+            return
+
+        with wx.FileDialog(
+            self,
+            _("Package folder as EPUB"),
+            defaultDir=str(folder.parent),
+            defaultFile=f"{folder.name}.epub",
+            wildcard=_("EPUB files (*.epub)|*.epub|All files (*.*)|*.*"),
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        ) as dlg:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            output_path = Path(dlg.GetPath())
+
+        from .epub_package import create_epub
+
+        try:
+            create_epub(folder, output_path)
+        except OSError as exc:
+            wx.MessageBox(
+                _("Could not create the EPUB package:\n{error}", error=exc),
+                _("Error"),
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
+            return
+
+        reply = wx.MessageBox(
+            _(
+                "Created {path}.\n\nValidate the new package now?",
+                path=output_path,
+            ),
+            _("Package folder as EPUB"),
+            wx.YES_NO | wx.ICON_QUESTION,
+            self,
+        )
+        if reply == wx.YES:
+            self.path_ctrl.SetValue(str(output_path))
             self.on_check(None)
 
     def _read_clipboard_markup(self) -> str:
