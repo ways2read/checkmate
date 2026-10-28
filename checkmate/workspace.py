@@ -18,7 +18,7 @@ import wx.dataview as dv
 from . import code_format
 from .code_editor import CodeEditor, create_code_editor, line_column_of, offset_of
 from .i18n import _
-from .models import CheckResult
+from .models import CheckResult, Issue
 from .settings import autosave_edits, code_editor
 from .workspace_files import (
     READ_ONLY_TOO_LARGE,
@@ -202,6 +202,9 @@ class PublicationWorkspace(wx.Frame):
         self._image_page_count = 0
         self._keep_tree_focus_until = 0.0
         self._closing = False
+        # The issue this editing session started from (Edit at location / Open fix).
+        self._issue: Issue | None = None
+        self._issue_before = 0
         try:
             self.SetIcons(main_frame.GetIcons())
         except Exception:
@@ -211,6 +214,30 @@ class PublicationWorkspace(wx.Frame):
         root = wx.BoxSizer(wx.VERTICAL)
         heading = wx.StaticText(panel, label=_("Publication: {path}", path=source.target))
         root.Add(heading, 0, wx.ALL, 8)
+
+        # Keeps the issue being fixed in view; hidden until one is given.
+        self._issue_row = wx.BoxSizer(wx.HORIZONTAL)
+        self._issue_label = wx.StaticText(panel, label=_("&Issue:"))
+        self._issue_text = wx.TextCtrl(
+            panel,
+            style=wx.TE_READONLY | wx.TE_MULTILINE | wx.TE_NO_VSCROLL | wx.BORDER_NONE,
+            name=_("Issue being fixed"),
+        )
+        # Two lines; the rest scrolls (and is read in full by screen readers).
+        line_height = self._issue_text.GetTextExtent("Ag").height
+        self._issue_text.SetMinSize(wx.Size(-1, line_height * 2))
+        self._issue_text.SetBackgroundColour(panel.GetBackgroundColour())
+        self._issue_details_btn = wx.Button(panel, label=_("Issue de&tails…"))
+        self._issue_details_btn.SetToolTip(
+            _("Show this issue's details, where you can also explain or fix it with AI")
+        )
+        self._issue_details_btn.Bind(wx.EVT_BUTTON, lambda _e: self.show_issue_details())
+        self._issue_row.Add(self._issue_label, 0, wx.TOP | wx.RIGHT, 2)
+        self._issue_row.Add(self._issue_text, 1, wx.EXPAND | wx.RIGHT, 8)
+        self._issue_row.Add(self._issue_details_btn, 0, wx.ALIGN_TOP)
+        root.Add(self._issue_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        root.Show(self._issue_row, False)
+        self._root_sizer = root
 
         self._splitter = wx.SplitterWindow(panel, style=wx.SP_LIVE_UPDATE | wx.SP_3D)
         self._splitter.SetMinimumPaneSize(160)
@@ -403,6 +430,52 @@ class PublicationWorkspace(wx.Frame):
     def has_unsaved_changes(self) -> bool:
         return self._dirty
 
+    @property
+    def unsaved_member(self) -> str | None:
+        """The file with unsaved edits, if any."""
+        return self._member if self._dirty else None
+
+    def resolve_member(self, member: str) -> str | None:
+        return resolve_member(self._source, member)
+
+    def show_issue(self, issue: Issue) -> None:
+        """Keep *issue* in view while editing, until another replaces it."""
+        self._issue = issue
+        self._issue_before = 0
+        if self._main._last_result is not None:
+            from .ai.fix import matching_issues
+
+            self._issue_before = len(matching_issues(issue, self._main._last_result))
+        self._show_issue_text(resolved=False)
+
+    def _show_issue_text(self, *, resolved: bool) -> None:
+        issue = self._issue
+        if issue is None:
+            return
+        parts = [issue.severity.label, issue.code or ""]
+        head = " ".join(p for p in parts if p)
+        if issue.location:
+            text = _(
+                "{issue} at {location}: {text}",
+                issue=head,
+                location=issue.location,
+                text=issue.message,
+            )
+        else:
+            text = _("{issue}: {text}", issue=head, text=issue.message)
+        self._issue_label.SetLabel(
+            _("&Issue (no longer reported):") if resolved else _("&Issue:")
+        )
+        self._issue_text.ChangeValue(text)
+        self._issue_text.SetToolTip(text)
+        self._root_sizer.Show(self._issue_row, True)
+        self._issue_text.GetParent().Layout()
+
+    def show_issue_details(self) -> None:
+        """Reopen Issue details for the issue being fixed (Explain / Fix with AI)."""
+        if self._issue is not None:
+            self._main.show_issue_details(self._issue)
+
     def focus_files(self) -> None:
         if self._member is None:
             self._tree.focus_first_file()
@@ -448,6 +521,51 @@ class PublicationWorkspace(wx.Frame):
         if line is not None:
             self._place_caret(line, column)
         self._editor.ctrl.SetFocus()
+        return True
+
+    def open_fix(self, file: str, original: str, replacement: str) -> bool:
+        """Put an AI-suggested fix into the editor as an unsaved edit, selected for review."""
+        from .epub_package import normalize_newlines
+
+        member = resolve_member(self._source, file)
+        if member is None:
+            self._set_status(_("Could not find {file} in this publication.", file=file))
+            self.focus_files()
+            return False
+        if not self.open_member(member):
+            return False
+        text = self._editor.get_text()
+        # The editor holds the file with LF line endings, as the fix is matched.
+        original = normalize_newlines(original)
+        replacement = normalize_newlines(replacement)
+        count = text.count(original) if original else 0
+        if count != 1:
+            self._set_status(
+                _(
+                    "The text the AI fix replaces appears more than once in {file}, "
+                    "so the fix was not placed.",
+                    file=member,
+                )
+                if count > 1
+                else _(
+                    "The AI fix no longer matches the text of {file}, so it was not "
+                    "placed. It may already be applied, or the file has changed.",
+                    file=member,
+                )
+            )
+            return False
+        start = text.index(original)
+        self._editor.replace_range(start, start + len(original), replacement)
+        self._editor.select_range(start, start + len(replacement))
+        self._update_position()
+        self._editor.ctrl.SetFocus()
+        self._set_status(
+            _(
+                "The AI fix is in {file} and selected. Review or change it, then "
+                "save; Ctrl+Z undoes it.",
+                file=member,
+            )
+        )
         return True
 
     def confirm_unsaved(self) -> bool:
@@ -502,7 +620,34 @@ class PublicationWorkspace(wx.Frame):
         if self._member:
             count = self._issue_count_for_member(result, self._member)
             lines.append(_("Issues in this file: {n}.", n=count))
+        if self._issue is not None:
+            lines.append(self._issue_outcome(result))
         self._set_status(" ".join(lines))
+
+    def _issue_outcome(self, result: CheckResult) -> str:
+        """Is the issue being fixed still reported? Updates the issue strip."""
+        from .ai.fix import matching_issues
+
+        issue = self._issue
+        assert issue is not None
+        code = issue.code or issue.message
+        still = matching_issues(issue, result)
+        if not still:
+            self._show_issue_text(resolved=True)
+            return _("The issue you are fixing ({code}) is no longer reported.", code=code)
+        # Follow the issue to its new location (lines may have moved).
+        self._issue = still[0]
+        self._show_issue_text(resolved=False)
+        before = self._issue_before
+        self._issue_before = len(still)
+        if before > len(still):
+            return _(
+                "{code}: {left} like the issue you are fixing remain, down from {before}.",
+                code=code,
+                left=len(still),
+                before=before,
+            )
+        return _("The issue you are fixing ({code}) is still reported.", code=code)
 
     # --- Loading / caret ---
 

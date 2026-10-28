@@ -5,7 +5,7 @@
   "native_name": "日本語",
   "display_name": "Japanese",
   "direction": "ltr",
-  "source_msgid_hash": "8691aad15d14bcc2",
+  "source_msgid_hash": "3e4db003b00321e5",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*注: AIの返答が途中で切れました。「続けてください」などの補足を送信してください。*",
     "&About": "バージョン情報(&A)",
@@ -931,6 +931,25 @@
     "{file} is already formatted.": "{file} は既に整形されています。",
     "Formatted {file}. Save to keep the new layout, or press Ctrl+Z to undo it.": "{file} を整形しました。新しいレイアウトを保持するには保存し、元に戻すには Ctrl+Z キーを押します。",
     "Could not format {file}: </{name}> on line {line} has no matching start tag.": "{file} を整形できませんでした: {line} 行目の </{name}> に対応する開始タグがありません。",
-    "Could not format {file}: <{name}> on line {line} is never closed.": "{file} を整形できませんでした: {line} 行目の <{name}> が閉じられていません。"
+    "Could not format {file}: <{name}> on line {line} is never closed.": "{file} を整形できませんでした: {line} 行目の <{name}> が閉じられていません。",
+    "&Edit at location": "この場所で編集(&E)",
+    "&Open fix in editor": "修正をエディターで開く(&O)",
+    "Close this window and open the issue's file in Edit files, at the reported line (Ctrl+E)": "このウィンドウを閉じ、[ファイルの編集] で問題のファイルを報告された行で開きます (Ctrl+E)",
+    "Close this window and put the proposed fix into the file in Edit files, selected, so you can review or change it before saving": "このウィンドウを閉じ、提案された修正を [ファイルの編集] のファイルに選択状態で挿入します。保存する前に確認や変更ができます",
+    "Edit files has unsaved changes to {file}. Applying the fix now would conflict with them.\n\nOpen the fix in the editor instead, alongside your changes?": "[ファイルの編集] に {file} の未保存の変更があります。今修正を適用すると、その変更と競合します。\n\n代わりに、変更と合わせて修正をエディターで開きますか?",
+    "Edit files has unsaved changes to {file}. Save or discard them there before applying this fix.": "[ファイルの編集] に {file} の未保存の変更があります。この修正を適用する前に、そちらで保存または破棄してください。",
+    "&Issue:": "問題(&I):",
+    "&Issue (no longer reported):": "問題 (報告されなくなりました)(&I):",
+    "Issue being fixed": "修正中の問題",
+    "Issue de&tails…": "問題の詳細(&T)…",
+    "Show this issue's details, where you can also explain or fix it with AI": "この問題の詳細を表示します。AI による説明や修正もそこで行えます",
+    "The AI fix is in {file} and selected. Review or change it, then save; Ctrl+Z undoes it.": "AI の修正を {file} に挿入し、選択しました。確認または変更してから保存してください。Ctrl+Z キーで元に戻せます。",
+    "The AI fix no longer matches the text of {file}, so it was not placed. It may already be applied, or the file has changed.": "AI の修正が {file} のテキストと一致しなくなったため、挿入しませんでした。既に適用済みか、ファイルが変更された可能性があります。",
+    "The text the AI fix replaces appears more than once in {file}, so the fix was not placed.": "AI の修正で置き換えるテキストが {file} に複数あるため、修正を挿入しませんでした。",
+    "The issue you are fixing ({code}) is no longer reported.": "修正中の問題 ({code}) は報告されなくなりました。",
+    "The issue you are fixing ({code}) is still reported.": "修正中の問題 ({code}) はまだ報告されています。",
+    "{code}: {left} like the issue you are fixing remain, down from {before}.": "{code}: 修正中の問題と同様の問題が {left} 件残っています (以前は {before} 件)。",
+    "{issue} at {location}: {text}": "{location} の {issue}: {text}",
+    "{issue}: {text}": "{issue}: {text}"
   }
 }

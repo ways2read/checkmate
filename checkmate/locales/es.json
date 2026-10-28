@@ -5,7 +5,7 @@
   "native_name": "Español",
   "display_name": "Spanish",
   "direction": "ltr",
-  "source_msgid_hash": "8691aad15d14bcc2",
+  "source_msgid_hash": "3e4db003b00321e5",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Nota: La respuesta de la IA se cortó de nuevo. Haz una pregunta de seguimiento como “Por favor, continúa”.*",
     "&About": "&Acerca de",
@@ -931,6 +931,25 @@
     "{file} is already formatted.": "{file} ya tiene formato.",
     "Formatted {file}. Save to keep the new layout, or press Ctrl+Z to undo it.": "Se dio formato a {file}. Guarde para conservar la nueva organización o pulse Ctrl+Z para deshacerla.",
     "Could not format {file}: </{name}> on line {line} has no matching start tag.": "No se pudo dar formato a {file}: </{name}> en la línea {line} no tiene una etiqueta de apertura correspondiente.",
-    "Could not format {file}: <{name}> on line {line} is never closed.": "No se pudo dar formato a {file}: <{name}> en la línea {line} nunca se cierra."
+    "Could not format {file}: <{name}> on line {line} is never closed.": "No se pudo dar formato a {file}: <{name}> en la línea {line} nunca se cierra.",
+    "&Edit at location": "&Editar en la ubicación",
+    "&Open fix in editor": "&Abrir la corrección en el editor",
+    "Close this window and open the issue's file in Edit files, at the reported line (Ctrl+E)": "Cierra esta ventana y abre el archivo del problema en Editar archivos, en la línea indicada (Ctrl+E)",
+    "Close this window and put the proposed fix into the file in Edit files, selected, so you can review or change it before saving": "Cierra esta ventana y coloca la corrección propuesta en el archivo, en Editar archivos, seleccionada, para que pueda revisarla o cambiarla antes de guardar",
+    "Edit files has unsaved changes to {file}. Applying the fix now would conflict with them.\n\nOpen the fix in the editor instead, alongside your changes?": "Editar archivos tiene cambios sin guardar en {file}. Aplicar la corrección ahora entraría en conflicto con ellos.\n\n¿Abrir la corrección en el editor, junto con sus cambios?",
+    "Edit files has unsaved changes to {file}. Save or discard them there before applying this fix.": "Editar archivos tiene cambios sin guardar en {file}. Guárdelos o descártelos allí antes de aplicar esta corrección.",
+    "&Issue:": "&Problema:",
+    "&Issue (no longer reported):": "&Problema (ya no se informa):",
+    "Issue being fixed": "Problema que se está corrigiendo",
+    "Issue de&tails…": "De&talles del problema…",
+    "Show this issue's details, where you can also explain or fix it with AI": "Muestra los detalles de este problema, donde también puede explicarlo o corregirlo con IA",
+    "The AI fix is in {file} and selected. Review or change it, then save; Ctrl+Z undoes it.": "La corrección de la IA está en {file} y seleccionada. Revísela o cámbiela y después guarde; Ctrl+Z la deshace.",
+    "The AI fix no longer matches the text of {file}, so it was not placed. It may already be applied, or the file has changed.": "La corrección de la IA ya no coincide con el texto de {file}, por lo que no se colocó. Puede que ya esté aplicada o que el archivo haya cambiado.",
+    "The text the AI fix replaces appears more than once in {file}, so the fix was not placed.": "El texto que reemplaza la corrección de la IA aparece más de una vez en {file}, por lo que no se colocó.",
+    "The issue you are fixing ({code}) is no longer reported.": "El problema que está corrigiendo ({code}) ya no se informa.",
+    "The issue you are fixing ({code}) is still reported.": "El problema que está corrigiendo ({code}) todavía se informa.",
+    "{code}: {left} like the issue you are fixing remain, down from {before}.": "{code}: quedan {left} problemas como el que está corrigiendo, antes eran {before}.",
+    "{issue} at {location}: {text}": "{issue} en {location}: {text}",
+    "{issue}: {text}": "{issue}: {text}"
   }
 }

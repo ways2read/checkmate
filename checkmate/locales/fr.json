@@ -5,7 +5,7 @@
   "native_name": "Français",
   "display_name": "French",
   "direction": "ltr",
-  "source_msgid_hash": "8691aad15d14bcc2",
+  "source_msgid_hash": "3e4db003b00321e5",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Remarque : la réponse de l’IA a encore été coupée. Posez une question de suivi telle que « Veuillez continuer. »*",
     "&About": "À &propos",
@@ -931,6 +931,25 @@
     "{file} is already formatted.": "{file} est déjà mis en forme.",
     "Formatted {file}. Save to keep the new layout, or press Ctrl+Z to undo it.": "{file} a été mis en forme. Enregistrez pour conserver la nouvelle mise en page, ou appuyez sur Ctrl+Z pour l’annuler.",
     "Could not format {file}: </{name}> on line {line} has no matching start tag.": "Impossible de mettre en forme {file} : </{name}> à la ligne {line} n’a pas de balise ouvrante correspondante.",
-    "Could not format {file}: <{name}> on line {line} is never closed.": "Impossible de mettre en forme {file} : <{name}> à la ligne {line} n’est jamais fermé."
+    "Could not format {file}: <{name}> on line {line} is never closed.": "Impossible de mettre en forme {file} : <{name}> à la ligne {line} n’est jamais fermé.",
+    "&Edit at location": "&Modifier à cet emplacement",
+    "&Open fix in editor": "&Ouvrir la correction dans l’éditeur",
+    "Close this window and open the issue's file in Edit files, at the reported line (Ctrl+E)": "Ferme cette fenêtre et ouvre le fichier du problème dans Modifier les fichiers, à la ligne signalée (Ctrl+E)",
+    "Close this window and put the proposed fix into the file in Edit files, selected, so you can review or change it before saving": "Ferme cette fenêtre et place la correction proposée dans le fichier, dans Modifier les fichiers, sélectionnée, pour que vous puissiez la vérifier ou la modifier avant d’enregistrer",
+    "Edit files has unsaved changes to {file}. Applying the fix now would conflict with them.\n\nOpen the fix in the editor instead, alongside your changes?": "Modifier les fichiers contient des modifications non enregistrées de {file}. Appliquer la correction maintenant entrerait en conflit avec elles.\n\nOuvrir plutôt la correction dans l’éditeur, avec vos modifications ?",
+    "Edit files has unsaved changes to {file}. Save or discard them there before applying this fix.": "Modifier les fichiers contient des modifications non enregistrées de {file}. Enregistrez-les ou abandonnez-les avant d’appliquer cette correction.",
+    "&Issue:": "&Problème :",
+    "&Issue (no longer reported):": "&Problème (plus signalé) :",
+    "Issue being fixed": "Problème en cours de correction",
+    "Issue de&tails…": "Dé&tails du problème…",
+    "Show this issue's details, where you can also explain or fix it with AI": "Affiche les détails de ce problème, où vous pouvez aussi l’expliquer ou le corriger avec l’IA",
+    "The AI fix is in {file} and selected. Review or change it, then save; Ctrl+Z undoes it.": "La correction de l’IA est dans {file} et sélectionnée. Vérifiez-la ou modifiez-la, puis enregistrez ; Ctrl+Z l’annule.",
+    "The AI fix no longer matches the text of {file}, so it was not placed. It may already be applied, or the file has changed.": "La correction de l’IA ne correspond plus au texte de {file} ; elle n’a donc pas été placée. Elle est peut-être déjà appliquée, ou le fichier a changé.",
+    "The text the AI fix replaces appears more than once in {file}, so the fix was not placed.": "Le texte que remplace la correction de l’IA apparaît plusieurs fois dans {file} ; la correction n’a donc pas été placée.",
+    "The issue you are fixing ({code}) is no longer reported.": "Le problème que vous corrigez ({code}) n’est plus signalé.",
+    "The issue you are fixing ({code}) is still reported.": "Le problème que vous corrigez ({code}) est toujours signalé.",
+    "{code}: {left} like the issue you are fixing remain, down from {before}.": "{code} : il reste {left} problèmes semblables à celui que vous corrigez, contre {before} auparavant.",
+    "{issue} at {location}: {text}": "{issue} à {location} : {text}",
+    "{issue}: {text}": "{issue} : {text}"
   }
 }

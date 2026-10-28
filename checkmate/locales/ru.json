@@ -5,7 +5,7 @@
   "native_name": "Русский",
   "display_name": "Russian",
   "direction": "ltr",
-  "source_msgid_hash": "8691aad15d14bcc2",
+  "source_msgid_hash": "3e4db003b00321e5",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Примечание: ответ ИИ снова был обрезан. Задайте уточняющий вопрос, например «Пожалуйста, продолжите».*",
     "&About": "&О программе",
@@ -931,6 +931,25 @@
     "{file} is already formatted.": "Файл {file} уже отформатирован.",
     "Formatted {file}. Save to keep the new layout, or press Ctrl+Z to undo it.": "Файл {file} отформатирован. Сохраните, чтобы оставить новое оформление, или нажмите Ctrl+Z, чтобы отменить его.",
     "Could not format {file}: </{name}> on line {line} has no matching start tag.": "Не удалось отформатировать {file}: у </{name}> в строке {line} нет соответствующего открывающего тега.",
-    "Could not format {file}: <{name}> on line {line} is never closed.": "Не удалось отформатировать {file}: тег <{name}> в строке {line} не закрыт."
+    "Could not format {file}: <{name}> on line {line} is never closed.": "Не удалось отформатировать {file}: тег <{name}> в строке {line} не закрыт.",
+    "&Edit at location": "&Изменить в этом месте",
+    "&Open fix in editor": "&Открыть исправление в редакторе",
+    "Close this window and open the issue's file in Edit files, at the reported line (Ctrl+E)": "Закрывает это окно и открывает файл с проблемой в окне «Редактирование файлов» на указанной строке (Ctrl+E)",
+    "Close this window and put the proposed fix into the file in Edit files, selected, so you can review or change it before saving": "Закрывает это окно и вставляет предложенное исправление в файл в окне «Редактирование файлов» с выделением, чтобы вы могли проверить или изменить его перед сохранением",
+    "Edit files has unsaved changes to {file}. Applying the fix now would conflict with them.\n\nOpen the fix in the editor instead, alongside your changes?": "В окне «Редактирование файлов» есть несохранённые изменения в {file}. Применение исправления сейчас приведёт к конфликту с ними.\n\nОткрыть исправление в редакторе вместе с вашими изменениями?",
+    "Edit files has unsaved changes to {file}. Save or discard them there before applying this fix.": "В окне «Редактирование файлов» есть несохранённые изменения в {file}. Сохраните или отмените их там, прежде чем применять это исправление.",
+    "&Issue:": "Про&блема:",
+    "&Issue (no longer reported):": "Про&блема (больше не выявляется):",
+    "Issue being fixed": "Исправляемая проблема",
+    "Issue de&tails…": "Св&едения о проблеме…",
+    "Show this issue's details, where you can also explain or fix it with AI": "Показывает сведения об этой проблеме, где её также можно объяснить или исправить с помощью ИИ",
+    "The AI fix is in {file} and selected. Review or change it, then save; Ctrl+Z undoes it.": "Исправление ИИ вставлено в {file} и выделено. Проверьте или измените его, затем сохраните; Ctrl+Z отменяет его.",
+    "The AI fix no longer matches the text of {file}, so it was not placed. It may already be applied, or the file has changed.": "Исправление ИИ больше не соответствует тексту {file}, поэтому оно не вставлено. Возможно, оно уже применено или файл изменился.",
+    "The text the AI fix replaces appears more than once in {file}, so the fix was not placed.": "Текст, который заменяет исправление ИИ, встречается в {file} несколько раз, поэтому исправление не вставлено.",
+    "The issue you are fixing ({code}) is no longer reported.": "Исправляемая проблема ({code}) больше не выявляется.",
+    "The issue you are fixing ({code}) is still reported.": "Исправляемая проблема ({code}) по-прежнему выявляется.",
+    "{code}: {left} like the issue you are fixing remain, down from {before}.": "{code}: осталось проблем, похожих на исправляемую: {left} (было {before}).",
+    "{issue} at {location}: {text}": "{issue} в {location}: {text}",
+    "{issue}: {text}": "{issue}: {text}"
   }
 }

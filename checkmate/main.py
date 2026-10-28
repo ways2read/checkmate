@@ -1692,6 +1692,7 @@ class IssueDetailDialog(wx.Dialog):
         *,
         count: int = 1,
         check_result: CheckResult | None = None,
+        can_edit: bool = False,
     ) -> None:
         super().__init__(
             parent,
@@ -1701,6 +1702,10 @@ class IssueDetailDialog(wx.Dialog):
         self._issue = issue
         self._issue_count = max(1, int(count))
         self._check_result = check_result
+        # Edit at location / Open fix in editor hand off to Edit files.
+        self._can_edit = can_edit
+        self.edit_fix = None
+        self._end_code = int(wx.ID_CLOSE)
         self._explain_session = None
         self._fix_session = None
         self._busy = False
@@ -1919,6 +1924,16 @@ class IssueDetailDialog(wx.Dialog):
         self.copy_btn.Bind(wx.EVT_BUTTON, self._on_copy_clipboard)
 
         footer = wx.BoxSizer(wx.HORIZONTAL)
+        if self._can_edit:
+            self.edit_location_btn = wx.Button(self, label=_("&Edit at location"))
+            self.edit_location_btn.SetToolTip(
+                _(
+                    "Close this window and open the issue's file in Edit files, "
+                    "at the reported line (Ctrl+E)"
+                )
+            )
+            self.edit_location_btn.Bind(wx.EVT_BUTTON, lambda _e: self._request_edit())
+            footer.Add(self.edit_location_btn, 0, wx.ALIGN_CENTER_VERTICAL)
         footer.AddStretchSpacer(1)
         close_btn = wx.Button(self, id=wx.ID_CLOSE, label=_("Close"))
         close_btn.Bind(wx.EVT_BUTTON, self._on_close_dialog)
@@ -2172,6 +2187,19 @@ class IssueDetailDialog(wx.Dialog):
         self.apply_fix_btn.Enable(False)
         self.apply_fix_btn.Bind(wx.EVT_BUTTON, self._on_apply_fix)
         row.Add(self.apply_fix_btn, 0, wx.ALIGN_CENTER_VERTICAL)
+        self.open_fix_btn = None
+        if self._can_edit:
+            self.open_fix_btn = wx.Button(panel, label=_("&Open fix in editor"))
+            _ensure_win_tab_stop(self.open_fix_btn)
+            self.open_fix_btn.SetToolTip(
+                _(
+                    "Close this window and put the proposed fix into the file in "
+                    "Edit files, selected, so you can review or change it before saving"
+                )
+            )
+            self.open_fix_btn.Enable(False)
+            self.open_fix_btn.Bind(wx.EVT_BUTTON, lambda _e: self._request_edit(fix=True))
+            row.Add(self.open_fix_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         sizer.Add(row, 0, wx.EXPAND | wx.TOP | wx.BOTTOM, 4)
 
         self.fix_followup_ctrl, self.fix_ask_btn, _chat_toggle = _add_followup_question_row(
@@ -2449,6 +2477,13 @@ class IssueDetailDialog(wx.Dialog):
         if event.GetKeyCode() == wx.WXK_ESCAPE:
             wx.CallAfter(self._on_close_dialog)
             return
+        if (
+            self._can_edit
+            and event.GetKeyCode() == ord("E")
+            and event.GetModifiers() == wx.MOD_CONTROL
+        ):
+            self._request_edit()
+            return
         if dialog_handles_composer_enter(
             event, getattr(self, "followup_ctrl", None), self._on_ask_followup
         ):
@@ -2458,6 +2493,16 @@ class IssueDetailDialog(wx.Dialog):
         ):
             return
         event.Skip()
+
+    def _request_edit(self, *, fix: bool = False) -> None:
+        """Close and let the main window open Edit files at the issue (or with the fix)."""
+        if self._busy or self._closing:
+            return
+        if fix:
+            if self._fix_proposal is None:
+                return
+            self.edit_fix = self._fix_proposal
+        self._on_close_dialog(code=wx.ID_EDIT)
 
     def _on_accel_prev_page(self, _event: wx.CommandEvent) -> None:
         self._cycle_notebook_page(-1)
@@ -2565,7 +2610,9 @@ class IssueDetailDialog(wx.Dialog):
         except RuntimeError:
             pass
 
-    def _on_close_dialog(self, event: wx.Event | None = None) -> None:
+    def _on_close_dialog(
+        self, event: wx.Event | None = None, *, code: int = wx.ID_CLOSE
+    ) -> None:
         # Guard against SetEscapeId + CHAR_HOOK + checkmate://close all firing.
         # A second pass that Destroy()s while ShowModal is unwinding leaves the
         # main frame disabled/frozen.
@@ -2574,9 +2621,11 @@ class IssueDetailDialog(wx.Dialog):
                 event.Veto()
             # Idle CallAfter(_finish_close_dialog) can be dropped after Edge
             # cycles; a second Close must still unblock ShowModal.
-            self._ensure_end_modal(int(wx.ID_CLOSE))
+            self._ensure_end_modal(self._end_code)
             return
         self._closing = True
+        # Later EndModal calls must not turn Edit at location back into Close.
+        self._end_code = int(code)
         # Cancel deferred WebView focus/reveal/paint chains (follow-up SetPage
         # + MoveFocus into Edge can otherwise keep the process alive after exit).
         self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
@@ -2597,7 +2646,7 @@ class IssueDetailDialog(wx.Dialog):
         # WebView2. EndModal now: CallAfter can be dropped after Edge cycles,
         # which leaves the main frame disabled so the app cannot quit.
         self._release_webview(reclaim_focus=False)
-        self._ensure_end_modal(int(wx.ID_CLOSE))
+        self._ensure_end_modal(int(code))
         wx.CallAfter(self._finish_close_dialog)
 
     def _call_later(self, ms: int, fn) -> wx.CallLater:
@@ -2653,7 +2702,7 @@ class IssueDetailDialog(wx.Dialog):
             return
         dlg_trace("issue-detail finish close", self)
         dlg_trace("issue-detail EndModal", self)
-        self._ensure_end_modal(int(wx.ID_CLOSE))
+        self._ensure_end_modal(self._end_code)
         dlg_trace("issue-detail EndModal returned", self)
 
     def _ai_dialog_alive(self) -> bool:
@@ -2685,6 +2734,9 @@ class IssueDetailDialog(wx.Dialog):
             return
         has_proposal = self._fix_proposal is not None or self._batch_proposal is not None
         self.apply_fix_btn.Enable(enabled and has_proposal)
+        if self.open_fix_btn is not None:
+            # Fixes for many issues apply in one go; only a single fix opens in the editor.
+            self.open_fix_btn.Enable(enabled and self._fix_proposal is not None)
 
     def _set_ai_export_enabled(self, enabled: bool) -> None:
         # Kept for call sites; refresh based on the active page.
@@ -3798,6 +3850,9 @@ class IssueDetailDialog(wx.Dialog):
             )
             return
 
+        if self._unsaved_edit_conflict(target):
+            return
+
         self._set_busy(True, _("Applying fix…"))
         proposal = self._fix_proposal
         batch = self._batch_proposal
@@ -3820,6 +3875,60 @@ class IssueDetailDialog(wx.Dialog):
                 return
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _unsaved_edit_conflict(self, target: str) -> bool:
+        """True, after telling the user, when Edit files has unsaved edits to a fixed file."""
+        workspace = getattr(self.GetParent(), "_workspace", None)
+        if workspace is None or workspace.unsaved_member is None:
+            return False
+        try:
+            if workspace.target != Path(target).expanduser().resolve():
+                return False
+        except OSError:
+            return False
+        if self._batch_proposal is not None:
+            files = [patch.file for patch in self._batch_proposal.patches]
+        elif self._fix_proposal is not None:
+            files = [self._fix_proposal.file]
+        else:
+            return False
+        edited = workspace.unsaved_member
+        if not any(workspace.resolve_member(f) == edited for f in files):
+            return False
+        if self._fix_proposal is not None and self.open_fix_btn is not None:
+            dlg = wx.MessageDialog(
+                self,
+                _(
+                    "Edit files has unsaved changes to {file}. Applying the fix now "
+                    "would conflict with them.\n\nOpen the fix in the editor instead, "
+                    "alongside your changes?",
+                    file=edited,
+                ),
+                _("Apply fix and validate"),
+                wx.YES_NO | wx.ICON_WARNING,
+            )
+            try:
+                dlg.SetYesNoLabels(_("&Open fix in editor"), _("Cancel"))
+            except Exception:
+                pass
+            try:
+                answer = dlg.ShowModal()
+            finally:
+                dlg.Destroy()
+            if answer == wx.ID_YES:
+                self._request_edit(fix=True)
+        else:
+            wx.MessageBox(
+                _(
+                    "Edit files has unsaved changes to {file}. Save or discard them "
+                    "there before applying this fix.",
+                    file=edited,
+                ),
+                _("Apply fix and validate"),
+                wx.OK | wx.ICON_WARNING,
+                self,
+            )
+        return True
 
     def _on_apply_fix_event(self, event: ApplyFixEvent) -> None:
         from .ai.fix import PendingFixVerify, error_message_for_key, parse_extra_backups
@@ -7624,6 +7733,7 @@ class MainFrame(wx.Frame):
                 issue,
                 count=count,
                 check_result=self._last_result,
+                can_edit=self._workspace_target() is not None,
             )
             # Edge/WebKit WebView creation is the slow part — keep progress up.
             if getattr(dlg, "_show_ai", False):
@@ -7655,6 +7765,10 @@ class MainFrame(wx.Frame):
             wx.CallAfter(self._reclaim_after_modal)
             wx.CallLater(150, self._reclaim_after_modal)
         pending = getattr(dlg, "applied_fix_verify", None)
+        if result_code == wx.ID_EDIT:
+            # Edit at location / Open fix in editor: continue in Edit files.
+            wx.CallAfter(self._open_workspace, issue, getattr(dlg, "edit_fix", None))
+            return
         if result_code == wx.ID_APPLY:
             # Apply fix succeeded — re-scan, then confirm resolution / offer revert.
             self._pending_fix_verify = pending
@@ -7662,6 +7776,10 @@ class MainFrame(wx.Frame):
 
     def on_issue_activated(self, _event: wx.Event) -> None:
         self._show_issue_details()
+
+    def show_issue_details(self, issue: Issue) -> None:
+        """Issue details for *issue* (used by Edit files to reopen the issue it fixes)."""
+        self._show_issue_details(issue)
 
     def on_issues_char_hook(self, event: wx.KeyEvent) -> None:
         key = event.GetKeyCode()
@@ -7926,7 +8044,8 @@ class MainFrame(wx.Frame):
         issue = self._selected_issue() if self._focus_in_issues_list() else None
         self._open_workspace(issue)
 
-    def _open_workspace(self, issue: Issue | None = None) -> None:
+    def _open_workspace(self, issue: Issue | None = None, fix=None) -> None:
+        """Open Edit files, at *issue*'s location or with AI *fix* placed for review."""
         import zipfile
 
         from .workspace import PublicationWorkspace
@@ -7971,6 +8090,10 @@ class MainFrame(wx.Frame):
             workspace.Iconize(False)
         workspace.Raise()
         if issue is not None:
+            workspace.show_issue(issue)
+        if fix is not None:
+            wx.CallAfter(workspace.open_fix, fix.file, fix.original, fix.replacement)
+        elif issue is not None:
             from .ai.context import issue_member_position
 
             member, line, column = issue_member_position(target, issue)

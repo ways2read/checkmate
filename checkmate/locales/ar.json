@@ -5,7 +5,7 @@
   "native_name": "العربية",
   "display_name": "Arabic",
   "direction": "rtl",
-  "source_msgid_hash": "8691aad15d14bcc2",
+  "source_msgid_hash": "3e4db003b00321e5",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*ملاحظة: تم قطع رد الذكاء الاصطناعي مجددًا. اطرح سؤال متابعة مثل ”يرجى الاستمرار.“*",
     "&About": "&عن البرنامج",
@@ -931,6 +931,25 @@
     "{file} is already formatted.": "{file} منسّق بالفعل.",
     "Formatted {file}. Save to keep the new layout, or press Ctrl+Z to undo it.": "تم تنسيق {file}. احفظ للاحتفاظ بالتخطيط الجديد، أو اضغط Ctrl+Z للتراجع عنه.",
     "Could not format {file}: </{name}> on line {line} has no matching start tag.": "تعذّر تنسيق {file}: الوسم </{name}> في السطر {line} ليس له وسم بداية مطابق.",
-    "Could not format {file}: <{name}> on line {line} is never closed.": "تعذّر تنسيق {file}: الوسم <{name}> في السطر {line} لم يُغلق أبدًا."
+    "Could not format {file}: <{name}> on line {line} is never closed.": "تعذّر تنسيق {file}: الوسم <{name}> في السطر {line} لم يُغلق أبدًا.",
+    "&Edit at location": "&تحرير في هذا الموضع",
+    "&Open fix in editor": "&فتح الإصلاح في المحرر",
+    "Close this window and open the issue's file in Edit files, at the reported line (Ctrl+E)": "يغلق هذه النافذة ويفتح ملف المشكلة في تحرير الملفات عند السطر المُبلَّغ عنه (Ctrl+E)",
+    "Close this window and put the proposed fix into the file in Edit files, selected, so you can review or change it before saving": "يغلق هذه النافذة ويضع الإصلاح المقترح في الملف ضمن تحرير الملفات محددًا، حتى تتمكن من مراجعته أو تغييره قبل الحفظ",
+    "Edit files has unsaved changes to {file}. Applying the fix now would conflict with them.\n\nOpen the fix in the editor instead, alongside your changes?": "توجد في تحرير الملفات تغييرات غير محفوظة على {file}. سيتعارض تطبيق الإصلاح الآن معها.\n\nهل تريد فتح الإصلاح في المحرر بدلاً من ذلك إلى جانب تغييراتك؟",
+    "Edit files has unsaved changes to {file}. Save or discard them there before applying this fix.": "توجد في تحرير الملفات تغييرات غير محفوظة على {file}. احفظها أو تجاهلها هناك قبل تطبيق هذا الإصلاح.",
+    "&Issue:": "المشك&لة:",
+    "&Issue (no longer reported):": "المشك&لة (لم تعد مُبلَّغًا عنها):",
+    "Issue being fixed": "المشكلة قيد الإصلاح",
+    "Issue de&tails…": "تفا&صيل المشكلة…",
+    "Show this issue's details, where you can also explain or fix it with AI": "يعرض تفاصيل هذه المشكلة، حيث يمكنك أيضًا شرحها أو إصلاحها بالذكاء الاصطناعي",
+    "The AI fix is in {file} and selected. Review or change it, then save; Ctrl+Z undoes it.": "إصلاح الذكاء الاصطناعي موجود في {file} ومحدد. راجعه أو غيّره ثم احفظ؛ يتراجع Ctrl+Z عنه.",
+    "The AI fix no longer matches the text of {file}, so it was not placed. It may already be applied, or the file has changed.": "لم يعد إصلاح الذكاء الاصطناعي يطابق نص {file}، لذا لم يُوضع. ربما طُبّق بالفعل أو تغيّر الملف.",
+    "The text the AI fix replaces appears more than once in {file}, so the fix was not placed.": "يظهر النص الذي يستبدله إصلاح الذكاء الاصطناعي أكثر من مرة في {file}، لذا لم يُوضع الإصلاح.",
+    "The issue you are fixing ({code}) is no longer reported.": "لم تعد المشكلة التي تصلحها ({code}) مُبلَّغًا عنها.",
+    "The issue you are fixing ({code}) is still reported.": "لا تزال المشكلة التي تصلحها ({code}) مُبلَّغًا عنها.",
+    "{code}: {left} like the issue you are fixing remain, down from {before}.": "{code}: تبقى {left} من المشكلات المماثلة للمشكلة التي تصلحها، بعد أن كانت {before}.",
+    "{issue} at {location}: {text}": "{issue} في {location}: {text}",
+    "{issue}: {text}": "{issue}: {text}"
   }
 }

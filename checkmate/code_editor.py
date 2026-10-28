@@ -136,6 +136,14 @@ class CodeEditor:
         """Replace the whole text as one edit the user can undo (fires change events)."""
         raise NotImplementedError
 
+    def replace_range(self, start: int, end: int, text: str) -> None:
+        """Replace characters *start*..*end* as one undoable edit (character offsets)."""
+        raise NotImplementedError
+
+    def select_range(self, start: int, end: int) -> None:
+        """Select characters *start*..*end* (character offsets) and scroll to them."""
+        raise NotImplementedError
+
     def set_editable(self, editable: bool) -> None:
         raise NotImplementedError
 
@@ -187,6 +195,24 @@ class NativeCodeEditor(CodeEditor):
         self.ctrl.SetSelection(-1, -1)
         self.ctrl.WriteText(text)
 
+    def _pos(self, text: str, offset: int) -> int:
+        if wx.Platform == "__WXMSW__":
+            # RichEdit counts UTF-16 units: characters past U+FFFF take two.
+            return offset + sum(1 for ch in text[:offset] if ord(ch) > 0xFFFF)
+        return offset
+
+    def replace_range(self, start: int, end: int, text: str) -> None:
+        current = self.ctrl.GetValue()
+        self.ctrl.SetSelection(self._pos(current, start), self._pos(current, end))
+        self.ctrl.WriteText(text)
+
+    def select_range(self, start: int, end: int) -> None:
+        current = self.ctrl.GetValue()
+        first, last = self._pos(current, start), self._pos(current, end)
+        self.ctrl.ShowPosition(last)
+        self.ctrl.ShowPosition(first)
+        self.ctrl.SetSelection(first, last)
+
     def set_editable(self, editable: bool) -> None:
         self.ctrl.SetEditable(editable)
 
@@ -199,12 +225,9 @@ class NativeCodeEditor(CodeEditor):
 
     def place_caret(self, line: int, column: int) -> None:
         text = self.ctrl.GetValue()
-        offset = offset_of(text, line, column)
-        if wx.Platform == "__WXMSW__":
-            # RichEdit counts UTF-16 units: characters past U+FFFF take two.
-            offset += sum(1 for ch in text[:offset] if ord(ch) > 0xFFFF)
-        self.ctrl.SetInsertionPoint(offset)
-        self.ctrl.ShowPosition(offset)
+        pos = self._pos(text, offset_of(text, line, column))
+        self.ctrl.SetInsertionPoint(pos)
+        self.ctrl.ShowPosition(pos)
 
     def bind_changed(self, handler: Callable[[], None]) -> None:
         def on_text(event: wx.CommandEvent) -> None:
@@ -318,14 +341,31 @@ class ScintillaCodeEditor(CodeEditor):
         self.ctrl.SetSavePoint()
 
     def replace_all(self, text: str) -> None:
+        self._replace_bytes(0, self.ctrl.GetLength(), text)
+
+    def _replace_bytes(self, start: int, end: int, text: str) -> None:
         c = self.ctrl
         c.BeginUndoAction()
         try:
-            c.SetTargetStart(0)
-            c.SetTargetEnd(c.GetLength())
+            c.SetTargetStart(start)
+            c.SetTargetEnd(end)
             c.ReplaceTarget(text)
         finally:
             c.EndUndoAction()
+
+    @staticmethod
+    def _pos(text: str, offset: int) -> int:
+        # Scintilla positions are UTF-8 bytes.
+        return len(text[:offset].encode("utf-8"))
+
+    def replace_range(self, start: int, end: int, text: str) -> None:
+        current = self.ctrl.GetText()
+        self._replace_bytes(self._pos(current, start), self._pos(current, end), text)
+
+    def select_range(self, start: int, end: int) -> None:
+        current = self.ctrl.GetText()
+        self.ctrl.SetSelection(self._pos(current, start), self._pos(current, end))
+        self.ctrl.EnsureCaretVisible()
 
     def set_editable(self, editable: bool) -> None:
         self.ctrl.SetReadOnly(not editable)

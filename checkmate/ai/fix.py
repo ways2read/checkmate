@@ -1377,9 +1377,15 @@ def issue_still_present(before: Issue, result: CheckResult) -> bool:
     Matches on code + message (location line numbers may shift). When both
     sides name a file member, that member must also agree.
     """
+    return bool(matching_issues(before, result))
+
+
+def matching_issues(before: Issue, result: CheckResult) -> list[Issue]:
+    """Issues in *result* that look like *before* (same code, message, and file)."""
     if not before.code and not before.message:
-        return False
+        return []
     before_member, _before_line = parse_issue_location(before.location)
+    found: list[Issue] = []
     for issue in result.issues:
         if before.code and issue.code != before.code:
             continue
@@ -1390,8 +1396,8 @@ def issue_still_present(before: Issue, result: CheckResult) -> bool:
         member, _line = parse_issue_location(issue.location)
         if before_member and member and not _members_match(before_member, member):
             continue
-        return True
-    return False
+        found.append(issue)
+    return found
 
 
 def _problem_total(result: CheckResult) -> int:
