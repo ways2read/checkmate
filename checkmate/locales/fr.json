@@ -5,7 +5,7 @@
   "native_name": "Français",
   "display_name": "French",
   "direction": "ltr",
-  "source_msgid_hash": "c36ed104a12de42a",
+  "source_msgid_hash": "12aa418d9974181f",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Remarque : la réponse de l’IA a encore été coupée. Posez une question de suivi telle que « Veuillez continuer. »*",
     "&About": "À &propos",
@@ -833,8 +833,6 @@
     "&Files": "Fic&hiers",
     "&Package folder as EPUB…": "&Empaqueter le dossier en EPUB…",
     "&Save": "&Enregistrer",
-    "&Text (no file open)": "&Texte (aucun fichier ouvert)",
-    "&Text of {file}": "&Texte de {file}",
     "A check is already running. Try again when it finishes.": "Une vérification est déjà en cours. Réessayez lorsqu’elle sera terminée.",
     "A newer CheckMate is available.\n\nInstalled: {current}\nLatest: {latest}\n\nDownload and install it now?": "Une version plus récente de CheckMate est disponible.\n\nInstallée : {current}\nDernière : {latest}\n\nLa télécharger et l’installer maintenant ?",
     "A newer CheckMate is available.\n\nYou are running {current} from source.\nLatest packaged build: {latest}\n\nDownload the installer now?": "Une version plus récente de CheckMate est disponible.\n\nVous exécutez {current} depuis les sources.\nDernière version empaquetée : {latest}\n\nTélécharger le programme d’installation maintenant ?",
@@ -864,7 +862,6 @@
     "Downloading CheckMate…": "Téléchargement de CheckMate…",
     "EPUB files (*.epub)|*.epub|All files (*.*)|*.*": "Fichiers EPUB (*.epub)|*.epub|Tous les fichiers (*.*)|*.*",
     "Edit files": "Modifier les fichiers",
-    "File text": "Texte du fichier",
     "Files": "Fichiers",
     "Go to line": "Aller à la ligne",
     "Installer started": "Programme d’installation lancé",
@@ -906,7 +903,6 @@
     "Preview: press Enter to browse the page. Inside the page, Escape returns to the file list, and Ctrl+Tab leaves the page.": "Aperçu : appuyez sur Entrée pour parcourir la page. Dans la page, Échap revient à la liste des fichiers et Ctrl+Tab quitte la page.",
     "Select a file in the list to preview it.": "Sélectionnez un fichier dans la liste pour en afficher l’aperçu.",
     "Text": "Texte",
-    "Text and preview": "Texte et aperçu",
     "There is no preview for this type of file.": "Aucun aperçu n’est disponible pour ce type de fichier.",
     "{file} is not a text file, so it can only be previewed.": "{file} n’est pas un fichier texte ; il ne peut être affiché qu’en aperçu.",
     "Start checking immediately": "Lancer la vérification immédiatement",
@@ -914,6 +910,13 @@
     "{name} is ready. Press F5 to check it, or Ctrl+E to browse and edit its files.": "{name} est prêt. Appuyez sur F5 pour le vérifier, ou sur Ctrl+E pour parcourir et modifier ses fichiers.",
     "{name} is ready. Press F5 to check it.": "{name} est prêt. Appuyez sur F5 pour le vérifier.",
     "AI": "IA",
-    "Checkers": "Vérificateurs"
+    "Checkers": "Vérificateurs",
+    "C&ode (no file selected)": "C&ode (aucun fichier sélectionné)",
+    "C&ode of {file}": "C&ode de {file}",
+    "Preview and code": "Aperçu et code",
+    "Select a file in the list to see its code.": "Sélectionnez un fichier dans la liste pour en afficher le code.",
+    "{file} has no code to show. See the Preview tab.": "{file} n’a pas de code à afficher. Consultez l’onglet Aperçu.",
+    "Save edits automatically when leaving a file": "Enregistrer automatiquement les modifications en quittant un fichier",
+    "In Browse and edit files, save your changes without asking when you move to another file or close the window. When unchecked, CheckMate asks whether to save them.": "Dans Parcourir et modifier les fichiers, enregistre vos modifications sans demander lorsque vous passez à un autre fichier ou fermez la fenêtre. Si cette option est décochée, CheckMate demande s’il faut les enregistrer."
   }
 }

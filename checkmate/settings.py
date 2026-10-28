@@ -264,6 +264,11 @@ def check_immediately() -> bool:
     return bool(read_settings().get("check_immediately", True))
 
 
+def autosave_edits() -> bool:
+    """True when Browse and edit files saves without asking on leaving an edited file."""
+    return bool(read_settings().get("autosave_edits", False))
+
+
 def color_theme() -> str:
     """Selected UI color theme (``system``, ``light``, or ``dark``)."""
     from .ui_appearance import normalize_color_theme

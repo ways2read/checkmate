@@ -5,7 +5,7 @@
   "native_name": "Русский",
   "display_name": "Russian",
   "direction": "ltr",
-  "source_msgid_hash": "c36ed104a12de42a",
+  "source_msgid_hash": "12aa418d9974181f",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Примечание: ответ ИИ снова был обрезан. Задайте уточняющий вопрос, например «Пожалуйста, продолжите».*",
     "&About": "&О программе",
@@ -833,8 +833,6 @@
     "&Files": "&Файлы",
     "&Package folder as EPUB…": "&Упаковать папку в EPUB…",
     "&Save": "&Сохранить",
-    "&Text (no file open)": "&Текст (файл не открыт)",
-    "&Text of {file}": "&Текст файла {file}",
     "A check is already running. Try again when it finishes.": "Проверка уже выполняется. Повторите попытку, когда она завершится.",
     "A newer CheckMate is available.\n\nInstalled: {current}\nLatest: {latest}\n\nDownload and install it now?": "Доступна более новая версия CheckMate.\n\nУстановлена: {current}\nПоследняя: {latest}\n\nЗагрузить и установить её сейчас?",
     "A newer CheckMate is available.\n\nYou are running {current} from source.\nLatest packaged build: {latest}\n\nDownload the installer now?": "Доступна более новая версия CheckMate.\n\nВы запускаете {current} из исходного кода.\nПоследняя собранная версия: {latest}\n\nЗагрузить установщик сейчас?",
@@ -864,7 +862,6 @@
     "Downloading CheckMate…": "Загрузка CheckMate…",
     "EPUB files (*.epub)|*.epub|All files (*.*)|*.*": "Файлы EPUB (*.epub)|*.epub|Все файлы (*.*)|*.*",
     "Edit files": "Редактирование файлов",
-    "File text": "Текст файла",
     "Files": "Файлы",
     "Go to line": "Перейти к строке",
     "Installer started": "Установщик запущен",
@@ -906,7 +903,6 @@
     "Preview: press Enter to browse the page. Inside the page, Escape returns to the file list, and Ctrl+Tab leaves the page.": "Просмотр: нажмите Enter, чтобы перемещаться по странице. Внутри страницы Escape возвращает к списку файлов, а Ctrl+Tab выводит из страницы.",
     "Select a file in the list to preview it.": "Выберите файл в списке, чтобы просмотреть его.",
     "Text": "Текст",
-    "Text and preview": "Текст и просмотр",
     "There is no preview for this type of file.": "Для этого типа файлов просмотр недоступен.",
     "{file} is not a text file, so it can only be previewed.": "{file} не является текстовым файлом, поэтому его можно только просмотреть.",
     "Start checking immediately": "Начинать проверку сразу",
@@ -914,6 +910,13 @@
     "{name} is ready. Press F5 to check it, or Ctrl+E to browse and edit its files.": "{name} готов. Нажмите F5, чтобы проверить, или Ctrl+E, чтобы просмотреть и изменить его файлы.",
     "{name} is ready. Press F5 to check it.": "{name} готов. Нажмите F5, чтобы проверить.",
     "AI": "ИИ",
-    "Checkers": "Средства проверки"
+    "Checkers": "Средства проверки",
+    "C&ode (no file selected)": "&Код (файл не выбран)",
+    "C&ode of {file}": "&Код файла {file}",
+    "Preview and code": "Просмотр и код",
+    "Select a file in the list to see its code.": "Выберите файл в списке, чтобы увидеть его код.",
+    "{file} has no code to show. See the Preview tab.": "У файла {file} нет кода для показа. Откройте вкладку «Просмотр».",
+    "Save edits automatically when leaving a file": "Автоматически сохранять изменения при переходе к другому файлу",
+    "In Browse and edit files, save your changes without asking when you move to another file or close the window. When unchecked, CheckMate asks whether to save them.": "В окне «Просмотр и редактирование файлов» изменения сохраняются без вопроса, когда вы переходите к другому файлу или закрываете окно. Если флажок снят, CheckMate спрашивает, сохранить ли их."
   }
 }

@@ -5,7 +5,7 @@
   "native_name": "Español",
   "display_name": "Spanish",
   "direction": "ltr",
-  "source_msgid_hash": "c36ed104a12de42a",
+  "source_msgid_hash": "12aa418d9974181f",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Nota: La respuesta de la IA se cortó de nuevo. Haz una pregunta de seguimiento como “Por favor, continúa”.*",
     "&About": "&Acerca de",
@@ -833,8 +833,6 @@
     "&Files": "&Archivos",
     "&Package folder as EPUB…": "Em&paquetar carpeta como EPUB…",
     "&Save": "&Guardar",
-    "&Text (no file open)": "&Texto (ningún archivo abierto)",
-    "&Text of {file}": "&Texto de {file}",
     "A check is already running. Try again when it finishes.": "Ya hay una comprobación en curso. Vuelva a intentarlo cuando termine.",
     "A newer CheckMate is available.\n\nInstalled: {current}\nLatest: {latest}\n\nDownload and install it now?": "Hay una versión más reciente de CheckMate.\n\nInstalada: {current}\nÚltima: {latest}\n\n¿Descargarla e instalarla ahora?",
     "A newer CheckMate is available.\n\nYou are running {current} from source.\nLatest packaged build: {latest}\n\nDownload the installer now?": "Hay una versión más reciente de CheckMate.\n\nEstá ejecutando {current} desde el código fuente.\nÚltima versión empaquetada: {latest}\n\n¿Descargar el instalador ahora?",
@@ -864,7 +862,6 @@
     "Downloading CheckMate…": "Descargando CheckMate…",
     "EPUB files (*.epub)|*.epub|All files (*.*)|*.*": "Archivos EPUB (*.epub)|*.epub|Todos los archivos (*.*)|*.*",
     "Edit files": "Editar archivos",
-    "File text": "Texto del archivo",
     "Files": "Archivos",
     "Go to line": "Ir a la línea",
     "Installer started": "Instalador iniciado",
@@ -906,7 +903,6 @@
     "Preview: press Enter to browse the page. Inside the page, Escape returns to the file list, and Ctrl+Tab leaves the page.": "Vista previa: pulse Intro para explorar la página. Dentro de la página, Esc vuelve a la lista de archivos y Ctrl+Tab sale de la página.",
     "Select a file in the list to preview it.": "Seleccione un archivo de la lista para ver su vista previa.",
     "Text": "Texto",
-    "Text and preview": "Texto y vista previa",
     "There is no preview for this type of file.": "No hay vista previa para este tipo de archivo.",
     "{file} is not a text file, so it can only be previewed.": "{file} no es un archivo de texto, por lo que solo se puede ver en vista previa.",
     "Start checking immediately": "Empezar a comprobar inmediatamente",
@@ -914,6 +910,13 @@
     "{name} is ready. Press F5 to check it, or Ctrl+E to browse and edit its files.": "{name} está listo. Pulse F5 para comprobarlo o Ctrl+E para examinar y editar sus archivos.",
     "{name} is ready. Press F5 to check it.": "{name} está listo. Pulse F5 para comprobarlo.",
     "AI": "IA",
-    "Checkers": "Verificadores"
+    "Checkers": "Verificadores",
+    "C&ode (no file selected)": "Có&digo (ningún archivo seleccionado)",
+    "C&ode of {file}": "Có&digo de {file}",
+    "Preview and code": "Vista previa y código",
+    "Select a file in the list to see its code.": "Seleccione un archivo de la lista para ver su código.",
+    "{file} has no code to show. See the Preview tab.": "{file} no tiene código que mostrar. Consulte la pestaña Vista previa.",
+    "Save edits automatically when leaving a file": "Guardar los cambios automáticamente al salir de un archivo",
+    "In Browse and edit files, save your changes without asking when you move to another file or close the window. When unchecked, CheckMate asks whether to save them.": "En Examinar y editar archivos, guarda los cambios sin preguntar al pasar a otro archivo o cerrar la ventana. Si está desactivada, CheckMate pregunta si desea guardarlos."
   }
 }

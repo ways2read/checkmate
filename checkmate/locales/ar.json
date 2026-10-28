@@ -5,7 +5,7 @@
   "native_name": "العربية",
   "display_name": "Arabic",
   "direction": "rtl",
-  "source_msgid_hash": "c36ed104a12de42a",
+  "source_msgid_hash": "12aa418d9974181f",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*ملاحظة: تم قطع رد الذكاء الاصطناعي مجددًا. اطرح سؤال متابعة مثل ”يرجى الاستمرار.“*",
     "&About": "&عن البرنامج",
@@ -833,8 +833,6 @@
     "&Files": "ال&ملفات",
     "&Package folder as EPUB…": "&حزم المجلد بتنسيق EPUB…",
     "&Save": "&حفظ",
-    "&Text (no file open)": "ال&نص (لا يوجد ملف مفتوح)",
-    "&Text of {file}": "&نص {file}",
     "A check is already running. Try again when it finishes.": "يوجد فحص قيد التشغيل بالفعل. حاول مرة أخرى عند انتهائه.",
     "A newer CheckMate is available.\n\nInstalled: {current}\nLatest: {latest}\n\nDownload and install it now?": "يتوفر إصدار أحدث من CheckMate.\n\nالمثبت: {current}\nالأحدث: {latest}\n\nهل تريد تنزيله وتثبيته الآن؟",
     "A newer CheckMate is available.\n\nYou are running {current} from source.\nLatest packaged build: {latest}\n\nDownload the installer now?": "يتوفر إصدار أحدث من CheckMate.\n\nأنت تشغّل {current} من الشيفرة المصدرية.\nأحدث إصدار مُحزّم: {latest}\n\nهل تريد تنزيل المثبّت الآن؟",
@@ -864,7 +862,6 @@
     "Downloading CheckMate…": "جارٍ تنزيل CheckMate…",
     "EPUB files (*.epub)|*.epub|All files (*.*)|*.*": "ملفات EPUB (*.epub)|*.epub|كل الملفات (*.*)|*.*",
     "Edit files": "تحرير الملفات",
-    "File text": "نص الملف",
     "Files": "الملفات",
     "Go to line": "الانتقال إلى سطر",
     "Installer started": "بدأ تشغيل المثبّت",
@@ -906,7 +903,6 @@
     "Preview: press Enter to browse the page. Inside the page, Escape returns to the file list, and Ctrl+Tab leaves the page.": "المعاينة: اضغط Enter لاستعراض الصفحة. داخل الصفحة، يعيدك Escape إلى قائمة الملفات، ويُخرجك Ctrl+Tab من الصفحة.",
     "Select a file in the list to preview it.": "حدد ملفًا في القائمة لمعاينته.",
     "Text": "النص",
-    "Text and preview": "النص والمعاينة",
     "There is no preview for this type of file.": "لا تتوفر معاينة لهذا النوع من الملفات.",
     "{file} is not a text file, so it can only be previewed.": "{file} ليس ملفًا نصيًا، لذا يمكن معاينته فقط.",
     "Start checking immediately": "بدء الفحص فورًا",
@@ -914,6 +910,13 @@
     "{name} is ready. Press F5 to check it, or Ctrl+E to browse and edit its files.": "{name} جاهز. اضغط F5 لفحصه، أو Ctrl+E لاستعراض ملفاته وتحريرها.",
     "{name} is ready. Press F5 to check it.": "{name} جاهز. اضغط F5 لفحصه.",
     "AI": "الذكاء الاصطناعي",
-    "Checkers": "أدوات الفحص"
+    "Checkers": "أدوات الفحص",
+    "C&ode (no file selected)": "التعليمات ال&برمجية (لم يتم تحديد ملف)",
+    "C&ode of {file}": "التعليمات ال&برمجية لـ {file}",
+    "Preview and code": "المعاينة والتعليمات البرمجية",
+    "Select a file in the list to see its code.": "حدد ملفًا في القائمة لعرض تعليماته البرمجية.",
+    "{file} has no code to show. See the Preview tab.": "لا توجد تعليمات برمجية لعرضها في {file}. راجع علامة التبويب معاينة.",
+    "Save edits automatically when leaving a file": "حفظ التعديلات تلقائيًا عند مغادرة الملف",
+    "In Browse and edit files, save your changes without asking when you move to another file or close the window. When unchecked, CheckMate asks whether to save them.": "في استعراض الملفات وتحريرها، يحفظ تغييراتك دون سؤال عند الانتقال إلى ملف آخر أو إغلاق النافذة. وعند إلغاء التحديد، يسألك CheckMate عما إذا كنت تريد حفظها."
   }
 }

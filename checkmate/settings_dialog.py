@@ -24,6 +24,7 @@ from .settings import (
     VERAPDF_FLAVOURS,
     ai_features_enabled,
     ai_send_kb_article_body,
+    autosave_edits,
     check_immediately,
     color_theme,
     epub_checkers,
@@ -102,6 +103,19 @@ class SettingsDialog(wx.Dialog):
             )
         )
         sizer.Add(self.check_immediately_cb, 0, wx.ALL, 8)
+
+        self.autosave_edits_cb = wx.CheckBox(
+            page, label=_("Save edits automatically when leaving a file")
+        )
+        self.autosave_edits_cb.SetValue(autosave_edits())
+        self.autosave_edits_cb.SetToolTip(
+            _(
+                "In Browse and edit files, save your changes without asking when "
+                "you move to another file or close the window. When unchecked, "
+                "CheckMate asks whether to save them."
+            )
+        )
+        sizer.Add(self.autosave_edits_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         self.show_issues_cb = wx.CheckBox(page, label=_("Show issues always"))
         self.show_issues_cb.SetValue(show_issues_always())
@@ -348,6 +362,7 @@ class SettingsDialog(wx.Dialog):
         """Persist dialog values to settings.json."""
         kwargs: dict = {
             "check_immediately": bool(self.check_immediately_cb.GetValue()),
+            "autosave_edits": bool(self.autosave_edits_cb.GetValue()),
             "show_issues_always": bool(self.show_issues_cb.GetValue()),
             "sound_scheme": self.selected_sound_scheme(),
             "ui_color_theme": self.selected_color_theme(),

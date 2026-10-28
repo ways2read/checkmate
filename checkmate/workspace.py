@@ -17,6 +17,7 @@ import wx.dataview as dv
 
 from .i18n import _
 from .models import CheckResult
+from .settings import autosave_edits
 from .workspace_files import (
     READ_ONLY_TOO_LARGE,
     READ_ONLY_UNDECODABLE,
@@ -40,10 +41,11 @@ logger = logging.getLogger(__name__)
 # Native tree per platform for screen readers (mirrors the issues list choice).
 _USE_DATAVIEW_TREE = sys.platform != "win32"
 
-_PAGE_TEXT = 0
-_PAGE_PREVIEW = 1
-# Wait for arrow-key movement in the tree to settle before loading a preview.
-_PREVIEW_DELAY_MS = 250
+# Both tabs show the item selected in the tree; the chosen tab stays chosen.
+_PAGE_PREVIEW = 0
+_PAGE_CODE = 1
+# Wait for arrow-key movement in the tree to settle before loading the item.
+_SELECTION_DELAY_MS = 250
 # Source previews of very large text files are cut here.
 _MAX_SOURCE_PREVIEW_CHARS = 400_000
 
@@ -71,11 +73,11 @@ img {{ max-width: calc(100% - 16px); max-height: calc(100% - 16px); object-fit: 
 """
 
 
-def _speak(text: str) -> None:
+def _speak(text: str, *, interrupt: bool = True) -> None:
     try:
         from .accessibility import speak
 
-        speak(text, interrupt=True)
+        speak(text, interrupt=interrupt)
     except Exception:
         pass
 
@@ -197,9 +199,11 @@ class PublicationWorkspace(wx.Frame):
         self._preview_url = ""
         # Extracted copy of a packaged publication, so relative CSS/images load.
         self._preview_dir: Path | None = None
-        # File shown on the Preview tab: the tree selection (or the open file).
-        self._preview_member: str | None = None
-        self._preview_timer: wx.CallLater | None = None
+        # File both tabs show: the tree selection once movement settles.
+        self._shown_member: str | None = None
+        self._selection_timer: wx.CallLater | None = None
+        # A save-or-ask for an edited file the selection moved off is queued.
+        self._leaving = False
         # Temporary folder for generated preview pages (never the publication).
         self._preview_pages_dir: Path | None = None
         self._image_page_count = 0
@@ -232,16 +236,16 @@ class PublicationWorkspace(wx.Frame):
         right = wx.Panel(self._splitter)
         right_sizer = wx.BoxSizer(wx.VERTICAL)
         self._book = wx.Notebook(right)
-        self._book.SetName(_("Text and preview"))
+        self._book.SetName(_("Preview and code"))
 
-        text_page = wx.Panel(self._book)
-        text_sizer = wx.BoxSizer(wx.VERTICAL)
-        self._file_label = wx.StaticText(text_page, label=_("&Text (no file open)"))
-        text_sizer.Add(self._file_label, 0, wx.ALL, 4)
+        code_page = wx.Panel(self._book)
+        code_sizer = wx.BoxSizer(wx.VERTICAL)
+        self._file_label = wx.StaticText(code_page, label=_("C&ode (no file selected)"))
+        code_sizer.Add(self._file_label, 0, wx.ALL, 4)
         self._editor = wx.TextCtrl(
-            text_page,
+            code_page,
             style=wx.TE_MULTILINE | wx.TE_RICH2 | wx.TE_DONTWRAP | wx.TE_NOHIDESEL,
-            name=_("File text"),
+            name=_("Code"),
         )
         font = wx.Font(wx.FontInfo(10).Family(wx.FONTFAMILY_TELETYPE))
         if font.IsOk():
@@ -250,14 +254,14 @@ class PublicationWorkspace(wx.Frame):
         self._editor.Bind(wx.EVT_TEXT, self._on_text_changed)
         for evt in (wx.EVT_KEY_UP, wx.EVT_LEFT_UP, wx.EVT_SET_FOCUS):
             self._editor.Bind(evt, self._on_caret_event)
-        text_sizer.Add(self._editor, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
+        code_sizer.Add(self._editor, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
         info_row = wx.BoxSizer(wx.HORIZONTAL)
-        self._position_label = wx.StaticText(text_page, label="")
-        self._notice_label = wx.StaticText(text_page, label="")
+        self._position_label = wx.StaticText(code_page, label="")
+        self._notice_label = wx.StaticText(code_page, label="")
         info_row.Add(self._position_label, 0, wx.RIGHT, 16)
         info_row.Add(self._notice_label, 1)
-        text_sizer.Add(info_row, 0, wx.EXPAND | wx.ALL, 4)
-        text_page.SetSizer(text_sizer)
+        code_sizer.Add(info_row, 0, wx.EXPAND | wx.ALL, 4)
+        code_page.SetSizer(code_sizer)
 
         preview_page = wx.Panel(self._book)
         preview_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -271,8 +275,8 @@ class PublicationWorkspace(wx.Frame):
         preview_sizer.Add(self._preview_host, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
         preview_page.SetSizer(preview_sizer)
 
-        self._book.AddPage(text_page, _("Text"))
         self._book.AddPage(preview_page, _("Preview"))
+        self._book.AddPage(code_page, _("Code"))
         self._book.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self._on_page_changed)
         right_sizer.Add(self._book, 1, wx.EXPAND)
         right.SetSizer(right_sizer)
@@ -315,8 +319,8 @@ class PublicationWorkspace(wx.Frame):
             "goto": self.go_to_line,
             "close": self.Close,
             "pane": self._toggle_pane,
-            "prev_page": lambda: self._switch_page(_PAGE_TEXT),
-            "next_page": lambda: self._switch_page(_PAGE_PREVIEW),
+            "prev_page": lambda: self._switch_page(_PAGE_PREVIEW),
+            "next_page": lambda: self._switch_page(_PAGE_CODE),
         }
         ids = {name: wx.NewIdRef() for name in actions}
         for name, action in actions.items():
@@ -369,7 +373,7 @@ class PublicationWorkspace(wx.Frame):
     def focus_files(self) -> None:
         if self._member is None:
             self._tree.focus_first_file()
-            self._schedule_preview()
+            self._schedule_selection()
             return
         self._tree.select_member(self._member)
         self._tree.ctrl.SetFocus()
@@ -385,38 +389,44 @@ class PublicationWorkspace(wx.Frame):
             self._set_status(_("Could not find {file} in this publication.", file=member))
             self.focus_files()
             return False
-        self._switch_page(_PAGE_TEXT, focus=False)
         return self.open_member(resolved, line=line, column=column)
 
     def open_member(
         self, member: str, *, line: int | None = None, column: int | None = None
     ) -> bool:
-        """Open a text file for editing. Media and other non-text files stay preview-only."""
-        self._cancel_scheduled_preview()
+        """Open a text file on the Code tab for editing; other files go to Preview."""
+        self._cancel_scheduled_selection()
+        if member != self._member and not self.confirm_unsaved():
+            return False
         if not is_text_member(member):
-            self._preview_member = member
+            self._shown_member = member
             self._tree.select_member(member)
             self._switch_page(_PAGE_PREVIEW, focus=False)
             self._set_status(
                 _("{file} is not a text file, so it can only be previewed.", file=member)
             )
             return False
-        if member != self._member:
-            if not self.confirm_unsaved():
-                return False
-            if not self._load(member):
-                return False
-        self._preview_member = member
+        if member != self._member and not self._load(member):
+            return False
+        self._shown_member = member
         self._tree.select_member(member)
-        self._switch_page(_PAGE_TEXT, focus=False)
-        self._place_caret(line, column)
+        self._switch_page(_PAGE_CODE, focus=False)
+        # Without a location, an already open file keeps its caret.
+        if line is not None:
+            self._place_caret(line, column)
         self._editor.SetFocus()
         return True
 
     def confirm_unsaved(self) -> bool:
-        """Ask Save / Don't save / Cancel when there are unsaved edits. True = proceed."""
+        """Settle unsaved edits before leaving the file. True = proceed.
+
+        Saves without asking when the autosave setting is on; otherwise asks
+        Save / Don't save / Cancel.
+        """
         if not self._dirty:
             return True
+        if autosave_edits():
+            return self.save(interrupt=False)
         dlg = wx.MessageDialog(
             self,
             _("Save changes to {file}?", file=self._member or ""),
@@ -434,10 +444,18 @@ class PublicationWorkspace(wx.Frame):
         if answer == wx.ID_YES:
             return self.save()
         if answer == wx.ID_NO:
-            self._dirty = False
-            self._update_title()
+            self._discard_edits()
             return True
         return False
+
+    def _discard_edits(self) -> None:
+        """Drop unsaved edits; the file is read from disk again the next time it shows."""
+        self._dirty = False
+        self._member = None
+        self._doc = None
+        self._editor.SetEditable(False)
+        self._update_title()
+        self._update_buttons()
 
     def on_recheck_finished(
         self, before: CheckResult | None, result: CheckResult
@@ -477,7 +495,7 @@ class PublicationWorkspace(wx.Frame):
         self._disk_mtime = source_mtime_ns(self._source, member)
         self._editor.SetEditable(doc.editable)
         self._editor.SetName(member)
-        self._file_label.SetLabel(_("&Text of {file}", file=member))
+        self._file_label.SetLabel(_("C&ode of {file}", file=member))
         self._notice_label.SetLabel(self._read_only_message(doc))
         self._place_caret(1, 1)
         self._update_title()
@@ -527,6 +545,7 @@ class PublicationWorkspace(wx.Frame):
             )
 
     def go_to_line(self) -> None:
+        self._switch_page(_PAGE_CODE, focus=False)
         if self._member is None:
             return
         with wx.TextEntryDialog(
@@ -543,21 +562,19 @@ class PublicationWorkspace(wx.Frame):
             column = int(parts[1]) if len(parts) > 1 and parts[1].strip() else 1
         except ValueError:
             return
-        self._switch_page(_PAGE_TEXT, focus=False)
         self._place_caret(line, column)
         self._editor.SetFocus()
 
-    # --- Preview ---
+    # --- Showing the selected item ---
 
     def _switch_page(self, page: int, *, focus: bool = True) -> None:
-        # ChangeSelection: no page-changed event, so the preview loads once here.
+        # ChangeSelection: no page-changed event, so the page loads once here.
         if self._book.GetSelection() != page:
             self._book.ChangeSelection(page)
-        if page == _PAGE_PREVIEW:
-            self._refresh_preview()
+        self._refresh_page()
         if not focus:
             return
-        if page == _PAGE_TEXT:
+        if page == _PAGE_CODE:
             self._editor.SetFocus()
         else:
             self._preview_host.SetFocus()
@@ -619,11 +636,54 @@ class PublicationWorkspace(wx.Frame):
         except (ValueError, OSError, KeyError, zipfile.BadZipFile):
             logger.debug("Could not refresh preview copy of %s", member, exc_info=True)
 
+    def _refresh_page(self) -> None:
+        if self._book.GetSelection() == _PAGE_PREVIEW:
+            self._refresh_preview()
+        else:
+            self._refresh_code()
+
+    def _refresh_code(self) -> None:
+        """Load the selected item into the Code tab (text files only)."""
+        if self._book.GetSelection() != _PAGE_CODE or self._dirty:
+            return
+        member = self._shown_member
+        if member is not None and member == self._member:
+            return
+        if member is None:
+            self._clear_code(_("Select a file in the list to see its code."))
+        elif not is_text_member(member):
+            self._clear_code(
+                _("{file} has no code to show. See the Preview tab.", file=member)
+            )
+        elif not self._load(member):
+            self._clear_code()
+
+    def _clear_code(self, notice: str = "") -> None:
+        """Empty the Code tab. Unsaved edits are never dropped here."""
+        if self._dirty:
+            return
+        self._loading = True
+        try:
+            self._editor.ChangeValue("")
+        finally:
+            self._loading = False
+        self._member = None
+        self._doc = None
+        self._disk_mtime = None
+        self._editor.SetEditable(False)
+        self._editor.SetName(_("Code"))
+        self._file_label.SetLabel(_("C&ode (no file selected)"))
+        self._notice_label.SetLabel(notice)
+        self._position_label.SetLabel("")
+        self._update_title()
+        self._update_buttons()
+        self._editor.GetParent().Layout()
+
     def _refresh_preview(self) -> None:
         if self._book.GetSelection() != _PAGE_PREVIEW:
             return
         # Only the item selected in the tree is ever previewed.
-        member = self._preview_member
+        member = self._shown_member
         notice = ""
         uri = ""
         page = ""
@@ -703,9 +763,14 @@ class PublicationWorkspace(wx.Frame):
             logger.debug("Could not write image preview page", exc_info=True)
             return ""
 
+    def _clear_shown(self) -> None:
+        """Show nothing: the item on screen is no longer the one selected."""
+        self._shown_member = None
+        self._clear_preview()
+        if self._book.GetSelection() == _PAGE_CODE:
+            self._clear_code()
+
     def _clear_preview(self, notice: str = "") -> None:
-        """Show nothing: the previewed item is no longer the one selected."""
-        self._preview_member = None
         self._preview_label.SetLabel(_("Preview"))
         self._preview_notice.SetLabel(notice)
         self._preview_notice.Show(bool(notice))
@@ -742,29 +807,27 @@ class PublicationWorkspace(wx.Frame):
         except Exception:
             logger.debug("Preview load failed for %s", uri, exc_info=True)
 
-    def _schedule_preview(self) -> None:
-        """Preview the tree selection once arrow-key movement settles."""
-        self._cancel_scheduled_preview()
-        self._preview_timer = wx.CallLater(_PREVIEW_DELAY_MS, self._preview_selection)
+    def _schedule_selection(self) -> None:
+        """Show the tree selection on the current tab once arrow-key movement settles."""
+        self._cancel_scheduled_selection()
+        self._selection_timer = wx.CallLater(_SELECTION_DELAY_MS, self._show_selection)
 
-    def _cancel_scheduled_preview(self) -> None:
-        if self._preview_timer is not None:
-            self._preview_timer.Stop()
-            self._preview_timer = None
+    def _cancel_scheduled_selection(self) -> None:
+        if self._selection_timer is not None:
+            self._selection_timer.Stop()
+            self._selection_timer = None
 
-    def _preview_selection(self) -> None:
-        self._preview_timer = None
+    def _show_selection(self) -> None:
+        self._selection_timer = None
         if self._closing:
             return
         member = self._tree.selected_member()
-        if member is None:
-            self._clear_preview(_("Select a file in the list to preview it."))
-            return
-        if member == self._preview_member:
+        if member is not None and member == self._shown_member:
             return
         keep_tree_focus = self._focus_in_tree()
-        self._preview_member = member
-        self._switch_page(_PAGE_PREVIEW, focus=False)
+        self._shown_member = member
+        # The tab stays as the user chose it.
+        self._refresh_page()
         if keep_tree_focus:
             # Page switches and Edge loads can take focus; browsing stays in the list.
             self._keep_tree_focus_until = time.monotonic() + 2.0
@@ -787,8 +850,7 @@ class PublicationWorkspace(wx.Frame):
 
     def _on_page_changed(self, event: wx.BookCtrlEvent) -> None:
         event.Skip()
-        if event.GetSelection() == _PAGE_PREVIEW:
-            wx.CallAfter(self._refresh_preview)
+        wx.CallAfter(self._refresh_page)
 
     def _on_preview_loaded(self, event) -> None:
         event.Skip()
@@ -806,7 +868,7 @@ class PublicationWorkspace(wx.Frame):
             if action == "close":
                 wx.CallAfter(self._tree.ctrl.SetFocus)
             elif action in ("page_prev", "page_next"):
-                wx.CallAfter(self._switch_page, _PAGE_TEXT)
+                wx.CallAfter(self._switch_page, _PAGE_CODE)
             elif action == "next":
                 wx.CallAfter(self._recheck_btn.SetFocus)
             elif action == "prev":
@@ -823,8 +885,12 @@ class PublicationWorkspace(wx.Frame):
 
     # --- Save / revert / external ---
 
-    def save(self) -> bool:
-        """Save the open file. Returns False if the save failed or was cancelled."""
+    def save(self, *, interrupt: bool = True) -> bool:
+        """Save the open file. Returns False if the save failed or was cancelled.
+
+        *interrupt* False queues the "Saved" announcement after whatever the
+        screen reader is saying, such as the tree item just moved to.
+        """
         if not self._dirty or self._member is None or self._doc is None:
             return True
         disk = source_mtime_ns(self._source, self._member)
@@ -885,8 +951,9 @@ class PublicationWorkspace(wx.Frame):
         self._sync_preview_copy(self._member)
         self._update_title()
         self._update_buttons()
-        self._refresh_preview()
-        self._set_status(_("Saved {file}.", file=self._member))
+        if self._shown_member == self._member:
+            self._refresh_preview()
+        self._set_status(_("Saved {file}.", file=self._member), interrupt=interrupt)
         return True
 
     def save_and_recheck(self) -> None:
@@ -953,8 +1020,11 @@ class PublicationWorkspace(wx.Frame):
         path = member_disk_path(self._source, member)
         if path is None or self._source.packaged:
             return
-        if member == self._member and self._dirty and not self.confirm_unsaved():
-            return
+        if member == self._member and self._dirty:
+            if not self.confirm_unsaved():
+                return
+            # Don't save re-reads the file from disk.
+            self._refresh_code()
         if not wx.LaunchDefaultApplication(str(path)):
             wx.MessageBox(
                 _("Could not open {file} in its default application.", file=member),
@@ -978,11 +1048,11 @@ class PublicationWorkspace(wx.Frame):
                 count += 1
         return count
 
-    def _set_status(self, message: str) -> None:
+    def _set_status(self, message: str, *, interrupt: bool = True) -> None:
         self._status.SetLabel(message)
         self._status.Wrap(max(400, self.GetClientSize().width - 24))
         self.Layout()
-        _speak(message)
+        _speak(message, interrupt=interrupt)
 
     def _update_title(self) -> None:
         mark = "*" if self._dirty else ""
@@ -1004,7 +1074,7 @@ class PublicationWorkspace(wx.Frame):
 
     def _toggle_pane(self) -> None:
         if self._tree.ctrl.HasFocus():
-            if self._book.GetSelection() == _PAGE_TEXT:
+            if self._book.GetSelection() == _PAGE_CODE:
                 self._editor.SetFocus()
             else:
                 self._preview_host.SetFocus()
@@ -1018,10 +1088,35 @@ class PublicationWorkspace(wx.Frame):
         # Destroying the tree and late native notifications also land here.
         if self._closing or self._tree.programmatic:
             return
-        if self._tree.selected_member() != self._preview_member:
-            # Drop the old preview at once; the new one loads when movement settles.
-            self._clear_preview()
-            self._schedule_preview()
+        member = self._tree.selected_member()
+        if self._dirty and member != self._member:
+            # Moving off an edited file: save or ask first, once the native event is done.
+            self._cancel_scheduled_selection()
+            if not self._leaving:
+                self._leaving = True
+                wx.CallAfter(self._leave_edited_file)
+            return
+        if member != self._shown_member:
+            # Drop what was shown at once; the new item loads when movement settles.
+            self._clear_shown()
+            self._schedule_selection()
+
+    def _leave_edited_file(self) -> None:
+        self._leaving = False
+        if self._closing:
+            return
+        leaving = self._member
+        in_tree = self._focus_in_tree()
+        if self._dirty and not self.confirm_unsaved():
+            # Cancelled, or the save failed: stay on the edited file.
+            if leaving is not None:
+                self._tree.select_member(leaving)
+            if in_tree:
+                self._tree.ctrl.SetFocus()
+            return
+        if self._tree.selected_member() != self._shown_member:
+            self._clear_shown()
+            self._schedule_selection()
 
     def _on_tree_activated(self, _event: wx.Event) -> None:
         member = self._tree.selected_member()
@@ -1069,7 +1164,7 @@ class PublicationWorkspace(wx.Frame):
             event.Veto()
             return
         self._closing = True
-        self._cancel_scheduled_preview()
+        self._cancel_scheduled_selection()
         try:
             self._main.on_workspace_closed(self)
         except Exception:
