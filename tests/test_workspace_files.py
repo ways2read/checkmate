@@ -11,7 +11,6 @@ from pathlib import Path
 from checkmate.ai.context import issue_member_position
 from checkmate.models import Issue, Severity
 from checkmate.workspace_files import (
-    READ_ONLY_PACKAGED,
     READ_ONLY_UNDECODABLE,
     decode_text,
     encode_text,
@@ -52,7 +51,7 @@ class SourceTests(unittest.TestCase):
                 ),
             )
 
-    def test_package_lists_zip_members_read_only(self) -> None:
+    def test_package_lists_zip_members(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             epub = Path(tmp) / "book.epub"
             with zipfile.ZipFile(epub, "w") as zf:
@@ -64,7 +63,7 @@ class SourceTests(unittest.TestCase):
             self.assertEqual(source.members, ("EPUB/ch1.xhtml", "mimetype"))
             doc = load_text_document(source, "EPUB/ch1.xhtml")
             self.assertEqual(doc.text, "<html/>")
-            self.assertEqual(doc.read_only_reason, READ_ONLY_PACKAGED)
+            self.assertTrue(doc.editable)
 
     def test_single_file_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -168,15 +167,58 @@ class SaveTests(unittest.TestCase):
             self.assertEqual(page.read_bytes(), raw)
             self.assertEqual(backups, {})
 
-    def test_packaged_members_cannot_be_saved(self) -> None:
+    def test_packaged_save_rewrites_only_the_member_and_reverts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             epub = Path(tmp) / "book.epub"
             with zipfile.ZipFile(epub, "w") as zf:
-                zf.writestr("a.css", "a{}")
+                zf.writestr(
+                    zipfile.ZipInfo("mimetype", (2020, 1, 1, 0, 0, 0)),
+                    "application/epub+zip",
+                    compress_type=zipfile.ZIP_STORED,
+                )
+                zf.writestr(
+                    zipfile.ZipInfo("EPUB/a.css", (2020, 1, 1, 0, 0, 0)),
+                    "a{}\r\n",
+                    compress_type=zipfile.ZIP_DEFLATED,
+                )
+                zf.writestr(
+                    zipfile.ZipInfo("EPUB/audio.mp3", (2020, 1, 1, 0, 0, 0)),
+                    b"\x00" * 50_000,
+                    compress_type=zipfile.ZIP_STORED,
+                )
+            original = epub.read_bytes()
             source = open_source(epub)
-            doc = load_text_document(source, "a.css")
-            with self.assertRaises(PermissionError):
-                save_member_text(source, "a.css", doc, "b{}", session_backups={})
+            doc = load_text_document(source, "EPUB/a.css")
+            backups: dict[str, str] = {}
+
+            outcome = save_member_text(
+                source, "EPUB/a.css", doc, "a{color:red}\n", session_backups=backups
+            )
+            self.assertTrue(outcome.backup_created)
+            self.assertEqual(Path(outcome.backup_path).name, "book.epub.bak")
+            self.assertEqual(Path(outcome.backup_path).read_bytes(), original)
+            with zipfile.ZipFile(epub) as zf:
+                infos = zf.infolist()
+                self.assertEqual(
+                    [i.filename for i in infos], ["mimetype", "EPUB/a.css", "EPUB/audio.mp3"]
+                )
+                self.assertEqual(infos[0].compress_type, zipfile.ZIP_STORED)
+                self.assertEqual(infos[1].compress_type, zipfile.ZIP_DEFLATED)
+                self.assertEqual(infos[2].date_time, (2020, 1, 1, 0, 0, 0))
+                self.assertEqual(zf.read("EPUB/a.css"), b"a{color:red}\r\n")
+                self.assertEqual(zf.read("EPUB/audio.mp3"), b"\x00" * 50_000)
+
+            # A second file in the same session reuses the one package backup.
+            doc2 = load_text_document(source, "mimetype")
+            again = save_member_text(
+                source, "mimetype", doc2, doc2.text, session_backups=backups
+            )
+            self.assertFalse(again.backup_created)
+
+            revert_member(source, "EPUB/a.css", backups)
+            with zipfile.ZipFile(epub) as zf:
+                self.assertEqual(zf.read("EPUB/a.css"), b"a{}\r\n")
+            self.assertEqual(list(Path(tmp).glob(".*checkmate-tmp")), [])
 
 
 class IssuePositionTests(unittest.TestCase):

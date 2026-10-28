@@ -1,9 +1,14 @@
-"""Edit files workspace: browse a publication's files, edit text, save, and re-check."""
+"""Edit files workspace: browse a publication's files, edit text, preview, save, and re-check."""
 
 from __future__ import annotations
 
+import html
 import logging
+import shutil
 import sys
+import tempfile
+import time
+import webbrowser
 import zipfile
 from pathlib import Path
 
@@ -13,23 +18,44 @@ import wx.dataview as dv
 from .i18n import _
 from .models import CheckResult
 from .workspace_files import (
-    READ_ONLY_PACKAGED,
     READ_ONLY_TOO_LARGE,
     READ_ONLY_UNDECODABLE,
     TextDocument,
     WorkspaceSource,
+    decode_text,
+    is_preview_member,
+    is_rendered_member,
     is_text_member,
     load_text_document,
     member_disk_path,
+    read_member_bytes,
     resolve_member,
     revert_member,
     save_member_text,
+    source_mtime_ns,
 )
 
 logger = logging.getLogger(__name__)
 
 # Native tree per platform for screen readers (mirrors the issues list choice).
 _USE_DATAVIEW_TREE = sys.platform != "win32"
+
+_PAGE_TEXT = 0
+_PAGE_PREVIEW = 1
+# Wait for arrow-key movement in the tree to settle before loading a preview.
+_PREVIEW_DELAY_MS = 250
+# Source previews of very large text files are cut here.
+_MAX_SOURCE_PREVIEW_CHARS = 400_000
+
+_SOURCE_PREVIEW_PAGE = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>{title}</title>
+<style>
+:root {{ color-scheme: light dark; }}
+body {{ margin: 0; padding: 8px; font: 13px/1.45 Consolas, "Cascadia Mono", Menlo, monospace; }}
+pre {{ margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }}
+</style></head>
+<body><pre>{body}</pre></body></html>
+"""
 
 
 def _speak(text: str) -> None:
@@ -67,17 +93,16 @@ class _FileTree:
         self.ctrl.SetName(name)
         self._member_by_item: dict = {}
         self._item_by_member: dict = {}
+        # True while code (not the user) changes the selection.
+        self.programmatic = False
 
     def populate(self, members: tuple[str, ...]) -> None:
         folders: dict[str, object] = {}
         containers: list[object] = []
+        self.ctrl.DeleteAllItems()
         if self._dataview:
-            assert isinstance(self.ctrl, dv.DataViewTreeCtrl)
-            self.ctrl.DeleteAllItems()
             root = dv.NullDataViewItem
         else:
-            assert isinstance(self.ctrl, wx.TreeCtrl)
-            self.ctrl.DeleteAllItems()
             root = self.ctrl.AddRoot(_("Files"))
         self._member_by_item.clear()
         self._item_by_member.clear()
@@ -109,19 +134,19 @@ class _FileTree:
         item = self._item_by_member.get(member)
         if item is None:
             return
-        if self._dataview:
-            self.ctrl.Select(item)
+        self.programmatic = True
+        try:
+            if self._dataview:
+                self.ctrl.Select(item)
+            else:
+                self.ctrl.SelectItem(item)
             self.ctrl.EnsureVisible(item)
-        else:
-            self.ctrl.SelectItem(item)
-            self.ctrl.EnsureVisible(item)
+        finally:
+            self.programmatic = False
 
     def focus_first_file(self) -> None:
-        if not self._item_by_member:
-            self.ctrl.SetFocus()
-            return
-        first = next(iter(self._item_by_member))
-        self.select_member(first)
+        if self._item_by_member:
+            self.select_member(next(iter(self._item_by_member)))
         self.ctrl.SetFocus()
 
     def bind_activate(self, handler) -> None:
@@ -130,18 +155,22 @@ class _FileTree:
         else:
             self.ctrl.Bind(wx.EVT_TREE_ITEM_ACTIVATED, handler)
 
+    def bind_selection(self, handler) -> None:
+        if self._dataview:
+            self.ctrl.Bind(dv.EVT_DATAVIEW_SELECTION_CHANGED, handler)
+        else:
+            self.ctrl.Bind(wx.EVT_TREE_SEL_CHANGED, handler)
+
 
 class PublicationWorkspace(wx.Frame):
     """Modeless window owned by the main frame; re-checks run in the main window."""
 
     def __init__(self, main_frame: wx.Frame, source: WorkspaceSource) -> None:
-        super().__init__(
-            main_frame,
-            title=_("Edit files"),
-            size=(1040, 720),
-            style=wx.DEFAULT_FRAME_STYLE,
-        )
+        super().__init__(main_frame, title=_("Edit files"), style=wx.DEFAULT_FRAME_STYLE)
+        from . import main as main_mod
+
         self._main = main_frame
+        self._main_mod = main_mod
         self._source = source
         self._member: str | None = None
         self._doc: TextDocument | None = None
@@ -150,6 +179,16 @@ class PublicationWorkspace(wx.Frame):
         self._disk_mtime: int | None = None
         self._session_backups: dict[str, str] = {}
         self._checking = False
+        self._preview_view: wx.Window | None = None
+        self._preview_is_webview = False
+        self._preview_url = ""
+        # Extracted copy of a packaged publication, so relative CSS/images load.
+        self._preview_dir: Path | None = None
+        # File shown on the Preview tab: the tree selection (or the open file).
+        self._preview_member: str | None = None
+        self._preview_timer: wx.CallLater | None = None
+        self._keep_tree_focus_until = 0.0
+        self._closing = False
         try:
             self.SetIcons(main_frame.GetIcons())
         except Exception:
@@ -159,16 +198,6 @@ class PublicationWorkspace(wx.Frame):
         root = wx.BoxSizer(wx.VERTICAL)
         heading = wx.StaticText(panel, label=_("Publication: {path}", path=source.target))
         root.Add(heading, 0, wx.ALL, 8)
-        if source.packaged:
-            notice = wx.StaticText(
-                panel,
-                label=_(
-                    "Files inside a packaged publication are read-only here. "
-                    "To edit them, extract the publication to a folder and open the folder."
-                ),
-            )
-            notice.Wrap(980)
-            root.Add(notice, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         self._splitter = wx.SplitterWindow(panel, style=wx.SP_LIVE_UPDATE | wx.SP_3D)
         self._splitter.SetMinimumPaneSize(160)
@@ -179,16 +208,22 @@ class PublicationWorkspace(wx.Frame):
         self._tree = _FileTree(left, name=_("Files"))
         self._tree.populate(source.members)
         self._tree.bind_activate(self._on_tree_activated)
+        self._tree.bind_selection(self._on_tree_selection)
         self._tree.ctrl.Bind(wx.EVT_CHAR_HOOK, self._on_tree_char_hook)
         left_sizer.Add(self._tree.ctrl, 1, wx.EXPAND)
         left.SetSizer(left_sizer)
 
         right = wx.Panel(self._splitter)
         right_sizer = wx.BoxSizer(wx.VERTICAL)
-        self._file_label = wx.StaticText(right, label=_("&Text (no file open)"))
-        right_sizer.Add(self._file_label, 0, wx.BOTTOM, 4)
+        self._book = wx.Notebook(right)
+        self._book.SetName(_("Text and preview"))
+
+        text_page = wx.Panel(self._book)
+        text_sizer = wx.BoxSizer(wx.VERTICAL)
+        self._file_label = wx.StaticText(text_page, label=_("&Text (no file open)"))
+        text_sizer.Add(self._file_label, 0, wx.ALL, 4)
         self._editor = wx.TextCtrl(
-            right,
+            text_page,
             style=wx.TE_MULTILINE | wx.TE_RICH2 | wx.TE_DONTWRAP | wx.TE_NOHIDESEL,
             name=_("File text"),
         )
@@ -199,13 +234,31 @@ class PublicationWorkspace(wx.Frame):
         self._editor.Bind(wx.EVT_TEXT, self._on_text_changed)
         for evt in (wx.EVT_KEY_UP, wx.EVT_LEFT_UP, wx.EVT_SET_FOCUS):
             self._editor.Bind(evt, self._on_caret_event)
-        right_sizer.Add(self._editor, 1, wx.EXPAND)
+        text_sizer.Add(self._editor, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
         info_row = wx.BoxSizer(wx.HORIZONTAL)
-        self._position_label = wx.StaticText(right, label="")
-        self._notice_label = wx.StaticText(right, label="")
+        self._position_label = wx.StaticText(text_page, label="")
+        self._notice_label = wx.StaticText(text_page, label="")
         info_row.Add(self._position_label, 0, wx.RIGHT, 16)
         info_row.Add(self._notice_label, 1)
-        right_sizer.Add(info_row, 0, wx.EXPAND | wx.TOP, 4)
+        text_sizer.Add(info_row, 0, wx.EXPAND | wx.ALL, 4)
+        text_page.SetSizer(text_sizer)
+
+        preview_page = wx.Panel(self._book)
+        preview_sizer = wx.BoxSizer(wx.VERTICAL)
+        self._preview_label = wx.StaticText(preview_page, label=_("Preview"))
+        preview_sizer.Add(self._preview_label, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 4)
+        self._preview_notice = wx.StaticText(preview_page, label="")
+        preview_sizer.Add(self._preview_notice, 0, wx.EXPAND | wx.ALL, 4)
+        self._preview_host = main_mod._AiHtmlHostPanel(preview_page, name=_("Preview"))
+        self._preview_host.SetSizer(wx.BoxSizer(wx.VERTICAL))
+        main_mod._win_clear_tab_stop(self._preview_host)
+        preview_sizer.Add(self._preview_host, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+        preview_page.SetSizer(preview_sizer)
+
+        self._book.AddPage(text_page, _("Text"))
+        self._book.AddPage(preview_page, _("Preview"))
+        self._book.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self._on_page_changed)
+        right_sizer.Add(self._book, 1, wx.EXPAND)
         right.SetSizer(right_sizer)
 
         self._splitter.SplitVertically(left, right, 280)
@@ -240,12 +293,18 @@ class PublicationWorkspace(wx.Frame):
         self.Bind(wx.EVT_CLOSE, self._on_close)
         self.Bind(wx.EVT_ACTIVATE, self._on_activate)
 
-        ids = {name: wx.NewIdRef() for name in ("save", "recheck", "goto", "close", "pane")}
-        self.Bind(wx.EVT_MENU, lambda _e: self.save(), id=ids["save"])
-        self.Bind(wx.EVT_MENU, lambda _e: self.save_and_recheck(), id=ids["recheck"])
-        self.Bind(wx.EVT_MENU, lambda _e: self.go_to_line(), id=ids["goto"])
-        self.Bind(wx.EVT_MENU, lambda _e: self.Close(), id=ids["close"])
-        self.Bind(wx.EVT_MENU, lambda _e: self._toggle_pane(), id=ids["pane"])
+        actions = {
+            "save": self.save,
+            "recheck": self.save_and_recheck,
+            "goto": self.go_to_line,
+            "close": self.Close,
+            "pane": self._toggle_pane,
+            "prev_page": lambda: self._switch_page(_PAGE_TEXT),
+            "next_page": lambda: self._switch_page(_PAGE_PREVIEW),
+        }
+        ids = {name: wx.NewIdRef() for name in actions}
+        for name, action in actions.items():
+            self.Bind(wx.EVT_MENU, lambda _e, fn=action: fn(), id=ids[name])
         self.SetAcceleratorTable(
             wx.AcceleratorTable(
                 [
@@ -254,6 +313,8 @@ class PublicationWorkspace(wx.Frame):
                     (wx.ACCEL_CTRL, ord("G"), ids["goto"]),
                     (wx.ACCEL_CTRL, ord("W"), ids["close"]),
                     (wx.ACCEL_NORMAL, wx.WXK_F6, ids["pane"]),
+                    (wx.ACCEL_CTRL, wx.WXK_PAGEUP, ids["prev_page"]),
+                    (wx.ACCEL_CTRL, wx.WXK_PAGEDOWN, ids["next_page"]),
                 ]
             )
         )
@@ -261,7 +322,24 @@ class PublicationWorkspace(wx.Frame):
         panel.SetSizer(root)
         self._update_title()
         self._update_buttons()
+        self._fit_to_screen()
+
+    def _fit_to_screen(self) -> None:
+        """Size to the work area of the main window's display, never past its edges."""
+        index = wx.Display.GetFromWindow(self._main)
+        display = wx.Display(index if index != wx.NOT_FOUND else 0)
+        area = display.GetClientArea()
+        want = self.FromDIP(wx.Size(1040, 720))
+        width = min(want.width, int(area.width * 0.92))
+        height = min(want.height, int(area.height * 0.88))
+        self.SetMinSize(wx.Size(min(self.FromDIP(560), width), min(self.FromDIP(380), height)))
+        self.SetSize(wx.Size(width, height))
+        self._splitter.SetSashPosition(min(self.FromDIP(280), width // 3))
         self.CentreOnParent()
+        x, y = self.GetPosition()
+        x = max(area.x, min(x, area.x + area.width - width))
+        y = max(area.y, min(y, area.y + area.height - height))
+        self.SetPosition(wx.Point(x, y))
 
     # --- Public API used by the main window ---
 
@@ -275,6 +353,7 @@ class PublicationWorkspace(wx.Frame):
     def focus_files(self) -> None:
         if self._member is None:
             self._tree.focus_first_file()
+            self._schedule_preview()
             return
         self._tree.select_member(self._member)
         self._tree.ctrl.SetFocus()
@@ -287,22 +366,33 @@ class PublicationWorkspace(wx.Frame):
             return False
         resolved = resolve_member(self._source, member)
         if resolved is None:
-            self._set_status(
-                _("Could not find {file} in this publication.", file=member or "?")
-            )
+            self._set_status(_("Could not find {file} in this publication.", file=member))
             self.focus_files()
             return False
+        self._switch_page(_PAGE_TEXT, focus=False)
         return self.open_member(resolved, line=line, column=column)
 
     def open_member(
         self, member: str, *, line: int | None = None, column: int | None = None
     ) -> bool:
+        """Open a text file for editing. Media and other non-text files stay preview-only."""
+        self._cancel_scheduled_preview()
+        if not is_text_member(member):
+            self._preview_member = member
+            self._tree.select_member(member)
+            self._switch_page(_PAGE_PREVIEW, focus=False)
+            self._set_status(
+                _("{file} is not a text file, so it can only be previewed.", file=member)
+            )
+            return False
         if member != self._member:
             if not self.confirm_unsaved():
                 return False
             if not self._load(member):
                 return False
+        self._preview_member = member
         self._tree.select_member(member)
+        self._switch_page(_PAGE_TEXT, focus=False)
         self._place_caret(line, column)
         self._editor.SetFocus()
         return True
@@ -345,21 +435,13 @@ class PublicationWorkspace(wx.Frame):
         if self._member:
             count = self._issue_count_for_member(result, self._member)
             lines.append(_("Issues in this file: {n}.", n=count))
-        message = " ".join(lines)
-        self._set_status(message)
+        self._set_status(" ".join(lines))
 
     # --- Loading / caret ---
 
     def _load(self, member: str) -> bool:
-        doc: TextDocument | None = None
-        notice = ""
         try:
-            if is_text_member(member):
-                doc = load_text_document(self._source, member)
-            else:
-                notice = _("This is not a text file.")
-                if not self._source.packaged:
-                    notice += " " + _("Use Open in default app to view it.")
+            doc = load_text_document(self._source, member)
         except (OSError, KeyError, zipfile.BadZipFile) as exc:
             wx.MessageBox(
                 _("Could not open {file}:\n{error}", file=member, error=exc),
@@ -368,22 +450,19 @@ class PublicationWorkspace(wx.Frame):
                 self,
             )
             return False
-        if doc is not None and not doc.editable:
-            notice = self._read_only_message(doc)
         self._loading = True
         try:
-            self._editor.ChangeValue(doc.text if doc is not None else "")
+            self._editor.ChangeValue(doc.text)
         finally:
             self._loading = False
         self._member = member
         self._doc = doc
         self._dirty = False
-        self._disk_mtime = self._current_mtime()
-        editable = doc is not None and doc.editable
-        self._editor.SetEditable(editable)
+        self._disk_mtime = source_mtime_ns(self._source, member)
+        self._editor.SetEditable(doc.editable)
         self._editor.SetName(member)
         self._file_label.SetLabel(_("&Text of {file}", file=member))
-        self._notice_label.SetLabel(notice)
+        self._notice_label.SetLabel(self._read_only_message(doc))
         self._place_caret(1, 1)
         self._update_title()
         self._update_buttons()
@@ -391,8 +470,6 @@ class PublicationWorkspace(wx.Frame):
         return True
 
     def _read_only_message(self, doc: TextDocument) -> str:
-        if doc.read_only_reason == READ_ONLY_PACKAGED:
-            return _("Read-only: this file is inside a packaged publication.")
         if doc.read_only_reason == READ_ONLY_UNDECODABLE:
             return _(
                 "Read-only: this file is not valid {encoding} text, so editing "
@@ -415,18 +492,22 @@ class PublicationWorkspace(wx.Frame):
         self._editor.ShowPosition(pos)
         self._update_position()
 
+    def _caret_line_column(self) -> tuple[int, int] | None:
+        found = self._editor.PositionToXY(self._editor.GetInsertionPoint())
+        if len(found) == 3:
+            ok, x, y = found
+            return (y + 1, x + 1) if ok else None
+        x, y = found
+        return y + 1, x + 1
+
     def _update_position(self) -> None:
         if self._member is None:
             self._position_label.SetLabel("")
             return
-        found = self._editor.PositionToXY(self._editor.GetInsertionPoint())
-        if len(found) == 3:
-            ok, x, y = found
-        else:
-            ok, (x, y) = True, found
-        if ok:
+        where = self._caret_line_column()
+        if where is not None:
             self._position_label.SetLabel(
-                _("Line {line}, column {column}", line=y + 1, column=x + 1)
+                _("Line {line}, column {column}", line=where[0], column=where[1])
             )
 
     def go_to_line(self) -> None:
@@ -446,27 +527,246 @@ class PublicationWorkspace(wx.Frame):
             column = int(parts[1]) if len(parts) > 1 and parts[1].strip() else 1
         except ValueError:
             return
+        self._switch_page(_PAGE_TEXT, focus=False)
         self._place_caret(line, column)
         self._editor.SetFocus()
 
-    # --- Save / revert / external ---
+    # --- Preview ---
 
-    def _current_mtime(self) -> int | None:
-        if self._member is None:
-            return None
-        path = member_disk_path(self._source, self._member)
-        if path is None:
-            return None
+    def _switch_page(self, page: int, *, focus: bool = True) -> None:
+        # ChangeSelection: no page-changed event, so the preview loads once here.
+        if self._book.GetSelection() != page:
+            self._book.ChangeSelection(page)
+        if page == _PAGE_PREVIEW:
+            self._refresh_preview()
+        if not focus:
+            return
+        if page == _PAGE_TEXT:
+            self._editor.SetFocus()
+        else:
+            self._preview_host.SetFocus()
+
+    def _ensure_preview_view(self) -> bool:
+        """Create the preview WebView on first use. False when no backend works."""
+        if self._preview_view is not None:
+            return self._preview_is_webview
+        mm = self._main_mod
+        view, is_webview = mm._create_ai_html_view(self._preview_host, name=_("Preview"))
+        self._preview_host.GetSizer().Add(view, 1, wx.EXPAND)
+        mm._wire_ai_html_host(self._preview_host, view, is_webview=is_webview)
+        self._preview_view = view
+        self._preview_is_webview = is_webview
+        if is_webview:
+            import wx.html2 as html2
+
+            view.Bind(html2.EVT_WEBVIEW_NAVIGATING, self._on_preview_navigating)
+            view.Bind(html2.EVT_WEBVIEW_LOADED, self._on_preview_loaded)
+            tip = _(
+                "Preview: press Enter to browse the page. Inside the page, Escape "
+                "returns to the file list, and Ctrl+Tab leaves the page."
+            )
+            for win in (self._preview_host, view):
+                try:
+                    win.SetToolTip(tip)
+                except Exception:
+                    pass
+        else:
+            view.Hide()
+        self._preview_host.Layout()
+        return is_webview
+
+    def _preview_root(self) -> Path | None:
+        if not self._source.packaged:
+            return self._source.root
+        if self._preview_dir is None:
+            from .epub_package import extract_epub
+
+            folder = Path(tempfile.mkdtemp(prefix="checkmate-preview-"))
+            try:
+                extract_epub(self._source.target, folder)
+            except (OSError, zipfile.BadZipFile):
+                logger.debug("Could not extract package for preview", exc_info=True)
+                shutil.rmtree(folder, ignore_errors=True)
+                return None
+            self._preview_dir = folder
+        return self._preview_dir
+
+    def _sync_preview_copy(self, member: str) -> None:
+        """Mirror a packaged save/revert into the extracted preview copy."""
+        if self._preview_dir is None:
+            return
+        dest = (self._preview_dir / member).resolve()
         try:
-            return path.stat().st_mtime_ns
-        except OSError:
-            return None
+            dest.relative_to(self._preview_dir.resolve())
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(read_member_bytes(self._source, member))
+        except (ValueError, OSError, KeyError, zipfile.BadZipFile):
+            logger.debug("Could not refresh preview copy of %s", member, exc_info=True)
+
+    def _refresh_preview(self) -> None:
+        if self._book.GetSelection() != _PAGE_PREVIEW:
+            return
+        member = self._preview_member or self._member
+        notice = ""
+        uri = ""
+        page = ""
+        fresh_view = self._preview_view is None
+        if member is None:
+            notice = _("Select a file in the list to preview it.")
+        elif not is_preview_member(member):
+            notice = _("There is no preview for this type of file.")
+        elif not self._ensure_preview_view():
+            notice = _("Preview is not available on this computer.")
+        elif is_rendered_member(member):
+            root = self._preview_root()
+            path = root / member if root is not None else None
+            if path is None or not path.is_file():
+                notice = _("Could not prepare the preview.")
+            else:
+                uri = path.as_uri()
+        else:
+            page = self._source_preview_page(member)
+            if not page:
+                notice = _("Could not prepare the preview.")
+        if member is not None and member == self._member and self._dirty:
+            notice = _("Preview shows the last saved version. Save to update it.")
+        self._preview_label.SetLabel(
+            _("Preview of {file}", file=member) if member else _("Preview")
+        )
+        if self._preview_is_webview and self._preview_view is not None:
+            if page:
+                show = lambda: self._show_preview_page(page, member or "")  # noqa: E731
+            else:
+                show = lambda: self._show_preview_uri(uri or "about:blank")  # noqa: E731
+            if fresh_view:
+                # A just-created Edge view paints blank if loaded immediately.
+                wx.CallLater(200, lambda: None if self._closing else show())
+            else:
+                show()
+        self._preview_notice.SetLabel(notice)
+        self._preview_notice.Show(bool(notice))
+        self._preview_notice.GetParent().Layout()
+
+    def _source_preview_page(self, member: str) -> str:
+        """Read-only source view for CSS, OPF, XML, and other non-rendered text."""
+        try:
+            text = decode_text(read_member_bytes(self._source, member)).text
+        except (OSError, KeyError, zipfile.BadZipFile):
+            return ""
+        if len(text) > _MAX_SOURCE_PREVIEW_CHARS:
+            text = text[:_MAX_SOURCE_PREVIEW_CHARS] + "\n…"
+        return _SOURCE_PREVIEW_PAGE.format(
+            title=html.escape(member), body=html.escape(text)
+        )
+
+    def _show_preview_page(self, page: str, member: str) -> None:
+        view = self._preview_view
+        if view is None:
+            return
+        try:
+            view.SetPage(page, "")
+            self._preview_url = f"source:{member}"
+        except Exception:
+            logger.debug("Preview SetPage failed for %s", member, exc_info=True)
+
+    def _show_preview_uri(self, uri: str) -> None:
+        view = self._preview_view
+        if view is None:
+            return
+        try:
+            if uri == self._preview_url and uri != "about:blank":
+                import wx.html2 as html2
+
+                view.Reload(html2.WEBVIEW_RELOAD_NO_CACHE)
+            else:
+                view.LoadURL(uri)
+            self._preview_url = uri
+        except Exception:
+            logger.debug("Preview load failed for %s", uri, exc_info=True)
+
+    def _schedule_preview(self) -> None:
+        """Preview the tree selection once arrow-key movement settles."""
+        self._cancel_scheduled_preview()
+        self._preview_timer = wx.CallLater(_PREVIEW_DELAY_MS, self._preview_selection)
+
+    def _cancel_scheduled_preview(self) -> None:
+        if self._preview_timer is not None:
+            self._preview_timer.Stop()
+            self._preview_timer = None
+
+    def _preview_selection(self) -> None:
+        self._preview_timer = None
+        if self._closing:
+            return
+        member = self._tree.selected_member()
+        if member is None or member == self._preview_member:
+            return
+        keep_tree_focus = self._focus_in_tree()
+        self._preview_member = member
+        self._switch_page(_PAGE_PREVIEW, focus=False)
+        if keep_tree_focus:
+            # Page switches and Edge loads can take focus; browsing stays in the list.
+            self._keep_tree_focus_until = time.monotonic() + 2.0
+            self._restore_tree_focus()
+            wx.CallLater(350, self._restore_tree_focus)
+
+    def _focus_in_tree(self) -> bool:
+        focus = wx.Window.FindFocus()
+        while focus is not None:
+            if focus is self._tree.ctrl:
+                return True
+            focus = focus.GetParent()
+        return False
+
+    def _restore_tree_focus(self) -> None:
+        if self._closing or time.monotonic() > self._keep_tree_focus_until:
+            return
+        if not self._focus_in_tree():
+            self._main_mod._try_set_focus(self._tree.ctrl)
+
+    def _on_page_changed(self, event: wx.BookCtrlEvent) -> None:
+        event.Skip()
+        if event.GetSelection() == _PAGE_PREVIEW:
+            wx.CallAfter(self._refresh_preview)
+
+    def _on_preview_loaded(self, event) -> None:
+        event.Skip()
+        from .ai.markdown_html import _WEBVIEW_TAB_EXIT_JS
+
+        if self._preview_view is not None:
+            self._main_mod._webview_run_script(self._preview_view, _WEBVIEW_TAB_EXIT_JS)
+        self._restore_tree_focus()
+
+    def _on_preview_navigating(self, event) -> None:
+        url = (event.GetURL() or "").strip()
+        action = self._main_mod._webview_host_action(url)
+        if action is not None:
+            event.Veto()
+            if action == "close":
+                wx.CallAfter(self._tree.ctrl.SetFocus)
+            elif action in ("page_prev", "page_next"):
+                wx.CallAfter(self._switch_page, _PAGE_TEXT)
+            elif action == "next":
+                wx.CallAfter(self._recheck_btn.SetFocus)
+            elif action == "prev":
+                wx.CallAfter(self._tree.ctrl.SetFocus)
+            return
+        if url.lower().startswith(("http://", "https://", "mailto:")):
+            event.Veto()
+            try:
+                webbrowser.open(url)
+            except OSError:
+                pass
+            return
+        event.Skip()
+
+    # --- Save / revert / external ---
 
     def save(self) -> bool:
         """Save the open file. Returns False if the save failed or was cancelled."""
         if not self._dirty or self._member is None or self._doc is None:
             return True
-        disk = self._current_mtime()
+        disk = source_mtime_ns(self._source, self._member)
         if disk is not None and self._disk_mtime is not None and disk != self._disk_mtime:
             answer = wx.MessageBox(
                 _(
@@ -501,7 +801,7 @@ class PublicationWorkspace(wx.Frame):
                 self,
             )
             return False
-        except OSError as exc:
+        except (OSError, KeyError, zipfile.BadZipFile) as exc:
             wx.MessageBox(
                 _("Could not save {file}:\n{error}", file=self._member, error=exc),
                 _("Could not save"),
@@ -520,9 +820,11 @@ class PublicationWorkspace(wx.Frame):
         except OSError:
             logger.debug("Could not write edit changelog", exc_info=True)
         self._dirty = False
-        self._disk_mtime = self._current_mtime()
+        self._disk_mtime = source_mtime_ns(self._source, self._member)
+        self._sync_preview_copy(self._member)
         self._update_title()
         self._update_buttons()
+        self._refresh_preview()
         self._set_status(_("Saved {file}.", file=self._member))
         return True
 
@@ -559,7 +861,7 @@ class PublicationWorkspace(wx.Frame):
         backup = self._session_backups[member]
         try:
             revert_member(self._source, member, self._session_backups)
-        except OSError as exc:
+        except (OSError, KeyError, zipfile.BadZipFile) as exc:
             wx.MessageBox(
                 _("Could not revert to the backup:\n{detail}", detail=exc),
                 _("Error"),
@@ -577,20 +879,24 @@ class PublicationWorkspace(wx.Frame):
             logger.debug("Could not write edit changelog", exc_info=True)
         self._dirty = False
         self._member = None
+        self._sync_preview_copy(member)
         self._load(member)
+        self._refresh_preview()
         self._set_status(_("Reverted {file}.", file=member))
 
     def open_external(self) -> None:
-        if self._member is None:
+        """Open the selected file (or the one being edited) in its default application."""
+        member = self._tree.selected_member() or self._member
+        if member is None:
             return
-        path = member_disk_path(self._source, self._member)
-        if path is None:
+        path = member_disk_path(self._source, member)
+        if path is None or self._source.packaged:
             return
-        if self._dirty and not self.confirm_unsaved():
+        if member == self._member and self._dirty and not self.confirm_unsaved():
             return
         if not wx.LaunchDefaultApplication(str(path)):
             wx.MessageBox(
-                _("Could not open {file} in its default application.", file=self._member),
+                _("Could not open {file} in its default application.", file=member),
                 _("Edit files"),
                 wx.OK | wx.ICON_WARNING,
                 self,
@@ -619,24 +925,40 @@ class PublicationWorkspace(wx.Frame):
 
     def _update_title(self) -> None:
         mark = "*" if self._dirty else ""
-        parts = [f"{mark}{self._member}" if self._member else None, _("Edit files"), self._source.target.name]
+        parts = [
+            f"{mark}{self._member}" if self._member else None,
+            _("Edit files"),
+            self._source.target.name,
+        ]
         self.SetTitle(" — ".join(p for p in parts if p))
 
     def _update_buttons(self) -> None:
-        on_disk = self._member is not None and not self._source.packaged
         editable = self._doc is not None and self._doc.editable
         self._save_btn.Enable(editable and self._dirty)
         self._recheck_btn.Enable(not self._checking)
-        self._revert_btn.Enable(on_disk and self._member in self._session_backups)
-        self._external_btn.Enable(on_disk)
+        self._revert_btn.Enable(
+            self._member is not None and self._member in self._session_backups
+        )
+        self._external_btn.Enable(bool(self._source.members) and not self._source.packaged)
 
     def _toggle_pane(self) -> None:
-        if self._editor.HasFocus():
-            self._tree.ctrl.SetFocus()
+        if self._tree.ctrl.HasFocus():
+            if self._book.GetSelection() == _PAGE_TEXT:
+                self._editor.SetFocus()
+            else:
+                self._preview_host.SetFocus()
         else:
-            self._editor.SetFocus()
+            self._tree.ctrl.SetFocus()
 
     # --- Events ---
+
+    def _on_tree_selection(self, event: wx.Event) -> None:
+        event.Skip()
+        # Destroying the tree and late native notifications also land here.
+        if self._closing or self._tree.programmatic:
+            return
+        if self._tree.selected_member() != self._preview_member:
+            self._schedule_preview()
 
     def _on_tree_activated(self, _event: wx.Event) -> None:
         member = self._tree.selected_member()
@@ -667,21 +989,43 @@ class PublicationWorkspace(wx.Frame):
         event.Skip()
         if not event.GetActive() or self._member is None or self._dirty:
             return
-        disk = self._current_mtime()
-        if disk is not None and self._disk_mtime is not None and disk != self._disk_mtime:
-            member = self._member
-            line = self._editor.PositionToXY(self._editor.GetInsertionPoint())
-            self._member = None
-            if self._load(member) and len(line) == 3 and line[0]:
-                self._place_caret(line[2] + 1, line[1] + 1)
-            self._set_status(_("Reloaded {file} because it changed on disk.", file=member))
+        disk = source_mtime_ns(self._source, self._member)
+        if disk is None or self._disk_mtime is None or disk == self._disk_mtime:
+            return
+        member = self._member
+        where = self._caret_line_column()
+        self._member = None
+        if self._load(member) and where is not None:
+            self._place_caret(*where)
+        self._sync_preview_copy(member)
+        self._refresh_preview()
+        self._set_status(_("Reloaded {file} because it changed on disk.", file=member))
 
     def _on_close(self, event: wx.CloseEvent) -> None:
         if event.CanVeto() and not self.confirm_unsaved():
             event.Veto()
             return
+        self._closing = True
+        self._cancel_scheduled_preview()
         try:
             self._main.on_workspace_closed(self)
         except Exception:
             logger.debug("Main window did not accept workspace close", exc_info=True)
-        self.Destroy()
+        preview_dir = self._preview_dir
+        if self._preview_view is not None and self._preview_is_webview:
+            # Edge must drop its HWND before the frame goes; never Stop/Hide the view.
+            try:
+                import wx.html2 as html2
+
+                self._preview_view.Unbind(html2.EVT_WEBVIEW_LOADED)
+                self._preview_view.Unbind(html2.EVT_WEBVIEW_NAVIGATING)
+            except Exception:
+                pass
+            from .ai.alt_inventory_dialog import schedule_webview_window_destroy
+
+            self.Hide()
+            schedule_webview_window_destroy(self)
+        else:
+            self.Destroy()
+        if preview_dir is not None:
+            wx.CallLater(3000, shutil.rmtree, preview_dir, True)

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import codecs
+import os
 import re
 import shutil
+import time
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,10 +37,26 @@ TEXT_SUFFIXES = frozenset(
         ".pls",
     }
 )
+# Shown by the browser engine itself; other text files preview as source.
+RENDER_SUFFIXES = frozenset(
+    {
+        ".xhtml",
+        ".html",
+        ".htm",
+        ".svg",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".avif",
+    }
+)
 MAX_EDIT_BYTES = 8 * 1024 * 1024
+# session_backups key for the one whole-package backup of a packaged source.
+PACKAGE_BACKUP_KEY = ""
 
 # Read-only reasons (the UI maps these to translated messages).
-READ_ONLY_PACKAGED = "packaged"
 READ_ONLY_UNDECODABLE = "undecodable"
 READ_ONLY_TOO_LARGE = "too_large"
 
@@ -242,14 +260,89 @@ def encode_text(doc: TextDocument, text: str) -> bytes:
     return doc.bom + normalized.encode(doc.encoding)
 
 
+def is_rendered_member(member: str) -> bool:
+    return Path(member).suffix.lower() in RENDER_SUFFIXES
+
+
+def is_preview_member(member: str) -> bool:
+    return is_rendered_member(member) or is_text_member(member)
+
+
+def source_mtime_ns(source: WorkspaceSource, member: str) -> int | None:
+    """Modification time of the file a save would overwrite (member or package)."""
+    path = source.target if source.packaged else member_disk_path(source, member)
+    if path is None:
+        return None
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
 def load_text_document(source: WorkspaceSource, member: str) -> TextDocument:
     """Load *member* as text, flagging why it must stay read-only (if it must)."""
     if member_size(source, member) > MAX_EDIT_BYTES:
         return TextDocument("", "utf-8", b"", "\n", READ_ONLY_TOO_LARGE)
-    doc = decode_text(read_member_bytes(source, member))
-    if source.packaged and doc.editable:
-        doc.read_only_reason = READ_ONLY_PACKAGED
-    return doc
+    return decode_text(read_member_bytes(source, member))
+
+
+def rewrite_package_members(package: Path, replacements: dict[str, bytes]) -> None:
+    """
+    Replace members of a zip package in place, keeping everything else as it was.
+
+    Entry order, compression method, and timestamps of untouched members are
+    preserved, so a valid EPUB (stored ``mimetype`` first) stays valid. The new
+    package is written beside the original and swapped in only when complete.
+    """
+    package = Path(package)
+    tmp = package.with_name(f".{package.name}.checkmate-tmp")
+    now = time.localtime()[:6]
+    found: set[str] = set()
+    try:
+        with zipfile.ZipFile(package, "r") as zin, zipfile.ZipFile(tmp, "w") as zout:
+            zout.comment = zin.comment
+            for info in zin.infolist():
+                name = info.filename.replace("\\", "/")
+                replaced = name in replacements
+                out = zipfile.ZipInfo(info.filename, date_time=now if replaced else info.date_time)
+                out.compress_type = info.compress_type
+                out.external_attr = info.external_attr
+                out.create_system = info.create_system
+                out.comment = info.comment
+                if replaced:
+                    found.add(name)
+                    zout.writestr(out, replacements[name])
+                    continue
+                # Stream untouched members (audio/video can be large).
+                out.file_size = info.file_size
+                with zin.open(info) as src, zout.open(out, "w") as dst:
+                    shutil.copyfileobj(src, dst, 1024 * 1024)
+        missing = set(replacements) - found
+        if missing:
+            raise KeyError(", ".join(sorted(missing)))
+        os.replace(tmp, package)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _ensure_backup(
+    source: WorkspaceSource, member: str, session_backups: dict[str, str]
+) -> tuple[str, bool]:
+    """Back up the member (folder) or whole package once per editing session."""
+    key = PACKAGE_BACKUP_KEY if source.packaged else member
+    backup = session_backups.get(key, "")
+    created = False
+    if not backup or not Path(backup).is_file():
+        original = source.target if source.packaged else member_disk_path(source, member)
+        if original is None:
+            raise PermissionError(member)
+        bak = next_backup_path(original)
+        shutil.copy2(original, bak)
+        backup = str(bak)
+        session_backups[key] = backup
+        created = True
+    session_backups[member] = backup
+    return backup, created
 
 
 def save_member_text(
@@ -260,20 +353,22 @@ def save_member_text(
     *,
     session_backups: dict[str, str],
 ) -> SaveOutcome:
-    """Write *text* to *member*, backing the original up once per editing session."""
-    path = member_disk_path(source, member)
-    if path is None or not doc.editable:
+    """Write *text* to *member*, backing the original up once per editing session.
+
+    For packaged publications the member is replaced inside the package and the
+    backup is a copy of the whole package (``book.epub.bak``).
+    """
+    if not doc.editable:
+        raise PermissionError(member)
+    path = source.target if source.packaged else member_disk_path(source, member)
+    if path is None:
         raise PermissionError(member)
     data = encode_text(doc, text)
-    backup = session_backups.get(member, "")
-    created = False
-    if not backup or not Path(backup).is_file():
-        bak = next_backup_path(path)
-        shutil.copy2(path, bak)
-        backup = str(bak)
-        session_backups[member] = backup
-        created = True
-    path.write_bytes(data)
+    backup, created = _ensure_backup(source, member, session_backups)
+    if source.packaged:
+        rewrite_package_members(path, {member: data})
+    else:
+        path.write_bytes(data)
     return SaveOutcome(path, backup, created)
 
 
@@ -281,9 +376,16 @@ def revert_member(
     source: WorkspaceSource, member: str, session_backups: dict[str, str]
 ) -> Path:
     """Restore *member* from this session's backup. Raises FileNotFoundError if none."""
-    path = member_disk_path(source, member)
     backup = session_backups.get(member, "")
-    if path is None or not backup:
+    if not backup:
+        raise FileNotFoundError(member)
+    if source.packaged:
+        with zipfile.ZipFile(backup, "r") as zf:
+            original = zf.read(member)
+        rewrite_package_members(source.target, {member: original})
+        return source.target
+    path = member_disk_path(source, member)
+    if path is None:
         raise FileNotFoundError(member)
     restore_from_backup(backup, path)
     return path

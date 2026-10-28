@@ -786,6 +786,17 @@ def _reset_window_colours(win: wx.Window) -> None:
         return
     win.SetBackgroundColour(wx.NullColour)
     win.SetForegroundColour(wx.NullColour)
+    if sys.platform == "win32" and isinstance(win, wx.TreeCtrl):
+        # wxTreeCtrl passes the unset colour on as COLORREF 0, leaving black
+        # text on a black tree; -1 restores the system colours.
+        hwnd = _windows_hwnd(win)
+        if hwnd:
+            try:
+                send = ctypes.windll.user32.SendMessageW
+                send(hwnd, 0x111D, 0, ctypes.c_ssize_t(-1))  # TVM_SETBKCOLOR
+                send(hwnd, 0x111E, 0, ctypes.c_ssize_t(-1))  # TVM_SETTEXTCOLOR
+            except Exception:
+                pass
 
 
 def _clear_forced_colours(win: wx.Window) -> None:
