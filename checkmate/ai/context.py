@@ -356,6 +356,37 @@ def _ace_html_fallback_snippet(location: str) -> str:
     return ""
 
 
+def issue_member_position(
+    target: Path,
+    issue: Issue,
+    *,
+    cache: dict[str, str | None] | None = None,
+) -> tuple[str | None, int | None, int | None]:
+    """
+    Publication-relative (member, line, column) for an issue.
+
+    When the checker gave no line (Ace, some Nu messages), the line is located
+    from selector / snippet hints in the member text. Line/column may be None.
+    """
+    member, line, column = parse_issue_location_parts(issue.location)
+    if not member:
+        return None, None, None
+    member = _publication_relative_member(target, member)
+    store = cache if cache is not None else {}
+    if line is None:
+        if member not in store:
+            store[member] = _read_member_text(target, member)
+        text = store[member]
+        location = issue.location or ""
+        if text and ("·" in location or "·" in location):
+            line = _find_line_for_hints(text, _ace_location_parts(location)[1:])
+        if text and line is None and (
+            _is_markup_member(member) or _is_css_member(member)
+        ):
+            line = _find_line_for_hints(text, _issue_hint_tokens(issue))
+    return member, line, column
+
+
 def snippet_for_issue(
     target: Path,
     issue: Issue,
@@ -363,23 +394,15 @@ def snippet_for_issue(
     cache: dict[str, str | None] | None = None,
 ) -> str:
     """Source snippet at the issue location, or empty when it cannot be read."""
-    member, line, column = parse_issue_location_parts(issue.location)
+    store = cache if cache is not None else {}
+    member, line, column = issue_member_position(target, issue, cache=store)
     if not member:
         return _ace_html_fallback_snippet(issue.location)
-    member = _publication_relative_member(target, member)
-    store = cache if cache is not None else {}
     if member not in store:
         store[member] = _read_member_text(target, member)
     text = store[member]
     if not text:
         return _ace_html_fallback_snippet(issue.location)
-    if line is None and (
-        "·" in (issue.location or "") or "\u00b7" in (issue.location or "")
-    ):
-        hints = _ace_location_parts(issue.location)[1:]
-        line = _find_line_for_hints(text, hints)
-    if line is None and (_is_markup_member(member) or _is_css_member(member)):
-        line = _find_line_for_hints(text, _issue_hint_tokens(issue))
     snippet = compact_source_snippet(text, line, column)
     return snippet or _ace_html_fallback_snippet(issue.location)
 

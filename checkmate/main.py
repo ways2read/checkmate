@@ -5331,6 +5331,12 @@ class MainFrame(wx.Frame):
         self._displayed_counts: list[int] = []
         self._pending_fix_verify = None
         self._busy = False
+        # Edit files workspace and the re-check it asked for (runs without
+        # moving focus out of the workspace).
+        self._workspace = None
+        self._quiet_check = False
+        self._workspace_check = None
+        self._workspace_before: CheckResult | None = None
         self._overview_cancel: threading.Event | None = None
         self._overview_progress: wx.ProgressDialog | None = None
         self._overview_progress_timer: wx.Timer | None = None
@@ -5950,6 +5956,7 @@ class MainFrame(wx.Frame):
         else:
             self.issues_list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.on_issue_activated)
         self.issues_list.Bind(wx.EVT_CHAR_HOOK, self.on_issues_char_hook)
+        self.issues_list.Bind(wx.EVT_CONTEXT_MENU, self.on_issues_context_menu)
         self.issues_hint = wx.StaticText(
             panel,
             label=_("Press Enter or double-click an issue to read the full details."),
@@ -6074,6 +6081,15 @@ class MainFrame(wx.Frame):
             wx.ID_ANY, _("&Re-check publication\tF5")
         )
         tools_menu.AppendSeparator()
+        self.menu_edit_files = tools_menu.Append(
+            wx.ID_ANY, _("Browse and &edit files…\tCtrl+E")
+        )
+        self.menu_edit_files.SetHelp(
+            _(
+                "Browse the publication's files and edit them; in the Issues list, "
+                "opens the selected issue's file at its location"
+            )
+        )
         self.menu_package_epub = tools_menu.Append(
             wx.ID_ANY, _("&Package folder as EPUB…")
         )
@@ -6264,6 +6280,7 @@ class MainFrame(wx.Frame):
         self.menu_view_clipboard.Enable(clipboard_ok)
         self.menu_view_clipboard_report.Enable(current_clipboard)
         self.menu_package_epub.Enable(self._current_target_is_epub_folder())
+        self.menu_edit_files.Enable(self._workspace_target() is not None)
         # AI overview is hidden when features are off; only enable when shown.
         if self.ai_overview_btn is not None and ai_features_enabled():
             self.ai_overview_btn.Enable(enabled)
@@ -6376,6 +6393,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_copy_summary, self.menu_copy)
         self.Bind(wx.EVT_MENU, self.on_clear_results, self.menu_clear)
         self.Bind(wx.EVT_MENU, self.on_check, self.menu_check)
+        self.Bind(wx.EVT_MENU, self.on_open_workspace, self.menu_edit_files)
         self.Bind(wx.EVT_MENU, self.on_package_epub_folder, self.menu_package_epub)
         self.Bind(wx.EVT_MENU, self.on_settings, self.menu_settings)
         self.Bind(wx.EVT_MENU, self.on_settings, id=wx.ID_PREFERENCES)
@@ -6456,7 +6474,18 @@ class MainFrame(wx.Frame):
         from .dialog_trace import dlg_trace
 
         dlg_trace("main-frame close", self)
-        # Title bar close must always quit. Esc→Exit is filtered in _on_file_exit.
+        # Unsaved workspace edits are the one reason to stay open; otherwise the
+        # title bar close must always quit. Esc→Exit is filtered in _on_file_exit.
+        workspace = self._workspace
+        if (
+            workspace is not None
+            and workspace.has_unsaved_changes()
+            and event.CanVeto()
+        ):
+            workspace.Raise()
+            if not workspace.confirm_unsaved():
+                event.Veto()
+                return
         self._exiting = True
         self._stop_alt_inventory_open_timer()
         self._pending_alt_inventory = None
@@ -7696,7 +7725,7 @@ class MainFrame(wx.Frame):
         except ValueError:
             self.source_choice.SetSelection(0)
 
-    def _apply_result(self, result: CheckResult) -> None:
+    def _apply_result(self, result: CheckResult, *, announce: bool = True) -> None:
         self._last_result = result
         # Update content first (issues list must not steal focus afterward).
         self._show_result_text(
@@ -7711,7 +7740,8 @@ class MainFrame(wx.Frame):
         self._update_report_actions_enabled()
         self._update_result_status_icon()
         self._update_status_bar()
-        self._speak_status(result.announcement())
+        if announce:
+            self._speak_status(result.announcement())
         self._announce_result_pane()
         try:
             from .sounds import play_completion_sound
@@ -7845,6 +7875,133 @@ class MainFrame(wx.Frame):
         if reply == wx.YES:
             self.path_ctrl.SetValue(str(output_path))
             self.on_check(None)
+
+    def _workspace_target(self) -> Path | None:
+        """Local publication the Edit files workspace can open (not URLs or PDFs)."""
+        path = self._current_publication_path()
+        if path is None:
+            return None
+        from .publication import PublicationKind, classify_publication
+
+        try:
+            kind = classify_publication(path)
+        except OSError:
+            return None
+        if kind in (PublicationKind.PDF, PublicationKind.UNSUPPORTED):
+            return None
+        return path
+
+    def _focus_in_issues_list(self) -> bool:
+        focus = wx.Window.FindFocus()
+        ctrl = self.issues_list.ctrl
+        while focus is not None:
+            if focus is ctrl:
+                return True
+            focus = focus.GetParent()
+        return False
+
+    def on_open_workspace(self, _event: wx.CommandEvent | None) -> None:
+        issue = self._selected_issue() if self._focus_in_issues_list() else None
+        self._open_workspace(issue)
+
+    def _open_workspace(self, issue: Issue | None = None) -> None:
+        import zipfile
+
+        from .workspace import PublicationWorkspace
+        from .workspace_files import open_source
+
+        target = self._workspace_target()
+        if target is None:
+            wx.MessageBox(
+                _(
+                    "Check a publication file or folder on this computer first. "
+                    "Browsing and editing files is not available for web pages "
+                    "or PDF files."
+                ),
+                _("Edit files"),
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+        target = target.expanduser().resolve()
+        workspace = self._workspace
+        if workspace is not None and workspace.target != target:
+            if not workspace.confirm_unsaved():
+                return
+            workspace.Close(force=True)
+            workspace = None
+        created = workspace is None
+        if workspace is None:
+            try:
+                source = open_source(target)
+            except (OSError, zipfile.BadZipFile) as exc:
+                wx.MessageBox(
+                    _("Could not open {path}:\n{error}", path=target, error=exc),
+                    _("Edit files"),
+                    wx.OK | wx.ICON_ERROR,
+                    self,
+                )
+                return
+            workspace = PublicationWorkspace(self, source)
+            self._workspace = workspace
+        workspace.Show()
+        if workspace.IsIconized():
+            workspace.Iconize(False)
+        workspace.Raise()
+        if issue is not None:
+            from .ai.context import issue_member_position
+
+            member, line, column = issue_member_position(target, issue)
+            wx.CallAfter(workspace.open_location, member, line, column)
+        elif created:
+            wx.CallAfter(workspace.focus_files)
+
+    def on_workspace_closed(self, workspace) -> None:
+        if self._workspace is workspace:
+            self._workspace = None
+        if self._workspace_check is workspace:
+            self._workspace_check = None
+
+    def start_workspace_recheck(self, workspace) -> bool:
+        """Re-check the workspace's publication without moving focus. False if busy."""
+        if self._busy:
+            return False
+        target = workspace.target
+        before = None
+        if self._last_result is not None and self._last_result.target_path:
+            try:
+                if Path(self._last_result.target_path).expanduser().resolve() == target:
+                    before = self._last_result
+            except OSError:
+                pass
+        self.path_ctrl.SetValue(str(target))
+        self._quiet_check = True
+        self._workspace_check = workspace
+        self._workspace_before = before
+        self.on_check(None)
+        if not self._busy:
+            self._quiet_check = False
+            self._workspace_check = None
+            self._workspace_before = None
+            return False
+        return True
+
+    def on_issues_context_menu(self, event: wx.ContextMenuEvent) -> None:
+        issue = self._selected_issue()
+        if issue is None:
+            return
+        menu = wx.Menu()
+        details = menu.Append(wx.ID_ANY, _("Show &details"))
+        edit = menu.Append(wx.ID_ANY, _("&Edit at location\tCtrl+E"))
+        edit.Enable(self._workspace_target() is not None)
+        menu.Bind(wx.EVT_MENU, lambda _e: self._show_issue_details(), details)
+        menu.Bind(wx.EVT_MENU, lambda _e, i=issue: self._open_workspace(i), edit)
+        pos = event.GetPosition()
+        if pos == wx.DefaultPosition:
+            # Keyboard (Applications key / Shift+F10): open over the list.
+            pos = self.issues_list.ctrl.ClientToScreen((24, 24))
+        self.PopupMenu(menu, self.ScreenToClient(pos))
+        menu.Destroy()
 
     def _read_clipboard_markup(self) -> str:
         """Return clipboard text, preferring recognizable markup over CF_HTML chrome."""
@@ -7988,9 +8145,10 @@ class MainFrame(wx.Frame):
             play_started_sound()
         except Exception:
             pass
-        # Quiet focus so screen readers announce "Checking…".
+        # Quiet focus so screen readers announce "Checking…" (the workspace
+        # announces its own re-check, so keep focus there).
         self._show_result_text(
-            _("Checking…"), title=_("Checking…"), focus=True
+            _("Checking…"), title=_("Checking…"), focus=not self._quiet_check
         )
         self.issues_list.DeleteAllItems()
 
@@ -8024,8 +8182,10 @@ class MainFrame(wx.Frame):
         if announce:
             # Milestones only (tool start / warm-up): quiet focus into Result.
             self._show_result_text(
-                event.message, update_title=False, focus=True
+                event.message, update_title=False, focus=not self._quiet_check
             )
+            if self._quiet_check:
+                self._speak_status(event.message)
             return
         # Living updates (Ace stream / elapsed timer): refresh Result text and
         # speak with progress throttle — do not steal focus every tick.
@@ -8040,13 +8200,21 @@ class MainFrame(wx.Frame):
         self._set_busy(False, update_icon=False)
         pending = self._pending_fix_verify
         self._pending_fix_verify = None
-        self._apply_result(event.result)
+        quiet = self._quiet_check
+        self._quiet_check = False
+        workspace = self._workspace_check
+        self._workspace_check = None
+        before = self._workspace_before
+        self._workspace_before = None
+        self._apply_result(event.result, announce=not quiet)
         self._flush_pending_open_paths()
         # Layout (e.g. auto-show Issues) can settle after apply; reclaim again.
-        if _ANNOUNCE_MODE == "focus":
+        if _ANNOUNCE_MODE == "focus" and not quiet:
             wx.CallAfter(self._reclaim_focus_after_check)
         if pending is not None:
             wx.CallAfter(self._verify_applied_fix, pending, event.result)
+        if workspace is not None and workspace is self._workspace:
+            wx.CallAfter(workspace.on_recheck_finished, before, event.result)
 
     def _message_box_revert_or_keep(
         self,

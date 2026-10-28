@@ -53,13 +53,13 @@ def create_epub(source_dir: str | Path, output_path: str | Path) -> None:
         for file_path in source_dir.rglob("*"):
             if not file_path.is_file() or file_path.name == "mimetype":
                 continue
-            if _is_checkmate_artifact(file_path):
+            if is_checkmate_artifact(file_path):
                 continue
             arcname = str(file_path.relative_to(source_dir)).replace("\\", "/")
             epub.write(file_path, arcname)
 
 
-def _is_checkmate_artifact(path: Path) -> bool:
+def is_checkmate_artifact(path: Path) -> bool:
     """Fix backups and the edit changelog CheckMate leaves in exploded folders."""
     name = path.name
     return name.lower() == "checkmate-changelog.md" or bool(_BACKUP_NAME_RE.match(name))

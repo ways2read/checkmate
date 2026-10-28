@@ -224,6 +224,51 @@ def log_batch_fix_applied(
     return _append(log_path, "\n".join(lines))
 
 
+def log_manual_edit(
+    *,
+    target_path: str | Path,
+    member: str,
+    backup_path: str,
+) -> Path:
+    """Record a save from the Edit files workspace."""
+    target = Path(target_path)
+    bak_name = Path(backup_path).name if backup_path else "—"
+    lines = [
+        f"## {_utc_stamp()} — Manual edit saved",
+        "",
+        f"- **Publication:** `{target.name}`",
+        f"- **File edited:** `{member or '—'}`",
+        f"- **Backup file (before this editing session):** `{bak_name}`",
+        f"- **Backup path:** `{backup_path or '—'}`",
+        "",
+        "---",
+        "",
+    ]
+    return _append(changelog_path_for(target), "\n".join(lines))
+
+
+def log_manual_revert(
+    *,
+    target_path: str | Path,
+    member: str,
+    backup_path: str,
+) -> Path:
+    """Record that a workspace file was restored from its session backup."""
+    target = Path(target_path)
+    bak_name = Path(backup_path).name if backup_path else "—"
+    lines = [
+        f"## {_utc_stamp()} — Manual edit reverted",
+        "",
+        f"- **Publication:** `{target.name}`",
+        f"- **File restored:** `{member or '—'}`",
+        f"- **Restored from backup:** `{bak_name}`",
+        "",
+        "---",
+        "",
+    ]
+    return _append(changelog_path_for(target), "\n".join(lines))
+
+
 def log_fix_validation(
     *,
     target_path: str | Path,
