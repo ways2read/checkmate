@@ -5,7 +5,7 @@
   "native_name": "Русский",
   "display_name": "Russian",
   "direction": "ltr",
-  "source_msgid_hash": "45808bf61e951510",
+  "source_msgid_hash": "8691aad15d14bcc2",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Примечание: ответ ИИ снова был обрезан. Задайте уточняющий вопрос, например «Пожалуйста, продолжите».*",
     "&About": "&О программе",
@@ -924,6 +924,13 @@
     "Scintilla, with syntax highlighting": "Scintilla с подсветкой синтаксиса",
     "The editor on the Code tab of Browse and edit files. The standard text box works with all screen readers. Scintilla colours the code to make it easier to read, but not every screen reader can read it (Narrator cannot).": "Редактор на вкладке «Код» в окне «Просмотр и редактирование файлов». Стандартное текстовое поле работает со всеми программами экранного доступа. Scintilla раскрашивает код, чтобы его было легче читать, но не все программы экранного доступа могут его прочитать (Экранный диктор не может).",
     "There is no preview or code to show for this type of file.": "Для этого типа файлов нечего показать: нет ни просмотра, ни кода.",
-    "{file} has no preview. See the Code tab.": "Для файла {file} нет просмотра. Откройте вкладку «Код»."
+    "{file} has no preview. See the Code tab.": "Для файла {file} нет просмотра. Откройте вкладку «Код».",
+    "For&mat code": "Фор&матировать код",
+    "Lay out the code with one element or declaration per line, indented by nesting. Only spacing changes; save to keep it (Ctrl+Shift+F)": "Размещает код по одному элементу или объявлению в строке с отступами по вложенности. Меняются только пробелы; сохраните, чтобы оставить результат (Ctrl+Shift+F)",
+    "Formatting is not available for this type of file.": "Форматирование недоступно для этого типа файлов.",
+    "{file} is already formatted.": "Файл {file} уже отформатирован.",
+    "Formatted {file}. Save to keep the new layout, or press Ctrl+Z to undo it.": "Файл {file} отформатирован. Сохраните, чтобы оставить новое оформление, или нажмите Ctrl+Z, чтобы отменить его.",
+    "Could not format {file}: </{name}> on line {line} has no matching start tag.": "Не удалось отформатировать {file}: у </{name}> в строке {line} нет соответствующего открывающего тега.",
+    "Could not format {file}: <{name}> on line {line} is never closed.": "Не удалось отформатировать {file}: тег <{name}> в строке {line} не закрыт."
   }
 }

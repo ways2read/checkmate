@@ -5,7 +5,7 @@
   "native_name": "Español",
   "display_name": "Spanish",
   "direction": "ltr",
-  "source_msgid_hash": "45808bf61e951510",
+  "source_msgid_hash": "8691aad15d14bcc2",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Nota: La respuesta de la IA se cortó de nuevo. Haz una pregunta de seguimiento como “Por favor, continúa”.*",
     "&About": "&Acerca de",
@@ -924,6 +924,13 @@
     "Scintilla, with syntax highlighting": "Scintilla, con resaltado de sintaxis",
     "The editor on the Code tab of Browse and edit files. The standard text box works with all screen readers. Scintilla colours the code to make it easier to read, but not every screen reader can read it (Narrator cannot).": "El editor de la pestaña Código de Examinar y editar archivos. El cuadro de texto estándar funciona con todos los lectores de pantalla. Scintilla colorea el código para facilitar su lectura, pero no todos los lectores de pantalla pueden leerlo (Narrador no puede).",
     "There is no preview or code to show for this type of file.": "No hay vista previa ni código que mostrar para este tipo de archivo.",
-    "{file} has no preview. See the Code tab.": "{file} no tiene vista previa. Consulte la pestaña Código."
+    "{file} has no preview. See the Code tab.": "{file} no tiene vista previa. Consulte la pestaña Código.",
+    "For&mat code": "Dar &formato al código",
+    "Lay out the code with one element or declaration per line, indented by nesting. Only spacing changes; save to keep it (Ctrl+Shift+F)": "Organiza el código con un elemento o una declaración por línea, con sangría según el anidamiento. Solo cambian los espacios; guarde para conservarlo (Ctrl+Shift+F)",
+    "Formatting is not available for this type of file.": "No se puede dar formato a este tipo de archivo.",
+    "{file} is already formatted.": "{file} ya tiene formato.",
+    "Formatted {file}. Save to keep the new layout, or press Ctrl+Z to undo it.": "Se dio formato a {file}. Guarde para conservar la nueva organización o pulse Ctrl+Z para deshacerla.",
+    "Could not format {file}: </{name}> on line {line} has no matching start tag.": "No se pudo dar formato a {file}: </{name}> en la línea {line} no tiene una etiqueta de apertura correspondiente.",
+    "Could not format {file}: <{name}> on line {line} is never closed.": "No se pudo dar formato a {file}: <{name}> en la línea {line} nunca se cierra."
   }
 }

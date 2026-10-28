@@ -132,6 +132,10 @@ class CodeEditor:
     def get_text(self) -> str:
         raise NotImplementedError
 
+    def replace_all(self, text: str) -> None:
+        """Replace the whole text as one edit the user can undo (fires change events)."""
+        raise NotImplementedError
+
     def set_editable(self, editable: bool) -> None:
         raise NotImplementedError
 
@@ -152,6 +156,9 @@ class CodeEditor:
 
     def apply_theme(self) -> None:
         """Re-colour after a theme change (Scintilla only)."""
+
+    def mark_saved(self) -> None:
+        """The text now matches the file on disk."""
 
     def set_name(self, name: str) -> None:
         self.ctrl.SetName(name)
@@ -174,6 +181,11 @@ class NativeCodeEditor(CodeEditor):
 
     def get_text(self) -> str:
         return self.ctrl.GetValue()
+
+    def replace_all(self, text: str) -> None:
+        # Replace() records a delete and an insert (two undo steps); one write is one.
+        self.ctrl.SetSelection(-1, -1)
+        self.ctrl.WriteText(text)
 
     def set_editable(self, editable: bool) -> None:
         self.ctrl.SetEditable(editable)
@@ -302,6 +314,19 @@ class ScintillaCodeEditor(CodeEditor):
     def get_text(self) -> str:
         return self.ctrl.GetText()
 
+    def mark_saved(self) -> None:
+        self.ctrl.SetSavePoint()
+
+    def replace_all(self, text: str) -> None:
+        c = self.ctrl
+        c.BeginUndoAction()
+        try:
+            c.SetTargetStart(0)
+            c.SetTargetEnd(c.GetLength())
+            c.ReplaceTarget(text)
+        finally:
+            c.EndUndoAction()
+
     def set_editable(self, editable: bool) -> None:
         self.ctrl.SetReadOnly(not editable)
 
@@ -331,7 +356,9 @@ class ScintillaCodeEditor(CodeEditor):
     def bind_changed(self, handler: Callable[[], None]) -> None:
         def on_change(event: wx.Event) -> None:
             event.Skip()
-            if not self._setting:
+            # Change events can arrive after set_text returns; only real edits
+            # since the last load or save count.
+            if not self._setting and self.ctrl.GetModify():
                 handler()
 
         self.ctrl.Bind(stc.EVT_STC_CHANGE, on_change)

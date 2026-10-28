@@ -15,8 +15,9 @@ from pathlib import Path
 import wx
 import wx.dataview as dv
 
+from . import code_format
+from .code_editor import CodeEditor, create_code_editor, line_column_of, offset_of
 from .i18n import _
-from .code_editor import CodeEditor, create_code_editor
 from .models import CheckResult
 from .settings import autosave_edits, code_editor
 from .workspace_files import (
@@ -273,16 +274,29 @@ class PublicationWorkspace(wx.Frame):
         btns = wx.BoxSizer(wx.HORIZONTAL)
         self._save_btn = wx.Button(panel, label=_("&Save"))
         self._recheck_btn = wx.Button(panel, label=_("Save and &re-check"))
+        self._format_btn = wx.Button(panel, label=_("For&mat code"))
         self._revert_btn = wx.Button(panel, label=_("Re&vert file"))
         self._external_btn = wx.Button(panel, label=_("Open in &default app"))
         close_btn = wx.Button(panel, wx.ID_CLOSE, label=_("&Close"))
         self._save_btn.SetToolTip(_("Save this file (Ctrl+S)"))
         self._recheck_btn.SetToolTip(_("Save, then validate the publication again (F5)"))
+        self._format_btn.SetToolTip(
+            _(
+                "Lay out the code with one element or declaration per line, indented "
+                "by nesting. Only spacing changes; save to keep it (Ctrl+Shift+F)"
+            )
+        )
         self._revert_btn.SetToolTip(
             _("Restore this file to how it was before this editing session")
         )
         self._external_btn.SetToolTip(_("Open this file in its default application"))
-        for btn in (self._save_btn, self._recheck_btn, self._revert_btn, self._external_btn):
+        for btn in (
+            self._save_btn,
+            self._recheck_btn,
+            self._format_btn,
+            self._revert_btn,
+            self._external_btn,
+        ):
             btns.Add(btn, 0, wx.RIGHT, 8)
         btns.AddStretchSpacer(1)
         btns.Add(close_btn, 0)
@@ -290,6 +304,7 @@ class PublicationWorkspace(wx.Frame):
 
         self._save_btn.Bind(wx.EVT_BUTTON, lambda _e: self.save())
         self._recheck_btn.Bind(wx.EVT_BUTTON, lambda _e: self.save_and_recheck())
+        self._format_btn.Bind(wx.EVT_BUTTON, lambda _e: self.format_code())
         self._revert_btn.Bind(wx.EVT_BUTTON, lambda _e: self.revert_file())
         self._external_btn.Bind(wx.EVT_BUTTON, lambda _e: self.open_external())
         close_btn.Bind(wx.EVT_BUTTON, lambda _e: self.Close())
@@ -300,6 +315,7 @@ class PublicationWorkspace(wx.Frame):
             "save": self.save,
             "recheck": self.save_and_recheck,
             "goto": self.go_to_line,
+            "format": self.format_code,
             "close": self.Close,
             "pane": self._toggle_pane,
             "prev_page": lambda: self._switch_page(_PAGE_PREVIEW),
@@ -314,6 +330,7 @@ class PublicationWorkspace(wx.Frame):
                     (wx.ACCEL_CTRL, ord("S"), ids["save"]),
                     (wx.ACCEL_NORMAL, wx.WXK_F5, ids["recheck"]),
                     (wx.ACCEL_CTRL, ord("G"), ids["goto"]),
+                    (wx.ACCEL_CTRL | wx.ACCEL_SHIFT, ord("F"), ids["format"]),
                     (wx.ACCEL_CTRL, ord("W"), ids["close"]),
                     (wx.ACCEL_NORMAL, wx.WXK_F6, ids["pane"]),
                     (wx.ACCEL_CTRL, wx.WXK_PAGEUP, ids["prev_page"]),
@@ -927,6 +944,7 @@ class PublicationWorkspace(wx.Frame):
         except OSError:
             logger.debug("Could not write edit changelog", exc_info=True)
         self._dirty = False
+        self._editor.mark_saved()
         self._disk_mtime = source_mtime_ns(self._source, self._member)
         self._sync_preview_copy(self._member)
         self._update_title()
@@ -949,6 +967,53 @@ class PublicationWorkspace(wx.Frame):
         self._checking = True
         self._update_buttons()
         self._set_status(_("Checking…"))
+
+    def format_code(self) -> None:
+        """Lay out the open file's code for reading, as an ordinary unsaved edit."""
+        self._switch_page(_PAGE_CODE, focus=False)
+        member = self._member
+        if member is None or self._doc is None or not self._doc.editable:
+            return
+        if not code_format.can_format(member):
+            self._set_status(_("Formatting is not available for this type of file."))
+            return
+        text = self._editor.get_text()
+        try:
+            formatted = code_format.format_code(text, member)
+        except code_format.FormatError as exc:
+            self._set_status(self._format_error_message(member, exc))
+            return
+        if formatted is None:
+            return
+        if formatted == text:
+            self._set_status(_("{file} is already formatted.", file=member))
+            return
+        # Keep the caret on the same character; only whitespace moved.
+        caret = code_format.map_offset(text, formatted, offset_of(text, *self._editor.line_column()))
+        self._editor.replace_all(formatted)
+        self._editor.place_caret(*line_column_of(formatted[:caret]))
+        self._update_position()
+        self._set_status(
+            _(
+                "Formatted {file}. Save to keep the new layout, or press Ctrl+Z to undo it.",
+                file=member,
+            )
+        )
+
+    def _format_error_message(self, member: str, exc: code_format.FormatError) -> str:
+        if exc.kind == "unmatched_end":
+            return _(
+                "Could not format {file}: </{name}> on line {line} has no matching start tag.",
+                file=member,
+                name=exc.name,
+                line=exc.line,
+            )
+        return _(
+            "Could not format {file}: <{name}> on line {line} is never closed.",
+            file=member,
+            name=exc.name,
+            line=exc.line,
+        )
 
     def revert_file(self) -> None:
         member = self._member
@@ -1047,6 +1112,9 @@ class PublicationWorkspace(wx.Frame):
         editable = self._doc is not None and self._doc.editable
         self._save_btn.Enable(editable and self._dirty)
         self._recheck_btn.Enable(not self._checking)
+        self._format_btn.Enable(
+            editable and self._member is not None and code_format.can_format(self._member)
+        )
         self._revert_btn.Enable(
             self._member is not None and self._member in self._session_backups
         )

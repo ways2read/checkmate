@@ -5,7 +5,7 @@
   "native_name": "Français",
   "display_name": "French",
   "direction": "ltr",
-  "source_msgid_hash": "45808bf61e951510",
+  "source_msgid_hash": "8691aad15d14bcc2",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Remarque : la réponse de l’IA a encore été coupée. Posez une question de suivi telle que « Veuillez continuer. »*",
     "&About": "À &propos",
@@ -924,6 +924,13 @@
     "Scintilla, with syntax highlighting": "Scintilla, avec coloration syntaxique",
     "The editor on the Code tab of Browse and edit files. The standard text box works with all screen readers. Scintilla colours the code to make it easier to read, but not every screen reader can read it (Narrator cannot).": "L’éditeur de l’onglet Code de Parcourir et modifier les fichiers. La zone de texte standard fonctionne avec tous les lecteurs d’écran. Scintilla colore le code pour le rendre plus lisible, mais tous les lecteurs d’écran ne peuvent pas le lire (le Narrateur ne le peut pas).",
     "There is no preview or code to show for this type of file.": "Aucun aperçu ni code à afficher pour ce type de fichier.",
-    "{file} has no preview. See the Code tab.": "{file} n’a pas d’aperçu. Consultez l’onglet Code."
+    "{file} has no preview. See the Code tab.": "{file} n’a pas d’aperçu. Consultez l’onglet Code.",
+    "For&mat code": "&Mettre en forme le code",
+    "Lay out the code with one element or declaration per line, indented by nesting. Only spacing changes; save to keep it (Ctrl+Shift+F)": "Met en page le code avec un élément ou une déclaration par ligne, indenté selon l’imbrication. Seuls les espacements changent ; enregistrez pour conserver le résultat (Ctrl+Shift+F)",
+    "Formatting is not available for this type of file.": "La mise en forme n’est pas disponible pour ce type de fichier.",
+    "{file} is already formatted.": "{file} est déjà mis en forme.",
+    "Formatted {file}. Save to keep the new layout, or press Ctrl+Z to undo it.": "{file} a été mis en forme. Enregistrez pour conserver la nouvelle mise en page, ou appuyez sur Ctrl+Z pour l’annuler.",
+    "Could not format {file}: </{name}> on line {line} has no matching start tag.": "Impossible de mettre en forme {file} : </{name}> à la ligne {line} n’a pas de balise ouvrante correspondante.",
+    "Could not format {file}: <{name}> on line {line} is never closed.": "Impossible de mettre en forme {file} : <{name}> à la ligne {line} n’est jamais fermé."
   }
 }

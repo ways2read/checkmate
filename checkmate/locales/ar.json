@@ -5,7 +5,7 @@
   "native_name": "العربية",
   "display_name": "Arabic",
   "direction": "rtl",
-  "source_msgid_hash": "45808bf61e951510",
+  "source_msgid_hash": "8691aad15d14bcc2",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*ملاحظة: تم قطع رد الذكاء الاصطناعي مجددًا. اطرح سؤال متابعة مثل ”يرجى الاستمرار.“*",
     "&About": "&عن البرنامج",
@@ -924,6 +924,13 @@
     "Scintilla, with syntax highlighting": "Scintilla، مع تمييز بناء الجملة",
     "The editor on the Code tab of Browse and edit files. The standard text box works with all screen readers. Scintilla colours the code to make it easier to read, but not every screen reader can read it (Narrator cannot).": "المحرر في علامة التبويب الرمز ضمن استعراض الملفات وتحريرها. يعمل مربع النص القياسي مع جميع قارئات الشاشة. يلوّن Scintilla التعليمات البرمجية لتسهيل قراءتها، لكن ليست كل قارئات الشاشة قادرة على قراءته (الراوي لا يستطيع).",
     "There is no preview or code to show for this type of file.": "لا توجد معاينة أو تعليمات برمجية لعرضها لهذا النوع من الملفات.",
-    "{file} has no preview. See the Code tab.": "لا تتوفر معاينة لـ {file}. راجع علامة التبويب الرمز."
+    "{file} has no preview. See the Code tab.": "لا تتوفر معاينة لـ {file}. راجع علامة التبويب الرمز.",
+    "For&mat code": "تن&سيق التعليمات البرمجية",
+    "Lay out the code with one element or declaration per line, indented by nesting. Only spacing changes; save to keep it (Ctrl+Shift+F)": "ينظّم التعليمات البرمجية بوضع عنصر أو تعريف واحد في كل سطر مع إزاحة حسب التداخل. تتغير المسافات فقط؛ احفظ للاحتفاظ بالتنسيق (Ctrl+Shift+F)",
+    "Formatting is not available for this type of file.": "التنسيق غير متاح لهذا النوع من الملفات.",
+    "{file} is already formatted.": "{file} منسّق بالفعل.",
+    "Formatted {file}. Save to keep the new layout, or press Ctrl+Z to undo it.": "تم تنسيق {file}. احفظ للاحتفاظ بالتخطيط الجديد، أو اضغط Ctrl+Z للتراجع عنه.",
+    "Could not format {file}: </{name}> on line {line} has no matching start tag.": "تعذّر تنسيق {file}: الوسم </{name}> في السطر {line} ليس له وسم بداية مطابق.",
+    "Could not format {file}: <{name}> on line {line} is never closed.": "تعذّر تنسيق {file}: الوسم <{name}> في السطر {line} لم يُغلق أبدًا."
   }
 }

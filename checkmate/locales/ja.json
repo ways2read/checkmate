@@ -5,7 +5,7 @@
   "native_name": "日本語",
   "display_name": "Japanese",
   "direction": "ltr",
-  "source_msgid_hash": "45808bf61e951510",
+  "source_msgid_hash": "8691aad15d14bcc2",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*注: AIの返答が途中で切れました。「続けてください」などの補足を送信してください。*",
     "&About": "バージョン情報(&A)",
@@ -924,6 +924,13 @@
     "Scintilla, with syntax highlighting": "Scintilla (構文の強調表示あり)",
     "The editor on the Code tab of Browse and edit files. The standard text box works with all screen readers. Scintilla colours the code to make it easier to read, but not every screen reader can read it (Narrator cannot).": "[ファイルの参照と編集] の [コード] タブで使うエディターです。標準のテキスト ボックスはすべてのスクリーン リーダーで使えます。Scintilla はコードを色分けして読みやすくしますが、すべてのスクリーン リーダーで読めるわけではありません (ナレーターでは読めません)。",
     "There is no preview or code to show for this type of file.": "この種類のファイルには、表示するプレビューもコードもありません。",
-    "{file} has no preview. See the Code tab.": "{file} にはプレビューがありません。[コード] タブを参照してください。"
+    "{file} has no preview. See the Code tab.": "{file} にはプレビューがありません。[コード] タブを参照してください。",
+    "For&mat code": "コードの整形(&M)",
+    "Lay out the code with one element or declaration per line, indented by nesting. Only spacing changes; save to keep it (Ctrl+Shift+F)": "要素または宣言を 1 行に 1 つずつ配置し、入れ子に応じてインデントします。変わるのは空白だけです。保持するには保存してください (Ctrl+Shift+F)",
+    "Formatting is not available for this type of file.": "この種類のファイルは整形できません。",
+    "{file} is already formatted.": "{file} は既に整形されています。",
+    "Formatted {file}. Save to keep the new layout, or press Ctrl+Z to undo it.": "{file} を整形しました。新しいレイアウトを保持するには保存し、元に戻すには Ctrl+Z キーを押します。",
+    "Could not format {file}: </{name}> on line {line} has no matching start tag.": "{file} を整形できませんでした: {line} 行目の </{name}> に対応する開始タグがありません。",
+    "Could not format {file}: <{name}> on line {line} is never closed.": "{file} を整形できませんでした: {line} 行目の <{name}> が閉じられていません。"
   }
 }
