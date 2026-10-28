@@ -8546,6 +8546,8 @@ class MainFrame(wx.Frame):
             if dlg.ShowModal() != wx.ID_OK:
                 return
             dlg.apply()
+        if self._workspace is not None:
+            self._workspace.apply_settings()
         verdict = (
             self._last_result.verdict if self._last_result is not None else None
         )

@@ -37,7 +37,7 @@ TEXT_SUFFIXES = frozenset(
         ".pls",
     }
 )
-# Shown by the browser engine itself; other text files preview as source.
+# Shown on the Preview tab; other text files show only on the Code tab.
 RENDER_SUFFIXES = frozenset(
     {
         ".xhtml",
@@ -262,10 +262,6 @@ def encode_text(doc: TextDocument, text: str) -> bytes:
 
 def is_rendered_member(member: str) -> bool:
     return Path(member).suffix.lower() in RENDER_SUFFIXES
-
-
-def is_preview_member(member: str) -> bool:
-    return is_rendered_member(member) or is_text_member(member)
 
 
 def source_mtime_ns(source: WorkspaceSource, member: str) -> int | None:

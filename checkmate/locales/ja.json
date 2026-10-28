@@ -5,7 +5,7 @@
   "native_name": "日本語",
   "display_name": "Japanese",
   "direction": "ltr",
-  "source_msgid_hash": "12aa418d9974181f",
+  "source_msgid_hash": "45808bf61e951510",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*注: AIの返答が途中で切れました。「続けてください」などの補足を送信してください。*",
     "&About": "バージョン情報(&A)",
@@ -903,7 +903,6 @@
     "Preview: press Enter to browse the page. Inside the page, Escape returns to the file list, and Ctrl+Tab leaves the page.": "プレビュー: Enter キーを押すとページを参照できます。ページ内では、Esc キーでファイル一覧に戻り、Ctrl+Tab でページから移動します。",
     "Select a file in the list to preview it.": "一覧でファイルを選択するとプレビューできます。",
     "Text": "テキスト",
-    "There is no preview for this type of file.": "この種類のファイルにはプレビューがありません。",
     "{file} is not a text file, so it can only be previewed.": "{file} はテキスト ファイルではないため、プレビューのみ可能です。",
     "Start checking immediately": "すぐにチェックを開始する",
     "When checked, CheckMate checks a file or folder as soon as you choose, drop, or open it. When unchecked, it is only loaded, so you can browse and edit its files first; press F5 to check.": "オンにすると、ファイルやフォルダーを選択、ドロップ、または開いた時点で CheckMate がすぐにチェックします。オフにすると読み込みだけを行うので、先にファイルを参照して編集できます。チェックするには F5 キーを押します。",
@@ -917,6 +916,14 @@
     "Select a file in the list to see its code.": "一覧でファイルを選択するとコードが表示されます。",
     "{file} has no code to show. See the Preview tab.": "{file} には表示するコードがありません。[プレビュー] タブを参照してください。",
     "Save edits automatically when leaving a file": "ファイルを離れるときに編集内容を自動的に保存する",
-    "In Browse and edit files, save your changes without asking when you move to another file or close the window. When unchecked, CheckMate asks whether to save them.": "[ファイルの参照と編集] で、別のファイルに移動したりウィンドウを閉じたりするときに、確認せずに変更を保存します。オフにすると、保存するかどうかを CheckMate が確認します。"
+    "In Browse and edit files, save your changes without asking when you move to another file or close the window. When unchecked, CheckMate asks whether to save them.": "[ファイルの参照と編集] で、別のファイルに移動したりウィンドウを閉じたりするときに、確認せずに変更を保存します。オフにすると、保存するかどうかを CheckMate が確認します。",
+    "Editing": "編集",
+    "Code &editor:": "コード エディター(&E):",
+    "Code editor": "コード エディター",
+    "Standard text box": "標準のテキスト ボックス",
+    "Scintilla, with syntax highlighting": "Scintilla (構文の強調表示あり)",
+    "The editor on the Code tab of Browse and edit files. The standard text box works with all screen readers. Scintilla colours the code to make it easier to read, but not every screen reader can read it (Narrator cannot).": "[ファイルの参照と編集] の [コード] タブで使うエディターです。標準のテキスト ボックスはすべてのスクリーン リーダーで使えます。Scintilla はコードを色分けして読みやすくしますが、すべてのスクリーン リーダーで読めるわけではありません (ナレーターでは読めません)。",
+    "There is no preview or code to show for this type of file.": "この種類のファイルには、表示するプレビューもコードもありません。",
+    "{file} has no preview. See the Code tab.": "{file} にはプレビューがありません。[コード] タブを参照してください。"
   }
 }

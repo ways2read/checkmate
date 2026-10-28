@@ -269,6 +269,19 @@ def autosave_edits() -> bool:
     return bool(read_settings().get("autosave_edits", False))
 
 
+# Browse and edit files: the native text box suits every screen reader;
+# Scintilla adds syntax highlighting but only some screen readers support it.
+EDITOR_NATIVE = "native"
+EDITOR_SCINTILLA = "scintilla"
+CODE_EDITORS: tuple[str, ...] = (EDITOR_NATIVE, EDITOR_SCINTILLA)
+
+
+def code_editor() -> str:
+    """Editor control for the Code tab: ``native`` or ``scintilla``."""
+    value = read_settings().get("code_editor", EDITOR_NATIVE)
+    return value if value in CODE_EDITORS else EDITOR_NATIVE
+
+
 def color_theme() -> str:
     """Selected UI color theme (``system``, ``light``, or ``dark``)."""
     from .ui_appearance import normalize_color_theme

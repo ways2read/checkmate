@@ -5,7 +5,7 @@
   "native_name": "Français",
   "display_name": "French",
   "direction": "ltr",
-  "source_msgid_hash": "12aa418d9974181f",
+  "source_msgid_hash": "45808bf61e951510",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Remarque : la réponse de l’IA a encore été coupée. Posez une question de suivi telle que « Veuillez continuer. »*",
     "&About": "À &propos",
@@ -903,7 +903,6 @@
     "Preview: press Enter to browse the page. Inside the page, Escape returns to the file list, and Ctrl+Tab leaves the page.": "Aperçu : appuyez sur Entrée pour parcourir la page. Dans la page, Échap revient à la liste des fichiers et Ctrl+Tab quitte la page.",
     "Select a file in the list to preview it.": "Sélectionnez un fichier dans la liste pour en afficher l’aperçu.",
     "Text": "Texte",
-    "There is no preview for this type of file.": "Aucun aperçu n’est disponible pour ce type de fichier.",
     "{file} is not a text file, so it can only be previewed.": "{file} n’est pas un fichier texte ; il ne peut être affiché qu’en aperçu.",
     "Start checking immediately": "Lancer la vérification immédiatement",
     "When checked, CheckMate checks a file or folder as soon as you choose, drop, or open it. When unchecked, it is only loaded, so you can browse and edit its files first; press F5 to check.": "Si cette option est cochée, CheckMate vérifie un fichier ou un dossier dès que vous le choisissez, le déposez ou l’ouvrez. Si elle est décochée, il est seulement chargé, ce qui vous permet d’abord de parcourir et de modifier ses fichiers ; appuyez sur F5 pour le vérifier.",
@@ -917,6 +916,14 @@
     "Select a file in the list to see its code.": "Sélectionnez un fichier dans la liste pour en afficher le code.",
     "{file} has no code to show. See the Preview tab.": "{file} n’a pas de code à afficher. Consultez l’onglet Aperçu.",
     "Save edits automatically when leaving a file": "Enregistrer automatiquement les modifications en quittant un fichier",
-    "In Browse and edit files, save your changes without asking when you move to another file or close the window. When unchecked, CheckMate asks whether to save them.": "Dans Parcourir et modifier les fichiers, enregistre vos modifications sans demander lorsque vous passez à un autre fichier ou fermez la fenêtre. Si cette option est décochée, CheckMate demande s’il faut les enregistrer."
+    "In Browse and edit files, save your changes without asking when you move to another file or close the window. When unchecked, CheckMate asks whether to save them.": "Dans Parcourir et modifier les fichiers, enregistre vos modifications sans demander lorsque vous passez à un autre fichier ou fermez la fenêtre. Si cette option est décochée, CheckMate demande s’il faut les enregistrer.",
+    "Editing": "Édition",
+    "Code &editor:": "Éditeur de &code :",
+    "Code editor": "Éditeur de code",
+    "Standard text box": "Zone de texte standard",
+    "Scintilla, with syntax highlighting": "Scintilla, avec coloration syntaxique",
+    "The editor on the Code tab of Browse and edit files. The standard text box works with all screen readers. Scintilla colours the code to make it easier to read, but not every screen reader can read it (Narrator cannot).": "L’éditeur de l’onglet Code de Parcourir et modifier les fichiers. La zone de texte standard fonctionne avec tous les lecteurs d’écran. Scintilla colore le code pour le rendre plus lisible, mais tous les lecteurs d’écran ne peuvent pas le lire (le Narrateur ne le peut pas).",
+    "There is no preview or code to show for this type of file.": "Aucun aperçu ni code à afficher pour ce type de fichier.",
+    "{file} has no preview. See the Code tab.": "{file} n’a pas d’aperçu. Consultez l’onglet Code."
   }
 }

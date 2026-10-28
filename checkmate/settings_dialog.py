@@ -9,11 +9,14 @@ from .i18n import _
 from .settings import (
     COLOR_THEME_LABELS,
     COLOR_THEMES,
+    CODE_EDITORS,
     DEFAULT_COLOR_THEME,
     DEFAULT_EPUB_CHECKERS,
     DEFAULT_HTML_CHECKERS,
     DEFAULT_SOUND_SCHEME,
     DEFAULT_VERAPDF_FLAVOUR,
+    EDITOR_NATIVE,
+    EDITOR_SCINTILLA,
     EPUB_CHECKERS,
     EPUB_CHECKERS_LABELS,
     HTML_CHECKERS,
@@ -26,6 +29,7 @@ from .settings import (
     ai_send_kb_article_body,
     autosave_edits,
     check_immediately,
+    code_editor,
     color_theme,
     epub_checkers,
     html_checkers,
@@ -61,7 +65,7 @@ def _fill_choice(
 
 
 class SettingsDialog(wx.Dialog):
-    """Edit general prefs and checker profiles on three tabs; save on OK."""
+    """Edit general prefs, checker profiles, editing, and AI on tabs; save on OK."""
 
     def __init__(self, parent: wx.Window) -> None:
         super().__init__(
@@ -74,6 +78,7 @@ class SettingsDialog(wx.Dialog):
         self.book.SetName(_("Settings"))
         self.book.AddPage(self._build_general_page(self.book), _("General"))
         self.book.AddPage(self._build_checkers_page(self.book), _("Checkers"))
+        self.book.AddPage(self._build_editing_page(self.book), _("Editing"))
         self.book.AddPage(self._build_ai_page(self.book), _("AI"))
         root.Add(self.book, 1, wx.EXPAND | wx.ALL, 12)
 
@@ -103,19 +108,6 @@ class SettingsDialog(wx.Dialog):
             )
         )
         sizer.Add(self.check_immediately_cb, 0, wx.ALL, 8)
-
-        self.autosave_edits_cb = wx.CheckBox(
-            page, label=_("Save edits automatically when leaving a file")
-        )
-        self.autosave_edits_cb.SetValue(autosave_edits())
-        self.autosave_edits_cb.SetToolTip(
-            _(
-                "In Browse and edit files, save your changes without asking when "
-                "you move to another file or close the window. When unchecked, "
-                "CheckMate asks whether to save them."
-            )
-        )
-        sizer.Add(self.autosave_edits_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         self.show_issues_cb = wx.CheckBox(page, label=_("Show issues always"))
         self.show_issues_cb.SetValue(show_issues_always())
@@ -169,6 +161,51 @@ class SettingsDialog(wx.Dialog):
             )
         )
         sizer.Add(self.theme_choice, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
+        page.SetSizer(sizer)
+        return page
+
+    def _build_editing_page(self, book: wx.Notebook) -> wx.Panel:
+        page = wx.Panel(book)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        sizer.Add(
+            wx.StaticText(page, label=_("Code &editor:")), 0, wx.LEFT | wx.RIGHT | wx.TOP, 8
+        )
+        self.code_editor_choice = wx.Choice(page)
+        self._code_editor_values = _fill_choice(
+            self.code_editor_choice,
+            CODE_EDITORS,
+            {
+                EDITOR_NATIVE: _("Standard text box"),
+                EDITOR_SCINTILLA: _("Scintilla, with syntax highlighting"),
+            },
+            code_editor(),
+            translate=False,
+        )
+        self.code_editor_choice.SetName(_("Code editor"))
+        self.code_editor_choice.SetToolTip(
+            _(
+                "The editor on the Code tab of Browse and edit files. The standard "
+                "text box works with all screen readers. Scintilla colours the code "
+                "to make it easier to read, but not every screen reader can read it "
+                "(Narrator cannot)."
+            )
+        )
+        sizer.Add(self.code_editor_choice, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
+        self.autosave_edits_cb = wx.CheckBox(
+            page, label=_("Save edits automatically when leaving a file")
+        )
+        self.autosave_edits_cb.SetValue(autosave_edits())
+        self.autosave_edits_cb.SetToolTip(
+            _(
+                "In Browse and edit files, save your changes without asking when "
+                "you move to another file or close the window. When unchecked, "
+                "CheckMate asks whether to save them."
+            )
+        )
+        sizer.Add(self.autosave_edits_cb, 0, wx.ALL, 8)
 
         page.SetSizer(sizer)
         return page
@@ -363,6 +400,9 @@ class SettingsDialog(wx.Dialog):
         kwargs: dict = {
             "check_immediately": bool(self.check_immediately_cb.GetValue()),
             "autosave_edits": bool(self.autosave_edits_cb.GetValue()),
+            "code_editor": self._selected(
+                self.code_editor_choice, self._code_editor_values, EDITOR_NATIVE
+            ),
             "show_issues_always": bool(self.show_issues_cb.GetValue()),
             "sound_scheme": self.selected_sound_scheme(),
             "ui_color_theme": self.selected_color_theme(),

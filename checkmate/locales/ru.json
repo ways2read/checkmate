@@ -5,7 +5,7 @@
   "native_name": "Русский",
   "display_name": "Russian",
   "direction": "ltr",
-  "source_msgid_hash": "12aa418d9974181f",
+  "source_msgid_hash": "45808bf61e951510",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Примечание: ответ ИИ снова был обрезан. Задайте уточняющий вопрос, например «Пожалуйста, продолжите».*",
     "&About": "&О программе",
@@ -903,7 +903,6 @@
     "Preview: press Enter to browse the page. Inside the page, Escape returns to the file list, and Ctrl+Tab leaves the page.": "Просмотр: нажмите Enter, чтобы перемещаться по странице. Внутри страницы Escape возвращает к списку файлов, а Ctrl+Tab выводит из страницы.",
     "Select a file in the list to preview it.": "Выберите файл в списке, чтобы просмотреть его.",
     "Text": "Текст",
-    "There is no preview for this type of file.": "Для этого типа файлов просмотр недоступен.",
     "{file} is not a text file, so it can only be previewed.": "{file} не является текстовым файлом, поэтому его можно только просмотреть.",
     "Start checking immediately": "Начинать проверку сразу",
     "When checked, CheckMate checks a file or folder as soon as you choose, drop, or open it. When unchecked, it is only loaded, so you can browse and edit its files first; press F5 to check.": "Если флажок установлен, CheckMate проверяет файл или папку сразу после выбора, перетаскивания или открытия. Если флажок снят, публикация только загружается, чтобы вы могли сначала просмотреть и изменить её файлы; для проверки нажмите F5.",
@@ -917,6 +916,14 @@
     "Select a file in the list to see its code.": "Выберите файл в списке, чтобы увидеть его код.",
     "{file} has no code to show. See the Preview tab.": "У файла {file} нет кода для показа. Откройте вкладку «Просмотр».",
     "Save edits automatically when leaving a file": "Автоматически сохранять изменения при переходе к другому файлу",
-    "In Browse and edit files, save your changes without asking when you move to another file or close the window. When unchecked, CheckMate asks whether to save them.": "В окне «Просмотр и редактирование файлов» изменения сохраняются без вопроса, когда вы переходите к другому файлу или закрываете окно. Если флажок снят, CheckMate спрашивает, сохранить ли их."
+    "In Browse and edit files, save your changes without asking when you move to another file or close the window. When unchecked, CheckMate asks whether to save them.": "В окне «Просмотр и редактирование файлов» изменения сохраняются без вопроса, когда вы переходите к другому файлу или закрываете окно. Если флажок снят, CheckMate спрашивает, сохранить ли их.",
+    "Editing": "Правка",
+    "Code &editor:": "&Редактор кода:",
+    "Code editor": "Редактор кода",
+    "Standard text box": "Стандартное текстовое поле",
+    "Scintilla, with syntax highlighting": "Scintilla с подсветкой синтаксиса",
+    "The editor on the Code tab of Browse and edit files. The standard text box works with all screen readers. Scintilla colours the code to make it easier to read, but not every screen reader can read it (Narrator cannot).": "Редактор на вкладке «Код» в окне «Просмотр и редактирование файлов». Стандартное текстовое поле работает со всеми программами экранного доступа. Scintilla раскрашивает код, чтобы его было легче читать, но не все программы экранного доступа могут его прочитать (Экранный диктор не может).",
+    "There is no preview or code to show for this type of file.": "Для этого типа файлов нечего показать: нет ни просмотра, ни кода.",
+    "{file} has no preview. See the Code tab.": "Для файла {file} нет просмотра. Откройте вкладку «Код»."
   }
 }

@@ -441,6 +441,8 @@ def build(
         "--hidden-import",
         "wx.adv",
         "--hidden-import",
+        "wx.stc",
+        "--hidden-import",
         "wx.lib.newevent",
         "--hidden-import",
         "requests",

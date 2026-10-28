@@ -16,15 +16,14 @@ import wx
 import wx.dataview as dv
 
 from .i18n import _
+from .code_editor import CodeEditor, create_code_editor
 from .models import CheckResult
-from .settings import autosave_edits
+from .settings import autosave_edits, code_editor
 from .workspace_files import (
     READ_ONLY_TOO_LARGE,
     READ_ONLY_UNDECODABLE,
     TextDocument,
     WorkspaceSource,
-    decode_text,
-    is_preview_member,
     is_rendered_member,
     is_text_member,
     load_text_document,
@@ -46,18 +45,11 @@ _PAGE_PREVIEW = 0
 _PAGE_CODE = 1
 # Wait for arrow-key movement in the tree to settle before loading the item.
 _SELECTION_DELAY_MS = 250
-# Source previews of very large text files are cut here.
-_MAX_SOURCE_PREVIEW_CHARS = 400_000
 
-_SOURCE_PREVIEW_PAGE = """<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>{title}</title>
-<style>
-:root {{ color-scheme: light dark; }}
-body {{ margin: 0; padding: 8px; font: 13px/1.45 Consolas, "Cascadia Mono", Menlo, monospace; }}
-pre {{ margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }}
-</style></head>
-<body><pre>{body}</pre></body></html>
-"""
+
+def _nothing_to_show() -> str:
+    return _("There is no preview or code to show for this type of file.")
+
 
 # Raster images get a themed page; Edge's own image viewer paints the margins black.
 _RASTER_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif"})
@@ -242,19 +234,10 @@ class PublicationWorkspace(wx.Frame):
         code_sizer = wx.BoxSizer(wx.VERTICAL)
         self._file_label = wx.StaticText(code_page, label=_("C&ode (no file selected)"))
         code_sizer.Add(self._file_label, 0, wx.ALL, 4)
-        self._editor = wx.TextCtrl(
-            code_page,
-            style=wx.TE_MULTILINE | wx.TE_RICH2 | wx.TE_DONTWRAP | wx.TE_NOHIDESEL,
-            name=_("Code"),
-        )
-        font = wx.Font(wx.FontInfo(10).Family(wx.FONTFAMILY_TELETYPE))
-        if font.IsOk():
-            self._editor.SetFont(font)
-        self._editor.SetEditable(False)
-        self._editor.Bind(wx.EVT_TEXT, self._on_text_changed)
-        for evt in (wx.EVT_KEY_UP, wx.EVT_LEFT_UP, wx.EVT_SET_FOCUS):
-            self._editor.Bind(evt, self._on_caret_event)
-        code_sizer.Add(self._editor, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
+        self._code_sizer = code_sizer
+        self._editor_kind = code_editor()
+        self._editor = self._create_editor(code_page)
+        code_sizer.Add(self._editor.ctrl, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
         info_row = wx.BoxSizer(wx.HORIZONTAL)
         self._position_label = wx.StaticText(code_page, label="")
         self._notice_label = wx.StaticText(code_page, label="")
@@ -361,6 +344,39 @@ class PublicationWorkspace(wx.Frame):
         y = max(area.y, min(y, area.y + area.height - height))
         self.SetPosition(wx.Point(x, y))
 
+    def _create_editor(self, parent: wx.Window) -> CodeEditor:
+        editor = create_code_editor(parent, self._editor_kind, _("Code"))
+        editor.bind_changed(self._on_text_changed)
+        editor.bind_caret(self._update_position)
+        return editor
+
+    def apply_settings(self) -> None:
+        """Follow Settings changes: the code editor choice and the colour theme."""
+        kind = code_editor()
+        if kind == self._editor_kind:
+            self._editor.apply_theme()
+            return
+        old = self._editor
+        had_focus = wx.Window.FindFocus() is old.ctrl
+        text, where, editable = old.get_text(), old.line_column(), old.is_editable()
+        self._editor_kind = kind
+        self._editor = self._create_editor(old.ctrl.GetParent())
+        self._code_sizer.Replace(old.ctrl, self._editor.ctrl)
+        self._editor.ctrl.MoveAfterInTabOrder(self._file_label)
+        old.ctrl.Destroy()
+        # Unsaved edits carry over: the text moves, the dirty flag stays.
+        self._loading = True
+        try:
+            self._editor.set_text(text, self._member or "")
+        finally:
+            self._loading = False
+        self._editor.set_editable(editable)
+        self._editor.set_name(self._member or _("Code"))
+        self._editor.place_caret(*where)
+        self._code_sizer.Layout()
+        if had_focus:
+            self._editor.ctrl.SetFocus()
+
     # --- Public API used by the main window ---
 
     @property
@@ -414,7 +430,7 @@ class PublicationWorkspace(wx.Frame):
         # Without a location, an already open file keeps its caret.
         if line is not None:
             self._place_caret(line, column)
-        self._editor.SetFocus()
+        self._editor.ctrl.SetFocus()
         return True
 
     def confirm_unsaved(self) -> bool:
@@ -453,7 +469,7 @@ class PublicationWorkspace(wx.Frame):
         self._dirty = False
         self._member = None
         self._doc = None
-        self._editor.SetEditable(False)
+        self._editor.set_editable(False)
         self._update_title()
         self._update_buttons()
 
@@ -486,21 +502,21 @@ class PublicationWorkspace(wx.Frame):
             return False
         self._loading = True
         try:
-            self._editor.ChangeValue(doc.text)
+            self._editor.set_text(doc.text, member)
         finally:
             self._loading = False
         self._member = member
         self._doc = doc
         self._dirty = False
         self._disk_mtime = source_mtime_ns(self._source, member)
-        self._editor.SetEditable(doc.editable)
-        self._editor.SetName(member)
+        self._editor.set_editable(doc.editable)
+        self._editor.set_name(member)
         self._file_label.SetLabel(_("C&ode of {file}", file=member))
         self._notice_label.SetLabel(self._read_only_message(doc))
         self._place_caret(1, 1)
         self._update_title()
         self._update_buttons()
-        self._editor.GetParent().Layout()
+        self._code_sizer.Layout()
         return True
 
     def _read_only_message(self, doc: TextDocument) -> str:
@@ -515,24 +531,11 @@ class PublicationWorkspace(wx.Frame):
         return ""
 
     def _place_caret(self, line: int | None, column: int | None) -> None:
-        line = max(1, line or 1)
-        column = max(1, column or 1)
-        pos = self._editor.XYToPosition(column - 1, line - 1)
-        if pos < 0:
-            pos = self._editor.XYToPosition(0, line - 1)
-        if pos < 0:
-            pos = self._editor.GetLastPosition() if line > 1 else 0
-        self._editor.SetInsertionPoint(pos)
-        self._editor.ShowPosition(pos)
+        self._editor.place_caret(max(1, line or 1), max(1, column or 1))
         self._update_position()
 
     def _caret_line_column(self) -> tuple[int, int] | None:
-        found = self._editor.PositionToXY(self._editor.GetInsertionPoint())
-        if len(found) == 3:
-            ok, x, y = found
-            return (y + 1, x + 1) if ok else None
-        x, y = found
-        return y + 1, x + 1
+        return self._editor.line_column()
 
     def _update_position(self) -> None:
         if self._member is None:
@@ -563,7 +566,7 @@ class PublicationWorkspace(wx.Frame):
         except ValueError:
             return
         self._place_caret(line, column)
-        self._editor.SetFocus()
+        self._editor.ctrl.SetFocus()
 
     # --- Showing the selected item ---
 
@@ -575,7 +578,7 @@ class PublicationWorkspace(wx.Frame):
         if not focus:
             return
         if page == _PAGE_CODE:
-            self._editor.SetFocus()
+            self._editor.ctrl.SetFocus()
         else:
             self._preview_host.SetFocus()
 
@@ -654,6 +657,8 @@ class PublicationWorkspace(wx.Frame):
         elif not is_text_member(member):
             self._clear_code(
                 _("{file} has no code to show. See the Preview tab.", file=member)
+                if is_rendered_member(member)
+                else _nothing_to_show()
             )
         elif not self._load(member):
             self._clear_code()
@@ -664,20 +669,20 @@ class PublicationWorkspace(wx.Frame):
             return
         self._loading = True
         try:
-            self._editor.ChangeValue("")
+            self._editor.set_text("")
         finally:
             self._loading = False
         self._member = None
         self._doc = None
         self._disk_mtime = None
-        self._editor.SetEditable(False)
-        self._editor.SetName(_("Code"))
+        self._editor.set_editable(False)
+        self._editor.set_name(_("Code"))
         self._file_label.SetLabel(_("C&ode (no file selected)"))
         self._notice_label.SetLabel(notice)
         self._position_label.SetLabel("")
         self._update_title()
         self._update_buttons()
-        self._editor.GetParent().Layout()
+        self._code_sizer.Layout()
 
     def _refresh_preview(self) -> None:
         if self._book.GetSelection() != _PAGE_PREVIEW:
@@ -686,15 +691,19 @@ class PublicationWorkspace(wx.Frame):
         member = self._shown_member
         notice = ""
         uri = ""
-        page = ""
         fresh_view = self._preview_view is None
         if member is None:
             notice = _("Select a file in the list to preview it.")
-        elif not is_preview_member(member):
-            notice = _("There is no preview for this type of file.")
+        elif not is_rendered_member(member):
+            # CSS, OPF, and other source show on the Code tab only.
+            notice = (
+                _("{file} has no preview. See the Code tab.", file=member)
+                if is_text_member(member)
+                else _nothing_to_show()
+            )
         elif not self._ensure_preview_view():
             notice = _("Preview is not available on this computer.")
-        elif is_rendered_member(member):
+        else:
             root = self._preview_root()
             path = root / member if root is not None else None
             if path is None or not path.is_file():
@@ -705,20 +714,13 @@ class PublicationWorkspace(wx.Frame):
                     notice = _("Could not prepare the preview.")
             else:
                 uri = path.as_uri()
-        else:
-            page = self._source_preview_page(member)
-            if not page:
-                notice = _("Could not prepare the preview.")
         if member is not None and member == self._member and self._dirty:
             notice = _("Preview shows the last saved version. Save to update it.")
         self._preview_label.SetLabel(
             _("Preview of {file}", file=member) if member else _("Preview")
         )
         if self._preview_is_webview and self._preview_view is not None:
-            if page:
-                show = lambda: self._show_preview_page(page, member or "")  # noqa: E731
-            else:
-                show = lambda: self._show_preview_uri(uri or "about:blank")  # noqa: E731
+            show = lambda: self._show_preview_uri(uri or "about:blank")  # noqa: E731
             if fresh_view:
                 # A just-created Edge view paints blank if loaded immediately.
                 wx.CallLater(200, lambda: None if self._closing else show())
@@ -727,18 +729,6 @@ class PublicationWorkspace(wx.Frame):
         self._preview_notice.SetLabel(notice)
         self._preview_notice.Show(bool(notice))
         self._preview_notice.GetParent().Layout()
-
-    def _source_preview_page(self, member: str) -> str:
-        """Read-only source view for CSS, OPF, XML, and other non-rendered text."""
-        try:
-            text = decode_text(read_member_bytes(self._source, member)).text
-        except (OSError, KeyError, zipfile.BadZipFile):
-            return ""
-        if len(text) > _MAX_SOURCE_PREVIEW_CHARS:
-            text = text[:_MAX_SOURCE_PREVIEW_CHARS] + "\n…"
-        return _SOURCE_PREVIEW_PAGE.format(
-            title=html.escape(member), body=html.escape(text)
-        )
 
     def _image_preview_uri(self, image: Path, member: str) -> str:
         """Write a page that shows *image* centred on the theme background."""
@@ -781,16 +771,6 @@ class PublicationWorkspace(wx.Frame):
             and self._preview_url not in ("", "about:blank")
         ):
             self._show_preview_uri("about:blank")
-
-    def _show_preview_page(self, page: str, member: str) -> None:
-        view = self._preview_view
-        if view is None:
-            return
-        try:
-            view.SetPage(page, "")
-            self._preview_url = f"source:{member}"
-        except Exception:
-            logger.debug("Preview SetPage failed for %s", member, exc_info=True)
 
     def _show_preview_uri(self, uri: str) -> None:
         view = self._preview_view
@@ -912,7 +892,7 @@ class PublicationWorkspace(wx.Frame):
                 self._source,
                 self._member,
                 self._doc,
-                self._editor.GetValue(),
+                self._editor.get_text(),
                 session_backups=self._session_backups,
             )
         except UnicodeEncodeError as exc:
@@ -1075,7 +1055,7 @@ class PublicationWorkspace(wx.Frame):
     def _toggle_pane(self) -> None:
         if self._tree.ctrl.HasFocus():
             if self._book.GetSelection() == _PAGE_CODE:
-                self._editor.SetFocus()
+                self._editor.ctrl.SetFocus()
             else:
                 self._preview_host.SetFocus()
         else:
@@ -1131,17 +1111,12 @@ class PublicationWorkspace(wx.Frame):
                 return
         event.Skip()
 
-    def _on_text_changed(self, event: wx.CommandEvent) -> None:
-        event.Skip()
-        if self._loading or self._dirty or not self._editor.IsEditable():
+    def _on_text_changed(self) -> None:
+        if self._loading or self._dirty or not self._editor.is_editable():
             return
         self._dirty = True
         self._update_title()
         self._update_buttons()
-
-    def _on_caret_event(self, event: wx.Event) -> None:
-        event.Skip()
-        wx.CallAfter(self._update_position)
 
     def _on_activate(self, event: wx.ActivateEvent) -> None:
         event.Skip()
