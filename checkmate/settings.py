@@ -255,6 +255,15 @@ def show_issues_always() -> bool:
     return bool(read_settings().get("show_issues_always", False))
 
 
+def check_immediately() -> bool:
+    """True when choosing, dropping, or opening a publication starts a check.
+
+    Off: the publication is only loaded, so its files can be browsed and edited
+    before checking with F5.
+    """
+    return bool(read_settings().get("check_immediately", True))
+
+
 def color_theme() -> str:
     """Selected UI color theme (``system``, ``light``, or ``dark``)."""
     from .ui_appearance import normalize_color_theme

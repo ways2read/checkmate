@@ -57,6 +57,19 @@ pre {{ margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }}
 <body><pre>{body}</pre></body></html>
 """
 
+# Raster images get a themed page; Edge's own image viewer paints the margins black.
+_RASTER_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif"})
+_IMAGE_PREVIEW_PAGE = """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>{title}</title>
+<style>
+:root {{ color-scheme: light dark; }}
+html, body {{ height: 100%; margin: 0; }}
+body {{ display: flex; align-items: center; justify-content: center; background: Canvas; }}
+img {{ max-width: calc(100% - 16px); max-height: calc(100% - 16px); object-fit: contain; }}
+</style></head>
+<body><img src="{src}" alt="{title}"></body></html>
+"""
+
 
 def _speak(text: str) -> None:
     try:
@@ -187,6 +200,9 @@ class PublicationWorkspace(wx.Frame):
         # File shown on the Preview tab: the tree selection (or the open file).
         self._preview_member: str | None = None
         self._preview_timer: wx.CallLater | None = None
+        # Temporary folder for generated preview pages (never the publication).
+        self._preview_pages_dir: Path | None = None
+        self._image_page_count = 0
         self._keep_tree_focus_until = 0.0
         self._closing = False
         try:
@@ -606,7 +622,8 @@ class PublicationWorkspace(wx.Frame):
     def _refresh_preview(self) -> None:
         if self._book.GetSelection() != _PAGE_PREVIEW:
             return
-        member = self._preview_member or self._member
+        # Only the item selected in the tree is ever previewed.
+        member = self._preview_member
         notice = ""
         uri = ""
         page = ""
@@ -622,6 +639,10 @@ class PublicationWorkspace(wx.Frame):
             path = root / member if root is not None else None
             if path is None or not path.is_file():
                 notice = _("Could not prepare the preview.")
+            elif path.suffix.lower() in _RASTER_SUFFIXES:
+                uri = self._image_preview_uri(path, member)
+                if not uri:
+                    notice = _("Could not prepare the preview.")
             else:
                 uri = path.as_uri()
         else:
@@ -658,6 +679,43 @@ class PublicationWorkspace(wx.Frame):
         return _SOURCE_PREVIEW_PAGE.format(
             title=html.escape(member), body=html.escape(text)
         )
+
+    def _image_preview_uri(self, image: Path, member: str) -> str:
+        """Write a page that shows *image* centred on the theme background."""
+        try:
+            if self._preview_pages_dir is None:
+                self._preview_pages_dir = Path(
+                    tempfile.mkdtemp(prefix="checkmate-preview-pages-")
+                )
+            # A fresh name per image avoids Edge re-showing a cached page.
+            previous = self._preview_pages_dir / f"image-{self._image_page_count}.html"
+            self._image_page_count += 1
+            page = self._preview_pages_dir / f"image-{self._image_page_count}.html"
+            page.write_text(
+                _IMAGE_PREVIEW_PAGE.format(
+                    title=html.escape(member), src=html.escape(image.as_uri(), quote=True)
+                ),
+                encoding="utf-8",
+            )
+            previous.unlink(missing_ok=True)
+            return page.as_uri()
+        except OSError:
+            logger.debug("Could not write image preview page", exc_info=True)
+            return ""
+
+    def _clear_preview(self, notice: str = "") -> None:
+        """Show nothing: the previewed item is no longer the one selected."""
+        self._preview_member = None
+        self._preview_label.SetLabel(_("Preview"))
+        self._preview_notice.SetLabel(notice)
+        self._preview_notice.Show(bool(notice))
+        self._preview_notice.GetParent().Layout()
+        if (
+            self._preview_is_webview
+            and self._preview_view is not None
+            and self._preview_url not in ("", "about:blank")
+        ):
+            self._show_preview_uri("about:blank")
 
     def _show_preview_page(self, page: str, member: str) -> None:
         view = self._preview_view
@@ -699,7 +757,10 @@ class PublicationWorkspace(wx.Frame):
         if self._closing:
             return
         member = self._tree.selected_member()
-        if member is None or member == self._preview_member:
+        if member is None:
+            self._clear_preview(_("Select a file in the list to preview it."))
+            return
+        if member == self._preview_member:
             return
         keep_tree_focus = self._focus_in_tree()
         self._preview_member = member
@@ -958,6 +1019,8 @@ class PublicationWorkspace(wx.Frame):
         if self._closing or self._tree.programmatic:
             return
         if self._tree.selected_member() != self._preview_member:
+            # Drop the old preview at once; the new one loads when movement settles.
+            self._clear_preview()
             self._schedule_preview()
 
     def _on_tree_activated(self, _event: wx.Event) -> None:
@@ -1011,7 +1074,7 @@ class PublicationWorkspace(wx.Frame):
             self._main.on_workspace_closed(self)
         except Exception:
             logger.debug("Main window did not accept workspace close", exc_info=True)
-        preview_dir = self._preview_dir
+        temp_dirs = [d for d in (self._preview_dir, self._preview_pages_dir) if d is not None]
         if self._preview_view is not None and self._preview_is_webview:
             # Edge must drop its HWND before the frame goes; never Stop/Hide the view.
             try:
@@ -1027,5 +1090,5 @@ class PublicationWorkspace(wx.Frame):
             schedule_webview_window_destroy(self)
         else:
             self.Destroy()
-        if preview_dir is not None:
-            wx.CallLater(3000, shutil.rmtree, preview_dir, True)
+        for folder in temp_dirs:
+            wx.CallLater(3000, shutil.rmtree, folder, True)

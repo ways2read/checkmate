@@ -90,6 +90,7 @@ from .report_export import format_text_report, report_title, save_report
 from .settings import (
     ai_features_enabled,
     ai_translation_warning_shown,
+    check_immediately,
     mark_ai_translation_warning_shown,
     read_settings,
     show_issues_always,
@@ -7470,7 +7471,7 @@ class MainFrame(wx.Frame):
         *,
         notify_if_busy: bool = False,
     ) -> None:
-        """Open paths from drop, CLI, or Finder; run check on the first usable one."""
+        """Open paths from drop, CLI, or Finder; open the first usable one."""
         if not filenames:
             return
         if self._busy:
@@ -7519,8 +7520,7 @@ class MainFrame(wx.Frame):
                 self,
             )
 
-        self.path_ctrl.SetValue(str(chosen))
-        self.on_check(None)
+        self._open_target(str(chosen))
 
     def open_dropped_paths(self, filenames: list[str]) -> None:
         """Handle paths dropped onto the window."""
@@ -7795,8 +7795,8 @@ class MainFrame(wx.Frame):
         ) as dlg:
             if dlg.ShowModal() != wx.ID_OK:
                 return
-            self.path_ctrl.SetValue(dlg.GetPath())
-            self.on_check(None)
+            path = dlg.GetPath()
+        self._open_target(path)
 
     def on_browse_folder(self, _event: wx.CommandEvent) -> None:
         with wx.DirDialog(
@@ -7806,9 +7806,31 @@ class MainFrame(wx.Frame):
         ) as dlg:
             if dlg.ShowModal() != wx.ID_OK:
                 return
-            self.path_ctrl.SetValue(dlg.GetPath())
+            path = dlg.GetPath()
+        self._open_target(path)
+
+    def _open_target(self, path: str) -> None:
+        """Load a chosen publication: check it now, or just load it when
+        Start checking immediately is off (Settings)."""
+        if check_immediately():
+            self.path_ctrl.SetValue(path)
             self._update_report_actions_enabled()
             self.on_check(None)
+            return
+        # Earlier results belong to the previous publication; clear them.
+        self._clear_to_launch_state()
+        self.path_ctrl.SetValue(path)
+        self._update_report_actions_enabled()
+        name = Path(path).name or path
+        if self._workspace_target() is not None:
+            message = _(
+                "{name} is ready. Press F5 to check it, or Ctrl+E to browse and "
+                "edit its files.",
+                name=name,
+            )
+        else:
+            message = _("{name} is ready. Press F5 to check it.", name=name)
+        self._show_result_text(message, title=message, focus=True)
 
     def on_package_epub_folder(self, _event: wx.CommandEvent | None) -> None:
         """Zip the selected exploded EPUB folder into a valid .epub package."""

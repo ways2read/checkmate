@@ -24,6 +24,7 @@ from .settings import (
     VERAPDF_FLAVOURS,
     ai_features_enabled,
     ai_send_kb_article_body,
+    check_immediately,
     color_theme,
     epub_checkers,
     html_checkers,
@@ -37,8 +38,29 @@ from .settings import (
 )
 
 
+def _fill_choice(
+    choice: wx.Choice,
+    codes: tuple[str, ...],
+    labels: dict[str, str],
+    current: str,
+    *,
+    translate: bool = True,
+) -> list[str]:
+    """Append labelled options and select *current*; return the codes in order."""
+    values: list[str] = []
+    selected = 0
+    for i, code in enumerate(codes):
+        label = labels.get(code, code)
+        choice.Append(_(label) if translate else label)
+        values.append(code)
+        if code == current:
+            selected = i
+    choice.SetSelection(selected)
+    return values
+
+
 class SettingsDialog(wx.Dialog):
-    """Edit general prefs and checker profiles; save on OK."""
+    """Edit general prefs and checker profiles on three tabs; save on OK."""
 
     def __init__(self, parent: wx.Window) -> None:
         super().__init__(
@@ -47,9 +69,41 @@ class SettingsDialog(wx.Dialog):
             style=wx.DEFAULT_DIALOG_STYLE,
         )
         root = wx.BoxSizer(wx.VERTICAL)
+        self.book = wx.Notebook(self)
+        self.book.SetName(_("Settings"))
+        self.book.AddPage(self._build_general_page(self.book), _("General"))
+        self.book.AddPage(self._build_checkers_page(self.book), _("Checkers"))
+        self.book.AddPage(self._build_ai_page(self.book), _("AI"))
+        root.Add(self.book, 1, wx.EXPAND | wx.ALL, 12)
 
-        general = wx.StaticBoxSizer(wx.VERTICAL, self, _("General"))
-        self.show_issues_cb = wx.CheckBox(self, label=_("Show issues always"))
+        buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
+        if buttons is not None:
+            root.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+
+        self.SetSizer(root)
+        self.Fit()
+        self.CentreOnParent()
+
+    # --- Pages ---
+
+    def _build_general_page(self, book: wx.Notebook) -> wx.Panel:
+        page = wx.Panel(book)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        self.check_immediately_cb = wx.CheckBox(
+            page, label=_("Start checking immediately")
+        )
+        self.check_immediately_cb.SetValue(check_immediately())
+        self.check_immediately_cb.SetToolTip(
+            _(
+                "When checked, CheckMate checks a file or folder as soon as you "
+                "choose, drop, or open it. When unchecked, it is only loaded, so "
+                "you can browse and edit its files first; press F5 to check."
+            )
+        )
+        sizer.Add(self.check_immediately_cb, 0, wx.ALL, 8)
+
+        self.show_issues_cb = wx.CheckBox(page, label=_("Show issues always"))
         self.show_issues_cb.SetValue(show_issues_always())
         self.show_issues_cb.SetToolTip(
             _(
@@ -57,56 +111,9 @@ class SettingsDialog(wx.Dialog):
                 "that finds issues (instead of pressing Show issues)"
             )
         )
-        general.Add(self.show_issues_cb, 0, wx.ALL, 6)
+        sizer.Add(self.show_issues_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-        sounds_hint = wx.StaticText(self, label=_("Sounds:"))
-        general.Add(sounds_hint, 0, wx.LEFT | wx.RIGHT | wx.TOP, 6)
-        self.sound_choice = wx.Choice(self)
-        self._sound_values: list[str] = []
-        current_sound = sound_scheme()
-        select_sound = 0
-        for i, code in enumerate(SOUND_SCHEMES):
-            label = _(SOUND_SCHEME_LABELS.get(code, code))
-            self.sound_choice.Append(label)
-            self._sound_values.append(code)
-            if code == current_sound:
-                select_sound = i
-        self.sound_choice.SetSelection(select_sound)
-        self.sound_choice.SetName(_("Sounds"))
-        self.sound_choice.SetToolTip(
-            _(
-                "Play short sounds when a check starts and when it finishes "
-                "(different tones for passed and failed). "
-                "Choose a scheme or turn sounds off."
-            )
-        )
-        general.Add(self.sound_choice, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
-
-        theme_hint = wx.StaticText(self, label=_("Color theme:"))
-        general.Add(theme_hint, 0, wx.LEFT | wx.RIGHT | wx.TOP, 6)
-        self.theme_choice = wx.Choice(self)
-        self._theme_values: list[str] = []
-        current_theme = color_theme()
-        select_theme = 0
-        for i, code in enumerate(COLOR_THEMES):
-            label = _(COLOR_THEME_LABELS.get(code, code))
-            self.theme_choice.Append(label)
-            self._theme_values.append(code)
-            if code == current_theme:
-                select_theme = i
-        self.theme_choice.SetSelection(select_theme)
-        self.theme_choice.SetName(_("Color theme"))
-        self.theme_choice.SetToolTip(
-            _(
-                "System follows your computer's light or dark setting. "
-                "Light and Dark keep CheckMate on that theme."
-            )
-        )
-        general.Add(self.theme_choice, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
-
-        self.single_instance_cb = wx.CheckBox(
-            self, label=_("Allow only one window")
-        )
+        self.single_instance_cb = wx.CheckBox(page, label=_("Allow only one window"))
         self.single_instance_cb.SetValue(single_instance_enabled())
         self.single_instance_cb.SetToolTip(
             _(
@@ -116,53 +123,60 @@ class SettingsDialog(wx.Dialog):
                 "on the same publication."
             )
         )
-        general.Add(self.single_instance_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+        sizer.Add(self.single_instance_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-        self.ai_cb = wx.CheckBox(self, label=_("Enable AI features"))
-        ai_available = fido_settings_present()
-        self.ai_cb.Enable(ai_available)
-        self.ai_cb.SetValue(ai_available and ai_features_enabled())
-        self.ai_cb.SetToolTip(
+        sizer.Add(wx.StaticText(page, label=_("Sounds:")), 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
+        self.sound_choice = wx.Choice(page)
+        self._sound_values = _fill_choice(
+            self.sound_choice, SOUND_SCHEMES, SOUND_SCHEME_LABELS, sound_scheme()
+        )
+        self.sound_choice.SetName(_("Sounds"))
+        self.sound_choice.SetToolTip(
             _(
-                "Show or hide AI features when FIDO AI is available "
-                "(useful for training)"
+                "Play short sounds when a check starts and when it finishes "
+                "(different tones for passed and failed). "
+                "Choose a scheme or turn sounds off."
             )
         )
-        general.Add(self.ai_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+        sizer.Add(self.sound_choice, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-        self.kb_body_cb = wx.CheckBox(
-            self, label=_("Include Knowledge Base article text in AI prompts")
+        sizer.Add(
+            wx.StaticText(page, label=_("Color theme:")), 0, wx.LEFT | wx.RIGHT | wx.TOP, 8
         )
-        self.kb_body_cb.SetValue(bool(ai_send_kb_article_body()))
-        self.kb_body_cb.SetToolTip(
+        self.theme_choice = wx.Choice(page)
+        self._theme_values = _fill_choice(
+            self.theme_choice, COLOR_THEMES, COLOR_THEME_LABELS, color_theme()
+        )
+        self.theme_choice.SetName(_("Color theme"))
+        self.theme_choice.SetToolTip(
             _(
-                "When explaining or fixing issues with a DAISY KB article, "
-                "send the offline article body to the model. Improves guidance "
-                "but uses more tokens. Off by default."
+                "System follows your computer's light or dark setting. "
+                "Light and Dark keep CheckMate on that theme."
             )
         )
-        general.Add(self.kb_body_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
-        self.ai_cb.Bind(wx.EVT_CHECKBOX, self._on_ai_toggle)
-        self._sync_kb_body_enabled()
-        root.Add(general, 0, wx.EXPAND | wx.ALL, 12)
+        sizer.Add(self.theme_choice, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-        epub_box = wx.StaticBoxSizer(wx.VERTICAL, self, _("EPUB"))
-        epub_hint = wx.StaticText(
-            self,
-            label=_("Checkers used when checking EPUB files:"),
+        page.SetSizer(sizer)
+        return page
+
+    def _build_checkers_page(self, book: wx.Notebook) -> wx.Panel:
+        page = wx.Panel(book)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        epub_box = wx.StaticBoxSizer(wx.VERTICAL, page, _("EPUB"))
+        epub_box.Add(
+            wx.StaticText(
+                epub_box.GetStaticBox(),
+                label=_("Checkers used when checking EPUB files:"),
+            ),
+            0,
+            wx.LEFT | wx.RIGHT | wx.TOP,
+            6,
         )
-        epub_box.Add(epub_hint, 0, wx.LEFT | wx.RIGHT | wx.TOP, 6)
-        self.epub_choice = wx.Choice(self)
-        self._epub_values: list[str] = []
-        current_epub = epub_checkers()
-        select_epub = 0
-        for i, code in enumerate(EPUB_CHECKERS):
-            label = _(EPUB_CHECKERS_LABELS.get(code, code))
-            self.epub_choice.Append(label)
-            self._epub_values.append(code)
-            if code == current_epub:
-                select_epub = i
-        self.epub_choice.SetSelection(select_epub)
+        self.epub_choice = wx.Choice(epub_box.GetStaticBox())
+        self._epub_values = _fill_choice(
+            self.epub_choice, EPUB_CHECKERS, EPUB_CHECKERS_LABELS, epub_checkers()
+        )
         self.epub_choice.SetName(_("EPUB checkers"))
         self.epub_choice.SetToolTip(
             _(
@@ -172,25 +186,23 @@ class SettingsDialog(wx.Dialog):
             )
         )
         epub_box.Add(self.epub_choice, 0, wx.EXPAND | wx.ALL, 6)
-        root.Add(epub_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        sizer.Add(epub_box, 0, wx.EXPAND | wx.ALL, 8)
 
-        html_box = wx.StaticBoxSizer(wx.VERTICAL, self, _("HTML"))
-        html_hint = wx.StaticText(
-            self,
-            label=_("Checkers used when checking HTML files, folders, or URLs:"),
+        html_box = wx.StaticBoxSizer(wx.VERTICAL, page, _("HTML"))
+        html_parent = html_box.GetStaticBox()
+        html_box.Add(
+            wx.StaticText(
+                html_parent,
+                label=_("Checkers used when checking HTML files, folders, or URLs:"),
+            ),
+            0,
+            wx.LEFT | wx.RIGHT | wx.TOP,
+            6,
         )
-        html_box.Add(html_hint, 0, wx.LEFT | wx.RIGHT | wx.TOP, 6)
-        self.html_choice = wx.Choice(self)
-        self._html_values: list[str] = []
-        current_html = html_checkers()
-        select_html = 0
-        for i, code in enumerate(HTML_CHECKERS):
-            label = _(HTML_CHECKERS_LABELS.get(code, code))
-            self.html_choice.Append(label)
-            self._html_values.append(code)
-            if code == current_html:
-                select_html = i
-        self.html_choice.SetSelection(select_html)
+        self.html_choice = wx.Choice(html_parent)
+        self._html_values = _fill_choice(
+            self.html_choice, HTML_CHECKERS, HTML_CHECKERS_LABELS, html_checkers()
+        )
         self.html_choice.SetName(_("HTML checkers"))
         self.html_choice.SetToolTip(
             _(
@@ -200,7 +212,7 @@ class SettingsDialog(wx.Dialog):
         )
         html_box.Add(self.html_choice, 0, wx.EXPAND | wx.ALL, 6)
         self.html_follow_links_cb = wx.CheckBox(
-            self,
+            html_parent,
             label=_("Also check linked pages on the same site (up to 25)"),
         )
         self.html_follow_links_cb.SetValue(html_follow_links())
@@ -212,11 +224,11 @@ class SettingsDialog(wx.Dialog):
             )
         )
         html_box.Add(self.html_follow_links_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
-        root.Add(html_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        sizer.Add(html_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-        math_box = wx.StaticBoxSizer(wx.VERTICAL, self, _("MathML"))
+        math_box = wx.StaticBoxSizer(wx.VERTICAL, page, _("MathML"))
         self.nordic_mathml_cb = wx.CheckBox(
-            self,
+            math_box.GetStaticBox(),
             label=_("Check against the Nordic MathML Guidelines"),
         )
         self.nordic_mathml_cb.SetValue(mathml_nordic_guidelines())
@@ -231,25 +243,26 @@ class SettingsDialog(wx.Dialog):
             )
         )
         math_box.Add(self.nordic_mathml_cb, 0, wx.ALL, 6)
-        root.Add(math_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        sizer.Add(math_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-        pdf_box = wx.StaticBoxSizer(wx.VERTICAL, self, _("PDF (veraPDF)"))
-        pdf_hint = wx.StaticText(
-            self,
-            label=_("Validation profile used when checking PDF files:"),
+        pdf_box = wx.StaticBoxSizer(wx.VERTICAL, page, _("PDF (veraPDF)"))
+        pdf_box.Add(
+            wx.StaticText(
+                pdf_box.GetStaticBox(),
+                label=_("Validation profile used when checking PDF files:"),
+            ),
+            0,
+            wx.LEFT | wx.RIGHT | wx.TOP,
+            6,
         )
-        pdf_box.Add(pdf_hint, 0, wx.LEFT | wx.RIGHT | wx.TOP, 6)
-        self.verapdf_choice = wx.Choice(self)
-        self._verapdf_values: list[str] = []
-        current_flavour = verapdf_flavour()
-        select_flavour = 0
-        for i, code in enumerate(VERAPDF_FLAVOURS):
-            label = VERAPDF_FLAVOUR_LABELS.get(code, code)
-            self.verapdf_choice.Append(label)
-            self._verapdf_values.append(code)
-            if code == current_flavour:
-                select_flavour = i
-        self.verapdf_choice.SetSelection(select_flavour)
+        self.verapdf_choice = wx.Choice(pdf_box.GetStaticBox())
+        self._verapdf_values = _fill_choice(
+            self.verapdf_choice,
+            VERAPDF_FLAVOURS,
+            VERAPDF_FLAVOUR_LABELS,
+            verapdf_flavour(),
+            translate=False,
+        )
         self.verapdf_choice.SetName(_("PDF validation profile"))
         self.verapdf_choice.SetToolTip(
             _(
@@ -259,15 +272,46 @@ class SettingsDialog(wx.Dialog):
             )
         )
         pdf_box.Add(self.verapdf_choice, 0, wx.EXPAND | wx.ALL, 6)
-        root.Add(pdf_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        sizer.Add(pdf_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-        buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
-        if buttons is not None:
-            root.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        page.SetSizer(sizer)
+        return page
 
-        self.SetSizer(root)
-        self.Fit()
-        self.CentreOnParent()
+    def _build_ai_page(self, book: wx.Notebook) -> wx.Panel:
+        page = wx.Panel(book)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+
+        self.ai_cb = wx.CheckBox(page, label=_("Enable AI features"))
+        ai_available = fido_settings_present()
+        self.ai_cb.Enable(ai_available)
+        self.ai_cb.SetValue(ai_available and ai_features_enabled())
+        self.ai_cb.SetToolTip(
+            _(
+                "Show or hide AI features when FIDO AI is available "
+                "(useful for training)"
+            )
+        )
+        sizer.Add(self.ai_cb, 0, wx.ALL, 8)
+
+        self.kb_body_cb = wx.CheckBox(
+            page, label=_("Include Knowledge Base article text in AI prompts")
+        )
+        self.kb_body_cb.SetValue(bool(ai_send_kb_article_body()))
+        self.kb_body_cb.SetToolTip(
+            _(
+                "When explaining or fixing issues with a DAISY KB article, "
+                "send the offline article body to the model. Improves guidance "
+                "but uses more tokens. Off by default."
+            )
+        )
+        sizer.Add(self.kb_body_cb, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.ai_cb.Bind(wx.EVT_CHECKBOX, self._on_ai_toggle)
+        self._sync_kb_body_enabled()
+
+        page.SetSizer(sizer)
+        return page
+
+    # --- Events / values ---
 
     def _on_ai_toggle(self, _event: wx.CommandEvent) -> None:
         self._sync_kb_body_enabled()
@@ -276,39 +320,34 @@ class SettingsDialog(wx.Dialog):
         ai_on = bool(self.ai_cb.IsEnabled() and self.ai_cb.GetValue())
         self.kb_body_cb.Enable(ai_on)
 
+    @staticmethod
+    def _selected(choice: wx.Choice, values: list[str], default: str) -> str:
+        idx = choice.GetSelection()
+        if 0 <= idx < len(values):
+            return values[idx]
+        return default
+
     def selected_color_theme(self) -> str:
-        idx = self.theme_choice.GetSelection()
-        if 0 <= idx < len(self._theme_values):
-            return self._theme_values[idx]
-        return DEFAULT_COLOR_THEME
+        return self._selected(self.theme_choice, self._theme_values, DEFAULT_COLOR_THEME)
 
     def selected_sound_scheme(self) -> str:
-        idx = self.sound_choice.GetSelection()
-        if 0 <= idx < len(self._sound_values):
-            return self._sound_values[idx]
-        return DEFAULT_SOUND_SCHEME
+        return self._selected(self.sound_choice, self._sound_values, DEFAULT_SOUND_SCHEME)
 
     def selected_epub_checkers(self) -> str:
-        idx = self.epub_choice.GetSelection()
-        if 0 <= idx < len(self._epub_values):
-            return self._epub_values[idx]
-        return DEFAULT_EPUB_CHECKERS
+        return self._selected(self.epub_choice, self._epub_values, DEFAULT_EPUB_CHECKERS)
 
     def selected_html_checkers(self) -> str:
-        idx = self.html_choice.GetSelection()
-        if 0 <= idx < len(self._html_values):
-            return self._html_values[idx]
-        return DEFAULT_HTML_CHECKERS
+        return self._selected(self.html_choice, self._html_values, DEFAULT_HTML_CHECKERS)
 
     def selected_verapdf_flavour(self) -> str:
-        idx = self.verapdf_choice.GetSelection()
-        if 0 <= idx < len(self._verapdf_values):
-            return self._verapdf_values[idx]
-        return DEFAULT_VERAPDF_FLAVOUR
+        return self._selected(
+            self.verapdf_choice, self._verapdf_values, DEFAULT_VERAPDF_FLAVOUR
+        )
 
     def apply(self) -> None:
         """Persist dialog values to settings.json."""
         kwargs: dict = {
+            "check_immediately": bool(self.check_immediately_cb.GetValue()),
             "show_issues_always": bool(self.show_issues_cb.GetValue()),
             "sound_scheme": self.selected_sound_scheme(),
             "ui_color_theme": self.selected_color_theme(),
