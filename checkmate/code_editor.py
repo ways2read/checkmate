@@ -156,6 +156,10 @@ class CodeEditor:
     def place_caret(self, line: int, column: int) -> None:
         raise NotImplementedError
 
+    def reveal_caret(self) -> None:
+        """Scroll so the caret line sits about a third of the way down the view."""
+        raise NotImplementedError
+
     def bind_changed(self, handler: Callable[[], None]) -> None:
         raise NotImplementedError
 
@@ -228,6 +232,24 @@ class NativeCodeEditor(CodeEditor):
         pos = self._pos(text, offset_of(text, line, column))
         self.ctrl.SetInsertionPoint(pos)
         self.ctrl.ShowPosition(pos)
+
+    def reveal_caret(self) -> None:
+        pos = self.ctrl.GetInsertionPoint()
+        if wx.Platform != "__WXMSW__":
+            self.ctrl.ShowPosition(pos)
+            return
+        import ctypes
+
+        send = ctypes.windll.user32.SendMessageW
+        hwnd = self.ctrl.GetHandle()
+        # RichEdit scrolls by screen (wrapped) lines, so work in those, measured
+        # now rather than when the caret was placed: wrapping follows the width.
+        caret_row = send(hwnd, 0x00C9, pos, 0)  # EM_LINEFROMCHAR
+        first_row = send(hwnd, 0x00CE, 0, 0)  # EM_GETFIRSTVISIBLELINE
+        rows = max(1, self.ctrl.GetClientSize().height // max(1, self.ctrl.GetCharHeight()))
+        target = max(0, caret_row - rows // 3)
+        if target != first_row:
+            send(hwnd, 0x00B6, 0, target - first_row)  # EM_LINESCROLL
 
     def bind_changed(self, handler: Callable[[], None]) -> None:
         def on_text(event: wx.CommandEvent) -> None:
@@ -391,6 +413,14 @@ class ScintillaCodeEditor(CodeEditor):
                 break
             pos = c.PositionAfter(pos)
         c.GotoPos(min(pos, end))
+        c.EnsureCaretVisible()
+
+    def reveal_caret(self) -> None:
+        c = self.ctrl
+        # Display lines (wrapping included), so long wrapped lines count fully.
+        caret_row = c.VisibleFromDocLine(c.GetCurrentLine())
+        rows = max(1, c.LinesOnScreen())
+        c.SetFirstVisibleLine(max(0, caret_row - rows // 3))
         c.EnsureCaretVisible()
 
     def bind_changed(self, handler: Callable[[], None]) -> None:

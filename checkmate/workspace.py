@@ -205,6 +205,8 @@ class PublicationWorkspace(wx.Frame):
         # The issue this editing session started from (Edit at location / Open fix).
         self._issue: Issue | None = None
         self._issue_before = 0
+        # Until then, editor resizes after a jump bring the caret back into view.
+        self._reveal_until = 0.0
         # Opened from Issue details: the main window shows that dialog again on close.
         self.return_to_details = False
         try:
@@ -394,6 +396,7 @@ class PublicationWorkspace(wx.Frame):
         editor = create_code_editor(parent, self._editor_kind, _("Code"))
         editor.bind_changed(self._on_text_changed)
         editor.bind_caret(self._update_position)
+        editor.ctrl.Bind(wx.EVT_SIZE, self._on_editor_size)
         return editor
 
     def apply_settings(self) -> None:
@@ -522,6 +525,7 @@ class PublicationWorkspace(wx.Frame):
         # Without a location, an already open file keeps its caret.
         if line is not None:
             self._place_caret(line, column)
+            self._reveal_caret_soon()
         self._editor.ctrl.SetFocus()
         return True
 
@@ -559,6 +563,7 @@ class PublicationWorkspace(wx.Frame):
         start = text.index(original)
         self._editor.replace_range(start, start + len(original), replacement)
         self._editor.select_range(start, start + len(replacement))
+        self._reveal_caret_soon()
         self._update_position()
         self._editor.ctrl.SetFocus()
         self._set_status(
@@ -698,6 +703,43 @@ class PublicationWorkspace(wx.Frame):
         self._editor.place_caret(max(1, line or 1), max(1, column or 1))
         self._update_position()
 
+    def _reveal_caret_soon(self) -> None:
+        """Scroll the caret into view now, and again once layout and activation settle.
+
+        Opening the window, raising it, and showing the issue strip all resize
+        the editor after the jump, and wrapped lines move with the width.
+        """
+
+        def reveal() -> None:
+            if self._closing:
+                return
+            try:
+                self._editor.reveal_caret()
+            except RuntimeError:
+                pass
+
+        self._reveal_until = time.monotonic() + 2.0
+        reveal()
+        wx.CallAfter(reveal)
+        wx.CallLater(250, reveal)
+
+    def _on_editor_size(self, event: wx.SizeEvent) -> None:
+        event.Skip()
+        if not self._closing and time.monotonic() < self._reveal_until:
+            # Scintilla re-wraps long lines in the background after a resize,
+            # so look again once that has settled.
+            wx.CallAfter(self._reveal_after_resize)
+            wx.CallLater(200, self._reveal_after_resize)
+            wx.CallLater(600, self._reveal_after_resize)
+
+    def _reveal_after_resize(self) -> None:
+        if self._closing:
+            return
+        try:
+            self._editor.reveal_caret()
+        except RuntimeError:
+            pass
+
     def _caret_line_column(self) -> tuple[int, int] | None:
         return self._editor.line_column()
 
@@ -730,6 +772,7 @@ class PublicationWorkspace(wx.Frame):
         except ValueError:
             return
         self._place_caret(line, column)
+        self._reveal_caret_soon()
         self._editor.ctrl.SetFocus()
 
     # --- Showing the selected item ---
