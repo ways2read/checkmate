@@ -17,6 +17,8 @@ from .settings import (
     DEFAULT_VERAPDF_FLAVOUR,
     EDITOR_NATIVE,
     EDITOR_SCINTILLA,
+    EXTERNAL_CUSTOM,
+    EXTERNAL_NONE,
     EPUB_CHECKERS,
     EPUB_CHECKERS_LABELS,
     HTML_CHECKERS,
@@ -30,8 +32,11 @@ from .settings import (
     autosave_edits,
     check_immediately,
     code_editor,
+    edit_location_external,
     color_theme,
     epub_checkers,
+    external_editor,
+    external_editor_command,
     html_checkers,
     html_follow_links,
     mathml_nordic_guidelines,
@@ -207,8 +212,91 @@ class SettingsDialog(wx.Dialog):
         )
         sizer.Add(self.autosave_edits_cb, 0, wx.ALL, 8)
 
+        self._build_external_editor(page, sizer)
+
         page.SetSizer(sizer)
         return page
+
+    def _build_external_editor(self, page: wx.Panel, sizer: wx.BoxSizer) -> None:
+        from .external_editor import EDITOR_NAMES, available_editors
+
+        box = wx.StaticBoxSizer(wx.VERTICAL, page, _("External editor"))
+        parent = box.GetStaticBox()
+        box.Add(wx.StaticText(parent, label=_("Open &files in:")), 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
+        self.external_choice = wx.Choice(parent)
+        self._external_values = _fill_choice(
+            self.external_choice,
+            available_editors(),
+            {
+                EXTERNAL_NONE: _("No external editor"),
+                **EDITOR_NAMES,
+                EXTERNAL_CUSTOM: _("Other (enter a command)"),
+            },
+            external_editor(),
+            translate=False,
+        )
+        self.external_choice.SetName(_("External editor"))
+        self.external_choice.SetToolTip(
+            _(
+                "The code editor that Open in external editor uses, with the cursor "
+                "at the line and column"
+            )
+        )
+        box.Add(self.external_choice, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+        # Install paths can be long: shorten in the middle, full path in the tooltip.
+        self.external_found = wx.StaticText(
+            parent, label="", style=wx.ST_ELLIPSIZE_MIDDLE | wx.ST_NO_AUTORESIZE
+        )
+        self.external_found.SetMinSize(wx.Size(self.FromDIP(200), -1))
+        box.Add(self.external_found, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 8)
+
+        box.Add(wx.StaticText(parent, label=_("Co&mmand:")), 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
+        self.external_command = wx.TextCtrl(parent, value=external_editor_command())
+        self.external_command.SetName(_("Command"))
+        self.external_command.SetToolTip(
+            _(
+                "The program and its arguments. {file}, {line}, and {column} are "
+                "replaced; for example: myeditor \"{file}\" --line {line}"
+            )
+        )
+        box.Add(self.external_command, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+
+        self.edit_location_external_cb = wx.CheckBox(
+            parent, label=_("Edit at &location opens the external editor")
+        )
+        self.edit_location_external_cb.SetValue(edit_location_external())
+        self.edit_location_external_cb.SetToolTip(
+            _(
+                "From Issue details and the Issues list, open the issue's file in "
+                "the external editor instead of Browse and edit files"
+            )
+        )
+        box.Add(self.edit_location_external_cb, 0, wx.ALL, 8)
+        sizer.Add(box, 0, wx.EXPAND | wx.ALL, 8)
+
+        self.external_choice.Bind(wx.EVT_CHOICE, lambda _e: self._sync_external_editor())
+        self._sync_external_editor()
+
+    def _sync_external_editor(self) -> None:
+        from .external_editor import find_editor
+
+        editor = self._selected(self.external_choice, self._external_values, EXTERNAL_NONE)
+        custom = editor == EXTERNAL_CUSTOM
+        self.external_command.Enable(custom)
+        self.edit_location_external_cb.Enable(editor != EXTERNAL_NONE)
+        if editor in (EXTERNAL_NONE, EXTERNAL_CUSTOM):
+            found = ""
+        else:
+            path = find_editor(editor)
+            found = (
+                _("Found: {path}", path=path)
+                if path is not None
+                else _("Not found on this computer.")
+            )
+        self.external_found.SetLabel(found)
+        self.external_found.SetToolTip(found)
+        self.external_found.Show(bool(found))
+        self.external_found.GetParent().GetParent().Layout()
 
     def _build_checkers_page(self, book: wx.Notebook) -> wx.Panel:
         page = wx.Panel(book)
@@ -403,6 +491,11 @@ class SettingsDialog(wx.Dialog):
             "code_editor": self._selected(
                 self.code_editor_choice, self._code_editor_values, EDITOR_NATIVE
             ),
+            "external_editor": self._selected(
+                self.external_choice, self._external_values, EXTERNAL_NONE
+            ),
+            "external_editor_command": self.external_command.GetValue().strip(),
+            "edit_location_external": bool(self.edit_location_external_cb.GetValue()),
             "show_issues_always": bool(self.show_issues_cb.GetValue()),
             "sound_scheme": self.selected_sound_scheme(),
             "ui_color_theme": self.selected_color_theme(),

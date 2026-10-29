@@ -282,6 +282,36 @@ def code_editor() -> str:
     return value if value in CODE_EDITORS else EDITOR_NATIVE
 
 
+# External code editor that files open in at a line and column.
+EXTERNAL_NONE = "none"
+EXTERNAL_VSCODE = "vscode"
+EXTERNAL_NOTEPADPP = "notepadpp"
+EXTERNAL_SUBLIME = "sublime"
+EXTERNAL_CUSTOM = "custom"
+EXTERNAL_EDITORS: tuple[str, ...] = (
+    EXTERNAL_NONE,
+    EXTERNAL_VSCODE,
+    EXTERNAL_NOTEPADPP,
+    EXTERNAL_SUBLIME,
+    EXTERNAL_CUSTOM,
+)
+
+
+def external_editor() -> str:
+    value = read_settings().get("external_editor", EXTERNAL_NONE)
+    return value if value in EXTERNAL_EDITORS else EXTERNAL_NONE
+
+
+def external_editor_command() -> str:
+    """Custom command with ``{file}``, ``{line}``, and ``{column}`` placeholders."""
+    return str(read_settings().get("external_editor_command", "") or "")
+
+
+def edit_location_external() -> bool:
+    """True when Edit at location opens the external editor instead of Edit files."""
+    return bool(read_settings().get("edit_location_external", False))
+
+
 def color_theme() -> str:
     """Selected UI color theme (``system``, ``light``, or ``dark``)."""
     from .ui_appearance import normalize_color_theme

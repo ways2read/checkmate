@@ -5,7 +5,7 @@
   "native_name": "Français",
   "display_name": "French",
   "direction": "ltr",
-  "source_msgid_hash": "0750a2740a794adf",
+  "source_msgid_hash": "cacfae2bcde5dfcf",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Remarque : la réponse de l’IA a encore été coupée. Posez une question de suivi telle que « Veuillez continuer. »*",
     "&About": "À &propos",
@@ -950,6 +950,28 @@
     "{issue} at {location}: {text}": "{issue} à {location} : {text}",
     "{issue}: {text}": "{issue} : {text}",
     "Open the issue's file in Edit files at the reported line. This window comes back when you close Edit files (Ctrl+E)": "Ouvre le fichier du problème dans Modifier les fichiers, à la ligne signalée. Cette fenêtre revient quand vous fermez Modifier les fichiers (Ctrl+E)",
-    "Put the proposed fix into the file in Edit files, selected, to review or change before saving. This window comes back when you close Edit files": "Place la correction proposée dans le fichier, dans Modifier les fichiers, sélectionnée, pour la vérifier ou la modifier avant d’enregistrer. Cette fenêtre revient quand vous fermez Modifier les fichiers"
+    "Put the proposed fix into the file in Edit files, selected, to review or change before saving. This window comes back when you close Edit files": "Place la correction proposée dans le fichier, dans Modifier les fichiers, sélectionnée, pour la vérifier ou la modifier avant d’enregistrer. Cette fenêtre revient quand vous fermez Modifier les fichiers",
+    "External editor": "Éditeur externe",
+    "Open &files in:": "Ouvrir les &fichiers dans :",
+    "No external editor": "Aucun éditeur externe",
+    "Other (enter a command)": "Autre (saisir une commande)",
+    "The code editor that Open in external editor uses, with the cursor at the line and column": "L’éditeur de code utilisé par Ouvrir dans l’éditeur externe, avec le curseur à la ligne et à la colonne",
+    "Found: {path}": "Trouvé : {path}",
+    "Not found on this computer.": "Introuvable sur cet ordinateur.",
+    "Co&mmand:": "Co&mmande :",
+    "Command": "Commande",
+    "The program and its arguments. {file}, {line}, and {column} are replaced; for example: myeditor \"{file}\" --line {line}": "Le programme et ses arguments. {file}, {line} et {column} sont remplacés ; par exemple : myeditor \"{file}\" --line {line}",
+    "Edit at &location opens the external editor": "Modifier à cet &emplacement ouvre l’éditeur externe",
+    "From Issue details and the Issues list, open the issue's file in the external editor instead of Browse and edit files": "Depuis les détails du problème et la liste des problèmes, ouvre le fichier du problème dans l’éditeur externe au lieu de Parcourir et modifier les fichiers",
+    "Open in e&xternal editor": "Ouvrir dans l’éditeur e&xterne",
+    "Open this file in the external editor chosen in Settings, at the cursor's line and column (Ctrl+Shift+E)": "Ouvre ce fichier dans l’éditeur externe choisi dans les paramètres, à la ligne et à la colonne du curseur (Ctrl+Shift+E)",
+    "Opened {file} in {editor} at line {line}.": "{file} ouvert dans {editor} à la ligne {line}.",
+    "Choose an external editor in Settings, on the Editing tab.": "Choisissez un éditeur externe dans les paramètres, onglet Édition.",
+    "{editor} was not found on this computer. Choose another external editor in Settings, on the Editing tab.": "{editor} est introuvable sur cet ordinateur. Choisissez un autre éditeur externe dans les paramètres, onglet Édition.",
+    "The external editor command in Settings could not be read: {detail}": "Impossible de lire la commande de l’éditeur externe dans les paramètres : {detail}",
+    "Could not start {editor}: {detail}": "Impossible de démarrer {editor} : {detail}",
+    "the external editor": "l’éditeur externe",
+    "Files inside a packaged EPUB cannot be opened in an external editor. Use the Code tab, or check the publication as a folder instead.": "Les fichiers d’un EPUB empaqueté ne peuvent pas être ouverts dans un éditeur externe. Utilisez l’onglet Code, ou vérifiez plutôt la publication sous forme de dossier.",
+    "Edit at location": "Modifier à cet emplacement"
   }
 }

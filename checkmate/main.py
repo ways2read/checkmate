@@ -2507,6 +2507,9 @@ class IssueDetailDialog(wx.Dialog):
             if self._fix_proposal is None:
                 return
             self.edit_fix = self._fix_proposal
+        elif self.GetParent().edit_issue_externally(self._issue):
+            # Opened in the external editor; this dialog stays as it is.
+            return
         # Drop deferred focus/paint work aimed at a dialog about to be hidden.
         self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
         self._stop_pending_later()
@@ -8119,7 +8122,64 @@ class MainFrame(wx.Frame):
 
     def on_open_workspace(self, _event: wx.CommandEvent | None) -> None:
         issue = self._selected_issue() if self._focus_in_issues_list() else None
+        if issue is not None and self.edit_issue_externally(issue):
+            return
         self._open_workspace(issue)
+
+    def edit_issue_externally(self, issue: Issue) -> bool:
+        """Edit at location in the external editor, when Settings ask for that.
+
+        False means use Edit files instead (not wanted, not set up, packaged, or
+        the issue names no file). True means handled, including errors shown.
+        """
+        import zipfile
+
+        from . import external_editor
+        from .ai.context import issue_member_position
+        from .settings import edit_location_external
+        from .workspace_files import member_disk_path, open_source
+
+        if not (edit_location_external() and external_editor.configured()):
+            return False
+        target = self._workspace_target()
+        if target is None:
+            return False
+        try:
+            source = open_source(target.expanduser().resolve())
+        except (OSError, ValueError, zipfile.BadZipFile):
+            return False
+        if source.packaged:
+            return False
+        member, line, column = issue_member_position(source.target, issue)
+        resolved = self._resolve_member(source, member)
+        path = member_disk_path(source, resolved) if resolved else None
+        if path is None:
+            return False
+        workspace = self._workspace
+        if (
+            workspace is not None
+            and workspace.target == source.target
+            and workspace.unsaved_member == resolved
+        ):
+            # The external editor reads the file on disk.
+            workspace.Raise()
+            if not workspace.confirm_unsaved():
+                return True
+        outcome = external_editor.open_at(path, line, column)
+        message = external_editor.outcome_message(outcome, resolved, line or 1)
+        if outcome.ok:
+            from .accessibility import speak
+
+            speak(message, interrupt=True)
+        else:
+            wx.MessageBox(message, _("Edit at location"), wx.OK | wx.ICON_WARNING, self)
+        return True
+
+    @staticmethod
+    def _resolve_member(source, member: str | None) -> str | None:
+        from .workspace_files import resolve_member
+
+        return resolve_member(source, member) if member else None
 
     def _open_workspace(
         self, issue: Issue | None = None, fix=None, *, from_details: bool = False
@@ -8233,7 +8293,11 @@ class MainFrame(wx.Frame):
         edit = menu.Append(wx.ID_ANY, _("&Edit at location\tCtrl+E"))
         edit.Enable(self._workspace_target() is not None)
         menu.Bind(wx.EVT_MENU, lambda _e: self._show_issue_details(), details)
-        menu.Bind(wx.EVT_MENU, lambda _e, i=issue: self._open_workspace(i), edit)
+        menu.Bind(
+            wx.EVT_MENU,
+            lambda _e, i=issue: self.edit_issue_externally(i) or self._open_workspace(i),
+            edit,
+        )
         pos = event.GetPosition()
         if pos == wx.DefaultPosition:
             # Keyboard (Applications key / Shift+F10): open over the list.

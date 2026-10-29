@@ -15,7 +15,7 @@ from pathlib import Path
 import wx
 import wx.dataview as dv
 
-from . import code_format
+from . import code_format, external_editor
 from .code_editor import CodeEditor, create_code_editor, line_column_of, offset_of
 from .i18n import _
 from .models import CheckResult, Issue
@@ -308,6 +308,7 @@ class PublicationWorkspace(wx.Frame):
         self._format_btn = wx.Button(panel, label=_("For&mat code"))
         self._revert_btn = wx.Button(panel, label=_("Re&vert file"))
         self._external_btn = wx.Button(panel, label=_("Open in &default app"))
+        self._editor_btn = wx.Button(panel, label=_("Open in e&xternal editor"))
         close_btn = wx.Button(panel, wx.ID_CLOSE, label=_("&Close"))
         self._save_btn.SetToolTip(_("Save this file (Ctrl+S)"))
         self._recheck_btn.SetToolTip(_("Save, then validate the publication again (F5)"))
@@ -321,12 +322,19 @@ class PublicationWorkspace(wx.Frame):
             _("Restore this file to how it was before this editing session")
         )
         self._external_btn.SetToolTip(_("Open this file in its default application"))
+        self._editor_btn.SetToolTip(
+            _(
+                "Open this file in the external editor chosen in Settings, at the "
+                "cursor's line and column (Ctrl+Shift+E)"
+            )
+        )
         for btn in (
             self._save_btn,
             self._recheck_btn,
             self._format_btn,
             self._revert_btn,
             self._external_btn,
+            self._editor_btn,
         ):
             btns.Add(btn, 0, wx.RIGHT, 8)
         btns.AddStretchSpacer(1)
@@ -338,6 +346,7 @@ class PublicationWorkspace(wx.Frame):
         self._format_btn.Bind(wx.EVT_BUTTON, lambda _e: self.format_code())
         self._revert_btn.Bind(wx.EVT_BUTTON, lambda _e: self.revert_file())
         self._external_btn.Bind(wx.EVT_BUTTON, lambda _e: self.open_external())
+        self._editor_btn.Bind(wx.EVT_BUTTON, lambda _e: self.open_in_external_editor())
         close_btn.Bind(wx.EVT_BUTTON, lambda _e: self.Close())
         self.Bind(wx.EVT_CLOSE, self._on_close)
         self.Bind(wx.EVT_ACTIVATE, self._on_activate)
@@ -347,6 +356,7 @@ class PublicationWorkspace(wx.Frame):
             "recheck": self.save_and_recheck,
             "goto": self.go_to_line,
             "format": self.format_code,
+            "external_editor": self.open_in_external_editor,
             "close": self.Close,
             "pane": self._toggle_pane,
             "prev_page": lambda: self._switch_page(_PAGE_PREVIEW),
@@ -362,6 +372,7 @@ class PublicationWorkspace(wx.Frame):
                     (wx.ACCEL_NORMAL, wx.WXK_F5, ids["recheck"]),
                     (wx.ACCEL_CTRL, ord("G"), ids["goto"]),
                     (wx.ACCEL_CTRL | wx.ACCEL_SHIFT, ord("F"), ids["format"]),
+                    (wx.ACCEL_CTRL | wx.ACCEL_SHIFT, ord("E"), ids["external_editor"]),
                     (wx.ACCEL_CTRL, ord("W"), ids["close"]),
                     (wx.ACCEL_NORMAL, wx.WXK_F6, ids["pane"]),
                     (wx.ACCEL_CTRL, wx.WXK_PAGEUP, ids["prev_page"]),
@@ -401,6 +412,7 @@ class PublicationWorkspace(wx.Frame):
 
     def apply_settings(self) -> None:
         """Follow Settings changes: the code editor choice and the colour theme."""
+        self._update_buttons()
         kind = code_editor()
         if kind == self._editor_kind:
             self._editor.apply_theme()
@@ -1268,6 +1280,26 @@ class PublicationWorkspace(wx.Frame):
                 self,
             )
 
+    def open_in_external_editor(self) -> None:
+        """Open the file in the external editor: at the caret, or its start if not open."""
+        member = self._tree.selected_member() or self._member
+        if member is None:
+            return
+        if self._source.packaged:
+            self._set_status(external_editor.packaged_message())
+            return
+        path = member_disk_path(self._source, member)
+        if path is None:
+            return
+        if member == self._member and self._dirty:
+            # The other editor reads the file on disk.
+            if not self.confirm_unsaved():
+                return
+            self._refresh_code()
+        line, column = self._editor.line_column() if member == self._member else (1, 1)
+        outcome = external_editor.open_at(path, line, column)
+        self._set_status(external_editor.outcome_message(outcome, member, line))
+
     # --- Helpers ---
 
     def _issue_count_for_member(self, result: CheckResult, member: str) -> int:
@@ -1309,6 +1341,11 @@ class PublicationWorkspace(wx.Frame):
             self._member is not None and self._member in self._session_backups
         )
         self._external_btn.Enable(bool(self._source.members) and not self._source.packaged)
+        self._editor_btn.Enable(
+            bool(self._source.members)
+            and not self._source.packaged
+            and external_editor.configured()
+        )
 
     def _toggle_pane(self) -> None:
         if self._tree.ctrl.HasFocus():

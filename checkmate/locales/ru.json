@@ -5,7 +5,7 @@
   "native_name": "Русский",
   "display_name": "Russian",
   "direction": "ltr",
-  "source_msgid_hash": "0750a2740a794adf",
+  "source_msgid_hash": "cacfae2bcde5dfcf",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Примечание: ответ ИИ снова был обрезан. Задайте уточняющий вопрос, например «Пожалуйста, продолжите».*",
     "&About": "&О программе",
@@ -950,6 +950,28 @@
     "{issue} at {location}: {text}": "{issue} в {location}: {text}",
     "{issue}: {text}": "{issue}: {text}",
     "Open the issue's file in Edit files at the reported line. This window comes back when you close Edit files (Ctrl+E)": "Открывает файл с проблемой в окне «Редактирование файлов» на указанной строке. Это окно вернётся, когда вы закроете «Редактирование файлов» (Ctrl+E)",
-    "Put the proposed fix into the file in Edit files, selected, to review or change before saving. This window comes back when you close Edit files": "Вставляет предложенное исправление в файл в окне «Редактирование файлов» с выделением, чтобы проверить или изменить его перед сохранением. Это окно вернётся, когда вы закроете «Редактирование файлов»"
+    "Put the proposed fix into the file in Edit files, selected, to review or change before saving. This window comes back when you close Edit files": "Вставляет предложенное исправление в файл в окне «Редактирование файлов» с выделением, чтобы проверить или изменить его перед сохранением. Это окно вернётся, когда вы закроете «Редактирование файлов»",
+    "External editor": "Внешний редактор",
+    "Open &files in:": "Открывать &файлы в:",
+    "No external editor": "Без внешнего редактора",
+    "Other (enter a command)": "Другой (ввести команду)",
+    "The code editor that Open in external editor uses, with the cursor at the line and column": "Редактор кода, который использует команда «Открыть во внешнем редакторе», с курсором на нужной строке и в нужном столбце",
+    "Found: {path}": "Найден: {path}",
+    "Not found on this computer.": "Не найден на этом компьютере.",
+    "Co&mmand:": "&Команда:",
+    "Command": "Команда",
+    "The program and its arguments. {file}, {line}, and {column} are replaced; for example: myeditor \"{file}\" --line {line}": "Программа и её аргументы. {file}, {line} и {column} заменяются; например: myeditor \"{file}\" --line {line}",
+    "Edit at &location opens the external editor": "«Изменить в этом &месте» открывает внешний редактор",
+    "From Issue details and the Issues list, open the issue's file in the external editor instead of Browse and edit files": "Из сведений о проблеме и списка проблем открывает файл с проблемой во внешнем редакторе вместо окна «Просмотр и редактирование файлов»",
+    "Open in e&xternal editor": "Открыть во &внешнем редакторе",
+    "Open this file in the external editor chosen in Settings, at the cursor's line and column (Ctrl+Shift+E)": "Открывает этот файл во внешнем редакторе, выбранном в настройках, на строке и в столбце курсора (Ctrl+Shift+E)",
+    "Opened {file} in {editor} at line {line}.": "Файл {file} открыт в {editor} на строке {line}.",
+    "Choose an external editor in Settings, on the Editing tab.": "Выберите внешний редактор в настройках, на вкладке «Правка».",
+    "{editor} was not found on this computer. Choose another external editor in Settings, on the Editing tab.": "{editor} не найден на этом компьютере. Выберите другой внешний редактор в настройках, на вкладке «Правка».",
+    "The external editor command in Settings could not be read: {detail}": "Не удалось прочитать команду внешнего редактора в настройках: {detail}",
+    "Could not start {editor}: {detail}": "Не удалось запустить {editor}: {detail}",
+    "the external editor": "внешний редактор",
+    "Files inside a packaged EPUB cannot be opened in an external editor. Use the Code tab, or check the publication as a folder instead.": "Файлы внутри упакованного EPUB нельзя открыть во внешнем редакторе. Используйте вкладку «Код» или проверьте публикацию как папку.",
+    "Edit at location": "Изменить в этом месте"
   }
 }

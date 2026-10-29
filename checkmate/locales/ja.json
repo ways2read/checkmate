@@ -5,7 +5,7 @@
   "native_name": "日本語",
   "display_name": "Japanese",
   "direction": "ltr",
-  "source_msgid_hash": "0750a2740a794adf",
+  "source_msgid_hash": "cacfae2bcde5dfcf",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*注: AIの返答が途中で切れました。「続けてください」などの補足を送信してください。*",
     "&About": "バージョン情報(&A)",
@@ -950,6 +950,28 @@
     "{issue} at {location}: {text}": "{location} の {issue}: {text}",
     "{issue}: {text}": "{issue}: {text}",
     "Open the issue's file in Edit files at the reported line. This window comes back when you close Edit files (Ctrl+E)": "[ファイルの編集] で問題のファイルを報告された行で開きます。[ファイルの編集] を閉じると、このウィンドウに戻ります (Ctrl+E)",
-    "Put the proposed fix into the file in Edit files, selected, to review or change before saving. This window comes back when you close Edit files": "提案された修正を [ファイルの編集] のファイルに選択状態で挿入します。保存する前に確認や変更ができます。[ファイルの編集] を閉じると、このウィンドウに戻ります"
+    "Put the proposed fix into the file in Edit files, selected, to review or change before saving. This window comes back when you close Edit files": "提案された修正を [ファイルの編集] のファイルに選択状態で挿入します。保存する前に確認や変更ができます。[ファイルの編集] を閉じると、このウィンドウに戻ります",
+    "External editor": "外部エディター",
+    "Open &files in:": "ファイルを開くエディター(&F):",
+    "No external editor": "外部エディターなし",
+    "Other (enter a command)": "その他 (コマンドを入力)",
+    "The code editor that Open in external editor uses, with the cursor at the line and column": "[外部エディターで開く] で使うコード エディターです。カーソルは該当する行と列に置かれます",
+    "Found: {path}": "検出: {path}",
+    "Not found on this computer.": "このコンピューターには見つかりません。",
+    "Co&mmand:": "コマンド(&M):",
+    "Command": "コマンド",
+    "The program and its arguments. {file}, {line}, and {column} are replaced; for example: myeditor \"{file}\" --line {line}": "プログラムとその引数です。{file}、{line}、{column} は置き換えられます。例: myeditor \"{file}\" --line {line}",
+    "Edit at &location opens the external editor": "[この場所で編集] で外部エディターを開く(&L)",
+    "From Issue details and the Issues list, open the issue's file in the external editor instead of Browse and edit files": "問題の詳細と問題の一覧から、[ファイルの参照と編集] ではなく外部エディターで問題のファイルを開きます",
+    "Open in e&xternal editor": "外部エディターで開く(&X)",
+    "Open this file in the external editor chosen in Settings, at the cursor's line and column (Ctrl+Shift+E)": "設定で選んだ外部エディターで、このファイルをカーソルの行と列で開きます (Ctrl+Shift+E)",
+    "Opened {file} in {editor} at line {line}.": "{file} を {editor} の {line} 行目で開きました。",
+    "Choose an external editor in Settings, on the Editing tab.": "設定の [編集] タブで外部エディターを選んでください。",
+    "{editor} was not found on this computer. Choose another external editor in Settings, on the Editing tab.": "このコンピューターに {editor} が見つかりません。設定の [編集] タブで別の外部エディターを選んでください。",
+    "The external editor command in Settings could not be read: {detail}": "設定の外部エディターのコマンドを読み取れませんでした: {detail}",
+    "Could not start {editor}: {detail}": "{editor} を起動できませんでした: {detail}",
+    "the external editor": "外部エディター",
+    "Files inside a packaged EPUB cannot be opened in an external editor. Use the Code tab, or check the publication as a folder instead.": "パッケージ化された EPUB 内のファイルは外部エディターで開けません。[コード] タブを使うか、出版物をフォルダーとしてチェックしてください。",
+    "Edit at location": "この場所で編集"
   }
 }

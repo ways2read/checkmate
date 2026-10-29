@@ -5,7 +5,7 @@
   "native_name": "Español",
   "display_name": "Spanish",
   "direction": "ltr",
-  "source_msgid_hash": "0750a2740a794adf",
+  "source_msgid_hash": "cacfae2bcde5dfcf",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Nota: La respuesta de la IA se cortó de nuevo. Haz una pregunta de seguimiento como “Por favor, continúa”.*",
     "&About": "&Acerca de",
@@ -950,6 +950,28 @@
     "{issue} at {location}: {text}": "{issue} en {location}: {text}",
     "{issue}: {text}": "{issue}: {text}",
     "Open the issue's file in Edit files at the reported line. This window comes back when you close Edit files (Ctrl+E)": "Abre el archivo del problema en Editar archivos, en la línea indicada. Esta ventana vuelve cuando cierra Editar archivos (Ctrl+E)",
-    "Put the proposed fix into the file in Edit files, selected, to review or change before saving. This window comes back when you close Edit files": "Coloca la corrección propuesta en el archivo, en Editar archivos, seleccionada, para revisarla o cambiarla antes de guardar. Esta ventana vuelve cuando cierra Editar archivos"
+    "Put the proposed fix into the file in Edit files, selected, to review or change before saving. This window comes back when you close Edit files": "Coloca la corrección propuesta en el archivo, en Editar archivos, seleccionada, para revisarla o cambiarla antes de guardar. Esta ventana vuelve cuando cierra Editar archivos",
+    "External editor": "Editor externo",
+    "Open &files in:": "Abrir los &archivos en:",
+    "No external editor": "Ningún editor externo",
+    "Other (enter a command)": "Otro (escriba un comando)",
+    "The code editor that Open in external editor uses, with the cursor at the line and column": "El editor de código que usa Abrir en el editor externo, con el cursor en la línea y la columna",
+    "Found: {path}": "Encontrado: {path}",
+    "Not found on this computer.": "No se encontró en este equipo.",
+    "Co&mmand:": "Co&mando:",
+    "Command": "Comando",
+    "The program and its arguments. {file}, {line}, and {column} are replaced; for example: myeditor \"{file}\" --line {line}": "El programa y sus argumentos. Se reemplazan {file}, {line} y {column}; por ejemplo: myeditor \"{file}\" --line {line}",
+    "Edit at &location opens the external editor": "Editar en la &ubicación abre el editor externo",
+    "From Issue details and the Issues list, open the issue's file in the external editor instead of Browse and edit files": "Desde los detalles del problema y la lista de problemas, abre el archivo del problema en el editor externo en lugar de Examinar y editar archivos",
+    "Open in e&xternal editor": "Abrir en el editor e&xterno",
+    "Open this file in the external editor chosen in Settings, at the cursor's line and column (Ctrl+Shift+E)": "Abre este archivo en el editor externo elegido en Configuración, en la línea y la columna del cursor (Ctrl+Shift+E)",
+    "Opened {file} in {editor} at line {line}.": "Se abrió {file} en {editor} en la línea {line}.",
+    "Choose an external editor in Settings, on the Editing tab.": "Elija un editor externo en Configuración, en la pestaña Edición.",
+    "{editor} was not found on this computer. Choose another external editor in Settings, on the Editing tab.": "No se encontró {editor} en este equipo. Elija otro editor externo en Configuración, en la pestaña Edición.",
+    "The external editor command in Settings could not be read: {detail}": "No se pudo leer el comando del editor externo en Configuración: {detail}",
+    "Could not start {editor}: {detail}": "No se pudo iniciar {editor}: {detail}",
+    "the external editor": "el editor externo",
+    "Files inside a packaged EPUB cannot be opened in an external editor. Use the Code tab, or check the publication as a folder instead.": "Los archivos de un EPUB empaquetado no se pueden abrir en un editor externo. Use la pestaña Código o compruebe la publicación como carpeta.",
+    "Edit at location": "Editar en la ubicación"
   }
 }

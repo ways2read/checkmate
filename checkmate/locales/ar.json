@@ -5,7 +5,7 @@
   "native_name": "العربية",
   "display_name": "Arabic",
   "direction": "rtl",
-  "source_msgid_hash": "0750a2740a794adf",
+  "source_msgid_hash": "cacfae2bcde5dfcf",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*ملاحظة: تم قطع رد الذكاء الاصطناعي مجددًا. اطرح سؤال متابعة مثل ”يرجى الاستمرار.“*",
     "&About": "&عن البرنامج",
@@ -950,6 +950,28 @@
     "{issue} at {location}: {text}": "{issue} في {location}: {text}",
     "{issue}: {text}": "{issue}: {text}",
     "Open the issue's file in Edit files at the reported line. This window comes back when you close Edit files (Ctrl+E)": "يفتح ملف المشكلة في تحرير الملفات عند السطر المُبلَّغ عنه. تعود هذه النافذة عند إغلاق تحرير الملفات (Ctrl+E)",
-    "Put the proposed fix into the file in Edit files, selected, to review or change before saving. This window comes back when you close Edit files": "يضع الإصلاح المقترح في الملف ضمن تحرير الملفات محددًا، لمراجعته أو تغييره قبل الحفظ. تعود هذه النافذة عند إغلاق تحرير الملفات"
+    "Put the proposed fix into the file in Edit files, selected, to review or change before saving. This window comes back when you close Edit files": "يضع الإصلاح المقترح في الملف ضمن تحرير الملفات محددًا، لمراجعته أو تغييره قبل الحفظ. تعود هذه النافذة عند إغلاق تحرير الملفات",
+    "External editor": "المحرر الخارجي",
+    "Open &files in:": "فتح ال&ملفات في:",
+    "No external editor": "بدون محرر خارجي",
+    "Other (enter a command)": "غير ذلك (أدخل أمرًا)",
+    "The code editor that Open in external editor uses, with the cursor at the line and column": "محرر التعليمات البرمجية الذي يستخدمه أمر الفتح في المحرر الخارجي، مع وضع المؤشر عند السطر والعمود",
+    "Found: {path}": "تم العثور عليه: {path}",
+    "Not found on this computer.": "غير موجود على هذا الكمبيوتر.",
+    "Co&mmand:": "الأم&ر:",
+    "Command": "الأمر",
+    "The program and its arguments. {file}, {line}, and {column} are replaced; for example: myeditor \"{file}\" --line {line}": "البرنامج ووسائطه. يُستبدل {file} و{line} و{column}؛ مثال: myeditor \"{file}\" --line {line}",
+    "Edit at &location opens the external editor": "التحرير في هذا الموضع يفتح المحرر ال&خارجي",
+    "From Issue details and the Issues list, open the issue's file in the external editor instead of Browse and edit files": "من تفاصيل المشكلة وقائمة المشكلات، يفتح ملف المشكلة في المحرر الخارجي بدلاً من استعراض الملفات وتحريرها",
+    "Open in e&xternal editor": "فتح في المحرر ال&خارجي",
+    "Open this file in the external editor chosen in Settings, at the cursor's line and column (Ctrl+Shift+E)": "يفتح هذا الملف في المحرر الخارجي المحدد في الإعدادات عند سطر المؤشر وعموده (Ctrl+Shift+E)",
+    "Opened {file} in {editor} at line {line}.": "تم فتح {file} في {editor} عند السطر {line}.",
+    "Choose an external editor in Settings, on the Editing tab.": "اختر محررًا خارجيًا في الإعدادات، في علامة التبويب التحرير.",
+    "{editor} was not found on this computer. Choose another external editor in Settings, on the Editing tab.": "لم يتم العثور على {editor} على هذا الكمبيوتر. اختر محررًا خارجيًا آخر في الإعدادات، في علامة التبويب التحرير.",
+    "The external editor command in Settings could not be read: {detail}": "تعذّرت قراءة أمر المحرر الخارجي في الإعدادات: {detail}",
+    "Could not start {editor}: {detail}": "تعذّر تشغيل {editor}: {detail}",
+    "the external editor": "المحرر الخارجي",
+    "Files inside a packaged EPUB cannot be opened in an external editor. Use the Code tab, or check the publication as a folder instead.": "لا يمكن فتح الملفات الموجودة داخل EPUB محزّم في محرر خارجي. استخدم علامة التبويب الرمز، أو افحص المنشور كمجلد بدلاً من ذلك.",
+    "Edit at location": "التحرير في هذا الموضع"
   }
 }
