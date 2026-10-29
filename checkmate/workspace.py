@@ -205,6 +205,8 @@ class PublicationWorkspace(wx.Frame):
         # The issue this editing session started from (Edit at location / Open fix).
         self._issue: Issue | None = None
         self._issue_before = 0
+        # Opened from Issue details: the main window shows that dialog again on close.
+        self.return_to_details = False
         try:
             self.SetIcons(main_frame.GetIcons())
         except Exception:

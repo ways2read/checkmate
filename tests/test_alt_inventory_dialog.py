@@ -623,7 +623,7 @@ class NestedEdgeModalCloseTests(unittest.TestCase):
         closing_branch = close_src.split('if getattr(self, "_closing", False):', 1)[1]
         closing_branch = closing_branch.split("self._closing = True", 1)[0]
         self.assertIn("_ensure_end_modal", closing_branch)
-        show_src = inspect.getsource(MainFrame._show_issue_details)
+        show_src = inspect.getsource(MainFrame._run_issue_details)
         self.assertIn("self._issue_detail_dialog = dlg", show_src)
         self.assertIn("dlg.ShowModal()", show_src)
         self.assertLess(

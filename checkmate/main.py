@@ -1914,6 +1914,16 @@ class IssueDetailDialog(wx.Dialog):
         self.copy_btn = wx.Button(self, label=_("Copy to clipboard"))
         self.copy_btn.SetToolTip(_("Copy the current view to the clipboard"))
         export.Add(self.copy_btn, 0, wx.ALIGN_CENTER_VERTICAL)
+        if self._can_edit:
+            self.edit_location_btn = wx.Button(self, label=_("&Edit at location"))
+            self.edit_location_btn.SetToolTip(
+                _(
+                    "Open the issue's file in Edit files at the reported line. "
+                    "This window comes back when you close Edit files (Ctrl+E)"
+                )
+            )
+            self.edit_location_btn.Bind(wx.EVT_BUTTON, lambda _e: self._request_edit())
+            export.Add(self.edit_location_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 6)
         # Alias used by older AI helpers.
         self.copy_ai_btn = self.copy_btn
         root.Add(export, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
@@ -1924,16 +1934,6 @@ class IssueDetailDialog(wx.Dialog):
         self.copy_btn.Bind(wx.EVT_BUTTON, self._on_copy_clipboard)
 
         footer = wx.BoxSizer(wx.HORIZONTAL)
-        if self._can_edit:
-            self.edit_location_btn = wx.Button(self, label=_("&Edit at location"))
-            self.edit_location_btn.SetToolTip(
-                _(
-                    "Close this window and open the issue's file in Edit files, "
-                    "at the reported line (Ctrl+E)"
-                )
-            )
-            self.edit_location_btn.Bind(wx.EVT_BUTTON, lambda _e: self._request_edit())
-            footer.Add(self.edit_location_btn, 0, wx.ALIGN_CENTER_VERTICAL)
         footer.AddStretchSpacer(1)
         close_btn = wx.Button(self, id=wx.ID_CLOSE, label=_("Close"))
         close_btn.Bind(wx.EVT_BUTTON, self._on_close_dialog)
@@ -2193,8 +2193,9 @@ class IssueDetailDialog(wx.Dialog):
             _ensure_win_tab_stop(self.open_fix_btn)
             self.open_fix_btn.SetToolTip(
                 _(
-                    "Close this window and put the proposed fix into the file in "
-                    "Edit files, selected, so you can review or change it before saving"
+                    "Put the proposed fix into the file in Edit files, selected, to "
+                    "review or change before saving. This window comes back when you "
+                    "close Edit files"
                 )
             )
             self.open_fix_btn.Enable(False)
@@ -2495,14 +2496,33 @@ class IssueDetailDialog(wx.Dialog):
         event.Skip()
 
     def _request_edit(self, *, fix: bool = False) -> None:
-        """Close and let the main window open Edit files at the issue (or with the fix)."""
+        """Step aside for Edit files at the issue (or with the fix).
+
+        The main window hides this dialog rather than destroying it, and shows
+        it again, AI answers and all, when editing ends.
+        """
         if self._busy or self._closing:
             return
         if fix:
             if self._fix_proposal is None:
                 return
             self.edit_fix = self._fix_proposal
-        self._on_close_dialog(code=wx.ID_EDIT)
+        # Drop deferred focus/paint work aimed at a dialog about to be hidden.
+        self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
+        self._stop_pending_later()
+        self._ensure_end_modal(wx.ID_EDIT)
+
+    def prepare_return(self, check_result: CheckResult | None) -> None:
+        """Ready this dialog to be shown again after Edit files."""
+        self._check_result = check_result
+        self.edit_fix = None
+        self._end_code = int(wx.ID_CLOSE)
+        wx.CallAfter(self._focus_after_return)
+
+    def _focus_after_return(self) -> None:
+        # The tab names the page the user left; never focus into Edge directly.
+        if not _try_set_focus(self._notebook):
+            self._focus_dialog_chrome()
 
     def _on_accel_prev_page(self, _event: wx.CommandEvent) -> None:
         self._cycle_notebook_page(-1)
@@ -5452,6 +5472,8 @@ class MainFrame(wx.Frame):
         self._overview_progress_timer: wx.Timer | None = None
         self._overview_dialog = None
         self._issue_detail_dialog = None
+        # Issue details hidden while Edit files is open from it (shown again after).
+        self._parked_details: IssueDetailDialog | None = None
         self._alt_assess_cancel: threading.Event | None = None
         self._alt_assess_progress: wx.ProgressDialog | None = None
         self._alt_assess_progress_timer: wx.Timer | None = None
@@ -7515,6 +7537,7 @@ class MainFrame(wx.Frame):
 
     def _clear_to_launch_state(self) -> None:
         """Reset the UI to the same state as a fresh launch."""
+        self._discard_parked_details()
         self._last_result = None
         self._pending_fix_verify = None
         self._displayed_issues = []
@@ -7717,6 +7740,13 @@ class MainFrame(wx.Frame):
         if issue is None:
             return
 
+        # Coming back from Edit files: the same dialog, with any AI answer intact.
+        dlg = self._take_parked_details(issue)
+        if dlg is None:
+            dlg = self._create_issue_details(issue, count)
+        self._run_issue_details(dlg)
+
+    def _create_issue_details(self, issue: Issue, count: int) -> IssueDetailDialog:
         # WebView / AI chrome can take a moment; show feedback while building.
         progress = wx.ProgressDialog(
             _("Issue details"),
@@ -7746,7 +7776,9 @@ class MainFrame(wx.Frame):
                 progress.Destroy()
             except RuntimeError:
                 pass
+        return dlg
 
+    def _run_issue_details(self, dlg: IssueDetailDialog) -> None:
         from .ai.alt_inventory_dialog import schedule_webview_window_destroy
         from .dialog_trace import dlg_trace
 
@@ -7757,22 +7789,67 @@ class MainFrame(wx.Frame):
             dlg_trace("issue-detail ShowModal returned", dlg, result=result_code)
         finally:
             self._issue_detail_dialog = None
-            try:
-                dlg._release_webview(reclaim_focus=False)
-            except RuntimeError:
-                pass
-            schedule_webview_window_destroy(dlg)
-            wx.CallAfter(self._reclaim_after_modal)
-            wx.CallLater(150, self._reclaim_after_modal)
-        pending = getattr(dlg, "applied_fix_verify", None)
         if result_code == wx.ID_EDIT:
-            # Edit at location / Open fix in editor: continue in Edit files.
-            wx.CallAfter(self._open_workspace, issue, getattr(dlg, "edit_fix", None))
+            # Edit at location / Open fix in editor: hide (not destroy) the dialog so
+            # it comes back as it was when editing ends; Edit files keeps the focus.
+            dlg.Hide()
+            self._parked_details = dlg
+            wx.CallAfter(
+                self._open_workspace, dlg._issue, dlg.edit_fix, from_details=True
+            )
             return
+        try:
+            dlg._release_webview(reclaim_focus=False)
+        except RuntimeError:
+            pass
+        schedule_webview_window_destroy(dlg)
+        wx.CallAfter(self._reclaim_after_modal)
+        wx.CallLater(150, self._reclaim_after_modal)
+        pending = getattr(dlg, "applied_fix_verify", None)
         if result_code == wx.ID_APPLY:
             # Apply fix succeeded — re-scan, then confirm resolution / offer revert.
             self._pending_fix_verify = pending
             wx.CallAfter(self.on_check, None)
+
+    def _take_parked_details(self, issue: Issue) -> IssueDetailDialog | None:
+        """The hidden Issue details for *issue*, ready to show again (others are closed)."""
+        dlg = self._parked_details
+        self._parked_details = None
+        if dlg is None:
+            return None
+        parked = dlg._issue
+        same = issue is parked or (issue.source, issue.code, issue.message) == (
+            parked.source,
+            parked.code,
+            parked.message,
+        )
+        if not same:
+            self._discard_details(dlg)
+            return None
+        dlg.prepare_return(self._last_result)
+        return dlg
+
+    def _discard_parked_details(self) -> None:
+        dlg = self._parked_details
+        self._parked_details = None
+        if dlg is not None:
+            self._discard_details(dlg)
+
+    def _discard_details(self, dlg: IssueDetailDialog) -> None:
+        from .ai.alt_inventory_dialog import schedule_webview_window_destroy
+
+        try:
+            dlg._on_close_dialog()
+        except RuntimeError:
+            return
+        schedule_webview_window_destroy(dlg)
+
+    def _return_to_details(self) -> None:
+        """Editing that started in Issue details has ended: show that dialog again."""
+        dlg = self._parked_details
+        if dlg is None or self._exiting:
+            return
+        self._show_issue_details(dlg._issue)
 
     def on_issue_activated(self, _event: wx.Event) -> None:
         self._show_issue_details()
@@ -8044,9 +8121,18 @@ class MainFrame(wx.Frame):
         issue = self._selected_issue() if self._focus_in_issues_list() else None
         self._open_workspace(issue)
 
-    def _open_workspace(self, issue: Issue | None = None, fix=None) -> None:
-        """Open Edit files, at *issue*'s location or with AI *fix* placed for review."""
+    def _open_workspace(
+        self, issue: Issue | None = None, fix=None, *, from_details: bool = False
+    ) -> None:
+        """Open Edit files, at *issue*'s location or with AI *fix* placed for review.
+
+        *from_details*: opened from Issue details, which comes back when Edit
+        files closes.
+        """
         import zipfile
+
+        if not from_details:
+            self._discard_parked_details()
 
         from .workspace import PublicationWorkspace
         from .workspace_files import open_source
@@ -8069,6 +8155,7 @@ class MainFrame(wx.Frame):
         if workspace is not None and workspace.target != target:
             if not workspace.confirm_unsaved():
                 return
+            workspace.return_to_details = False
             workspace.Close(force=True)
             workspace = None
         created = workspace is None
@@ -8085,10 +8172,14 @@ class MainFrame(wx.Frame):
                 return
             workspace = PublicationWorkspace(self, source)
             self._workspace = workspace
+        workspace.return_to_details = from_details
         workspace.Show()
         if workspace.IsIconized():
             workspace.Iconize(False)
         workspace.Raise()
+        if from_details:
+            # The closing dialog hands activation to this frame; take it back.
+            _win_force_foreground(workspace)
         if issue is not None:
             workspace.show_issue(issue)
         if fix is not None:
@@ -8102,6 +8193,8 @@ class MainFrame(wx.Frame):
             wx.CallAfter(workspace.focus_files)
 
     def on_workspace_closed(self, workspace) -> None:
+        if getattr(workspace, "return_to_details", False):
+            wx.CallAfter(self._return_to_details)
         if self._workspace is workspace:
             self._workspace = None
         if self._workspace_check is workspace:

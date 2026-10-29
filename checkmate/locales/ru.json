@@ -5,7 +5,7 @@
   "native_name": "Русский",
   "display_name": "Russian",
   "direction": "ltr",
-  "source_msgid_hash": "3e4db003b00321e5",
+  "source_msgid_hash": "0750a2740a794adf",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Примечание: ответ ИИ снова был обрезан. Задайте уточняющий вопрос, например «Пожалуйста, продолжите».*",
     "&About": "&О программе",
@@ -934,8 +934,6 @@
     "Could not format {file}: <{name}> on line {line} is never closed.": "Не удалось отформатировать {file}: тег <{name}> в строке {line} не закрыт.",
     "&Edit at location": "&Изменить в этом месте",
     "&Open fix in editor": "&Открыть исправление в редакторе",
-    "Close this window and open the issue's file in Edit files, at the reported line (Ctrl+E)": "Закрывает это окно и открывает файл с проблемой в окне «Редактирование файлов» на указанной строке (Ctrl+E)",
-    "Close this window and put the proposed fix into the file in Edit files, selected, so you can review or change it before saving": "Закрывает это окно и вставляет предложенное исправление в файл в окне «Редактирование файлов» с выделением, чтобы вы могли проверить или изменить его перед сохранением",
     "Edit files has unsaved changes to {file}. Applying the fix now would conflict with them.\n\nOpen the fix in the editor instead, alongside your changes?": "В окне «Редактирование файлов» есть несохранённые изменения в {file}. Применение исправления сейчас приведёт к конфликту с ними.\n\nОткрыть исправление в редакторе вместе с вашими изменениями?",
     "Edit files has unsaved changes to {file}. Save or discard them there before applying this fix.": "В окне «Редактирование файлов» есть несохранённые изменения в {file}. Сохраните или отмените их там, прежде чем применять это исправление.",
     "&Issue:": "Про&блема:",
@@ -950,6 +948,8 @@
     "The issue you are fixing ({code}) is still reported.": "Исправляемая проблема ({code}) по-прежнему выявляется.",
     "{code}: {left} like the issue you are fixing remain, down from {before}.": "{code}: осталось проблем, похожих на исправляемую: {left} (было {before}).",
     "{issue} at {location}: {text}": "{issue} в {location}: {text}",
-    "{issue}: {text}": "{issue}: {text}"
+    "{issue}: {text}": "{issue}: {text}",
+    "Open the issue's file in Edit files at the reported line. This window comes back when you close Edit files (Ctrl+E)": "Открывает файл с проблемой в окне «Редактирование файлов» на указанной строке. Это окно вернётся, когда вы закроете «Редактирование файлов» (Ctrl+E)",
+    "Put the proposed fix into the file in Edit files, selected, to review or change before saving. This window comes back when you close Edit files": "Вставляет предложенное исправление в файл в окне «Редактирование файлов» с выделением, чтобы проверить или изменить его перед сохранением. Это окно вернётся, когда вы закроете «Редактирование файлов»"
   }
 }

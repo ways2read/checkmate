@@ -5,7 +5,7 @@
   "native_name": "日本語",
   "display_name": "Japanese",
   "direction": "ltr",
-  "source_msgid_hash": "3e4db003b00321e5",
+  "source_msgid_hash": "0750a2740a794adf",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*注: AIの返答が途中で切れました。「続けてください」などの補足を送信してください。*",
     "&About": "バージョン情報(&A)",
@@ -934,8 +934,6 @@
     "Could not format {file}: <{name}> on line {line} is never closed.": "{file} を整形できませんでした: {line} 行目の <{name}> が閉じられていません。",
     "&Edit at location": "この場所で編集(&E)",
     "&Open fix in editor": "修正をエディターで開く(&O)",
-    "Close this window and open the issue's file in Edit files, at the reported line (Ctrl+E)": "このウィンドウを閉じ、[ファイルの編集] で問題のファイルを報告された行で開きます (Ctrl+E)",
-    "Close this window and put the proposed fix into the file in Edit files, selected, so you can review or change it before saving": "このウィンドウを閉じ、提案された修正を [ファイルの編集] のファイルに選択状態で挿入します。保存する前に確認や変更ができます",
     "Edit files has unsaved changes to {file}. Applying the fix now would conflict with them.\n\nOpen the fix in the editor instead, alongside your changes?": "[ファイルの編集] に {file} の未保存の変更があります。今修正を適用すると、その変更と競合します。\n\n代わりに、変更と合わせて修正をエディターで開きますか?",
     "Edit files has unsaved changes to {file}. Save or discard them there before applying this fix.": "[ファイルの編集] に {file} の未保存の変更があります。この修正を適用する前に、そちらで保存または破棄してください。",
     "&Issue:": "問題(&I):",
@@ -950,6 +948,8 @@
     "The issue you are fixing ({code}) is still reported.": "修正中の問題 ({code}) はまだ報告されています。",
     "{code}: {left} like the issue you are fixing remain, down from {before}.": "{code}: 修正中の問題と同様の問題が {left} 件残っています (以前は {before} 件)。",
     "{issue} at {location}: {text}": "{location} の {issue}: {text}",
-    "{issue}: {text}": "{issue}: {text}"
+    "{issue}: {text}": "{issue}: {text}",
+    "Open the issue's file in Edit files at the reported line. This window comes back when you close Edit files (Ctrl+E)": "[ファイルの編集] で問題のファイルを報告された行で開きます。[ファイルの編集] を閉じると、このウィンドウに戻ります (Ctrl+E)",
+    "Put the proposed fix into the file in Edit files, selected, to review or change before saving. This window comes back when you close Edit files": "提案された修正を [ファイルの編集] のファイルに選択状態で挿入します。保存する前に確認や変更ができます。[ファイルの編集] を閉じると、このウィンドウに戻ります"
   }
 }

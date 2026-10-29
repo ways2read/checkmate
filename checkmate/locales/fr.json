@@ -5,7 +5,7 @@
   "native_name": "Français",
   "display_name": "French",
   "direction": "ltr",
-  "source_msgid_hash": "3e4db003b00321e5",
+  "source_msgid_hash": "0750a2740a794adf",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Remarque : la réponse de l’IA a encore été coupée. Posez une question de suivi telle que « Veuillez continuer. »*",
     "&About": "À &propos",
@@ -934,8 +934,6 @@
     "Could not format {file}: <{name}> on line {line} is never closed.": "Impossible de mettre en forme {file} : <{name}> à la ligne {line} n’est jamais fermé.",
     "&Edit at location": "&Modifier à cet emplacement",
     "&Open fix in editor": "&Ouvrir la correction dans l’éditeur",
-    "Close this window and open the issue's file in Edit files, at the reported line (Ctrl+E)": "Ferme cette fenêtre et ouvre le fichier du problème dans Modifier les fichiers, à la ligne signalée (Ctrl+E)",
-    "Close this window and put the proposed fix into the file in Edit files, selected, so you can review or change it before saving": "Ferme cette fenêtre et place la correction proposée dans le fichier, dans Modifier les fichiers, sélectionnée, pour que vous puissiez la vérifier ou la modifier avant d’enregistrer",
     "Edit files has unsaved changes to {file}. Applying the fix now would conflict with them.\n\nOpen the fix in the editor instead, alongside your changes?": "Modifier les fichiers contient des modifications non enregistrées de {file}. Appliquer la correction maintenant entrerait en conflit avec elles.\n\nOuvrir plutôt la correction dans l’éditeur, avec vos modifications ?",
     "Edit files has unsaved changes to {file}. Save or discard them there before applying this fix.": "Modifier les fichiers contient des modifications non enregistrées de {file}. Enregistrez-les ou abandonnez-les avant d’appliquer cette correction.",
     "&Issue:": "&Problème :",
@@ -950,6 +948,8 @@
     "The issue you are fixing ({code}) is still reported.": "Le problème que vous corrigez ({code}) est toujours signalé.",
     "{code}: {left} like the issue you are fixing remain, down from {before}.": "{code} : il reste {left} problèmes semblables à celui que vous corrigez, contre {before} auparavant.",
     "{issue} at {location}: {text}": "{issue} à {location} : {text}",
-    "{issue}: {text}": "{issue} : {text}"
+    "{issue}: {text}": "{issue} : {text}",
+    "Open the issue's file in Edit files at the reported line. This window comes back when you close Edit files (Ctrl+E)": "Ouvre le fichier du problème dans Modifier les fichiers, à la ligne signalée. Cette fenêtre revient quand vous fermez Modifier les fichiers (Ctrl+E)",
+    "Put the proposed fix into the file in Edit files, selected, to review or change before saving. This window comes back when you close Edit files": "Place la correction proposée dans le fichier, dans Modifier les fichiers, sélectionnée, pour la vérifier ou la modifier avant d’enregistrer. Cette fenêtre revient quand vous fermez Modifier les fichiers"
   }
 }

@@ -5,7 +5,7 @@
   "native_name": "العربية",
   "display_name": "Arabic",
   "direction": "rtl",
-  "source_msgid_hash": "3e4db003b00321e5",
+  "source_msgid_hash": "0750a2740a794adf",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*ملاحظة: تم قطع رد الذكاء الاصطناعي مجددًا. اطرح سؤال متابعة مثل ”يرجى الاستمرار.“*",
     "&About": "&عن البرنامج",
@@ -934,8 +934,6 @@
     "Could not format {file}: <{name}> on line {line} is never closed.": "تعذّر تنسيق {file}: الوسم <{name}> في السطر {line} لم يُغلق أبدًا.",
     "&Edit at location": "&تحرير في هذا الموضع",
     "&Open fix in editor": "&فتح الإصلاح في المحرر",
-    "Close this window and open the issue's file in Edit files, at the reported line (Ctrl+E)": "يغلق هذه النافذة ويفتح ملف المشكلة في تحرير الملفات عند السطر المُبلَّغ عنه (Ctrl+E)",
-    "Close this window and put the proposed fix into the file in Edit files, selected, so you can review or change it before saving": "يغلق هذه النافذة ويضع الإصلاح المقترح في الملف ضمن تحرير الملفات محددًا، حتى تتمكن من مراجعته أو تغييره قبل الحفظ",
     "Edit files has unsaved changes to {file}. Applying the fix now would conflict with them.\n\nOpen the fix in the editor instead, alongside your changes?": "توجد في تحرير الملفات تغييرات غير محفوظة على {file}. سيتعارض تطبيق الإصلاح الآن معها.\n\nهل تريد فتح الإصلاح في المحرر بدلاً من ذلك إلى جانب تغييراتك؟",
     "Edit files has unsaved changes to {file}. Save or discard them there before applying this fix.": "توجد في تحرير الملفات تغييرات غير محفوظة على {file}. احفظها أو تجاهلها هناك قبل تطبيق هذا الإصلاح.",
     "&Issue:": "المشك&لة:",
@@ -950,6 +948,8 @@
     "The issue you are fixing ({code}) is still reported.": "لا تزال المشكلة التي تصلحها ({code}) مُبلَّغًا عنها.",
     "{code}: {left} like the issue you are fixing remain, down from {before}.": "{code}: تبقى {left} من المشكلات المماثلة للمشكلة التي تصلحها، بعد أن كانت {before}.",
     "{issue} at {location}: {text}": "{issue} في {location}: {text}",
-    "{issue}: {text}": "{issue}: {text}"
+    "{issue}: {text}": "{issue}: {text}",
+    "Open the issue's file in Edit files at the reported line. This window comes back when you close Edit files (Ctrl+E)": "يفتح ملف المشكلة في تحرير الملفات عند السطر المُبلَّغ عنه. تعود هذه النافذة عند إغلاق تحرير الملفات (Ctrl+E)",
+    "Put the proposed fix into the file in Edit files, selected, to review or change before saving. This window comes back when you close Edit files": "يضع الإصلاح المقترح في الملف ضمن تحرير الملفات محددًا، لمراجعته أو تغييره قبل الحفظ. تعود هذه النافذة عند إغلاق تحرير الملفات"
   }
 }

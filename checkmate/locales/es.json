@@ -5,7 +5,7 @@
   "native_name": "Español",
   "display_name": "Spanish",
   "direction": "ltr",
-  "source_msgid_hash": "3e4db003b00321e5",
+  "source_msgid_hash": "0750a2740a794adf",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Nota: La respuesta de la IA se cortó de nuevo. Haz una pregunta de seguimiento como “Por favor, continúa”.*",
     "&About": "&Acerca de",
@@ -934,8 +934,6 @@
     "Could not format {file}: <{name}> on line {line} is never closed.": "No se pudo dar formato a {file}: <{name}> en la línea {line} nunca se cierra.",
     "&Edit at location": "&Editar en la ubicación",
     "&Open fix in editor": "&Abrir la corrección en el editor",
-    "Close this window and open the issue's file in Edit files, at the reported line (Ctrl+E)": "Cierra esta ventana y abre el archivo del problema en Editar archivos, en la línea indicada (Ctrl+E)",
-    "Close this window and put the proposed fix into the file in Edit files, selected, so you can review or change it before saving": "Cierra esta ventana y coloca la corrección propuesta en el archivo, en Editar archivos, seleccionada, para que pueda revisarla o cambiarla antes de guardar",
     "Edit files has unsaved changes to {file}. Applying the fix now would conflict with them.\n\nOpen the fix in the editor instead, alongside your changes?": "Editar archivos tiene cambios sin guardar en {file}. Aplicar la corrección ahora entraría en conflicto con ellos.\n\n¿Abrir la corrección en el editor, junto con sus cambios?",
     "Edit files has unsaved changes to {file}. Save or discard them there before applying this fix.": "Editar archivos tiene cambios sin guardar en {file}. Guárdelos o descártelos allí antes de aplicar esta corrección.",
     "&Issue:": "&Problema:",
@@ -950,6 +948,8 @@
     "The issue you are fixing ({code}) is still reported.": "El problema que está corrigiendo ({code}) todavía se informa.",
     "{code}: {left} like the issue you are fixing remain, down from {before}.": "{code}: quedan {left} problemas como el que está corrigiendo, antes eran {before}.",
     "{issue} at {location}: {text}": "{issue} en {location}: {text}",
-    "{issue}: {text}": "{issue}: {text}"
+    "{issue}: {text}": "{issue}: {text}",
+    "Open the issue's file in Edit files at the reported line. This window comes back when you close Edit files (Ctrl+E)": "Abre el archivo del problema en Editar archivos, en la línea indicada. Esta ventana vuelve cuando cierra Editar archivos (Ctrl+E)",
+    "Put the proposed fix into the file in Edit files, selected, to review or change before saving. This window comes back when you close Edit files": "Coloca la corrección propuesta en el archivo, en Editar archivos, seleccionada, para revisarla o cambiarla antes de guardar. Esta ventana vuelve cuando cierra Editar archivos"
   }
 }
