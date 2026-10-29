@@ -5,7 +5,7 @@
   "native_name": "Русский",
   "display_name": "Russian",
   "direction": "ltr",
-  "source_msgid_hash": "cacfae2bcde5dfcf",
+  "source_msgid_hash": "b37a387b6d71a545",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Примечание: ответ ИИ снова был обрезан. Задайте уточняющий вопрос, например «Пожалуйста, продолжите».*",
     "&About": "&О программе",
@@ -971,7 +971,9 @@
     "The external editor command in Settings could not be read: {detail}": "Не удалось прочитать команду внешнего редактора в настройках: {detail}",
     "Could not start {editor}: {detail}": "Не удалось запустить {editor}: {detail}",
     "the external editor": "внешний редактор",
-    "Files inside a packaged EPUB cannot be opened in an external editor. Use the Code tab, or check the publication as a folder instead.": "Файлы внутри упакованного EPUB нельзя открыть во внешнем редакторе. Используйте вкладку «Код» или проверьте публикацию как папку.",
-    "Edit at location": "Изменить в этом месте"
+    "Edit at location": "Изменить в этом месте",
+    "Could not save your external edits into {package}:\n{error}\n\nYour edits are kept in {folder}.": "Не удалось сохранить внешние изменения в {package}:\n{error}\n\nВаши изменения сохранены в {folder}.",
+    "Exit anyway? Your external edits stay in the folder named above.": "Всё равно выйти? Ваши внешние изменения останутся в указанной выше папке.",
+    "Saved {files} from your external editor into {package}.": "{files}: изменения из внешнего редактора сохранены в {package}."
   }
 }

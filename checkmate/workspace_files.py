@@ -356,14 +356,35 @@ def save_member_text(
     """
     if not doc.editable:
         raise PermissionError(member)
-    path = source.target if source.packaged else member_disk_path(source, member)
-    if path is None:
-        raise PermissionError(member)
-    data = encode_text(doc, text)
-    backup, created = _ensure_backup(source, member, session_backups)
+    return save_members_bytes(
+        source, {member: encode_text(doc, text)}, session_backups=session_backups
+    )
+
+
+def save_members_bytes(
+    source: WorkspaceSource,
+    replacements: dict[str, bytes],
+    *,
+    session_backups: dict[str, str],
+) -> SaveOutcome:
+    """Write raw bytes to members, backing up once per session (package: one rewrite)."""
+    if not replacements:
+        raise ValueError("nothing to save")
+    members = list(replacements)
     if source.packaged:
-        rewrite_package_members(path, {member: data})
-    else:
+        backup, created = _ensure_backup(source, members[0], session_backups)
+        for member in members[1:]:
+            session_backups[member] = backup
+        rewrite_package_members(source.target, replacements)
+        return SaveOutcome(source.target, backup, created)
+    path = backup = None
+    created = False
+    for member, data in replacements.items():
+        path = member_disk_path(source, member)
+        if path is None:
+            raise PermissionError(member)
+        backup, made = _ensure_backup(source, member, session_backups)
+        created = created or made
         path.write_bytes(data)
     return SaveOutcome(path, backup, created)
 

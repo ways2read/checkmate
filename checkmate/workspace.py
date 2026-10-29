@@ -185,7 +185,10 @@ class PublicationWorkspace(wx.Frame):
         self._dirty = False
         self._loading = False
         self._disk_mtime: int | None = None
-        self._session_backups: dict[str, str] = {}
+        # Packaged files: the bytes last loaded or saved, to tell real changes apart.
+        self._disk_bytes = b""
+        # Shared with external-editor write-backs, so one backup covers both.
+        self._session_backups: dict[str, str] = main_frame.session_backups_for(source.target)
         self._checking = False
         self._preview_view: wx.Window | None = None
         self._preview_is_webview = False
@@ -690,6 +693,7 @@ class PublicationWorkspace(wx.Frame):
         self._doc = doc
         self._dirty = False
         self._disk_mtime = source_mtime_ns(self._source, member)
+        self._disk_bytes = self._read_disk_bytes(member)
         self._editor.set_editable(doc.editable)
         self._editor.set_name(member)
         self._file_label.SetLabel(_("C&ode of {file}", file=member))
@@ -894,6 +898,7 @@ class PublicationWorkspace(wx.Frame):
         self._member = None
         self._doc = None
         self._disk_mtime = None
+        self._disk_bytes = b""
         self._editor.set_editable(False)
         self._editor.set_name(_("Code"))
         self._file_label.SetLabel(_("C&ode (no file selected)"))
@@ -1092,8 +1097,7 @@ class PublicationWorkspace(wx.Frame):
         """
         if not self._dirty or self._member is None or self._doc is None:
             return True
-        disk = source_mtime_ns(self._source, self._member)
-        if disk is not None and self._disk_mtime is not None and disk != self._disk_mtime:
+        if self._changed_on_disk():
             answer = wx.MessageBox(
                 _(
                     "{file} was changed outside this window since you opened it.\n\n"
@@ -1148,6 +1152,7 @@ class PublicationWorkspace(wx.Frame):
         self._dirty = False
         self._editor.mark_saved()
         self._disk_mtime = source_mtime_ns(self._source, self._member)
+        self._disk_bytes = self._read_disk_bytes(self._member)
         self._sync_preview_copy(self._member)
         self._update_title()
         self._update_buttons()
@@ -1285,10 +1290,8 @@ class PublicationWorkspace(wx.Frame):
         member = self._tree.selected_member() or self._member
         if member is None:
             return
-        if self._source.packaged:
-            self._set_status(external_editor.packaged_message())
-            return
-        path = member_disk_path(self._source, member)
+        # Inside a package: a working copy, written back when CheckMate is active again.
+        path = self._main.external_file_for(self._source, member)
         if path is None:
             return
         if member == self._member and self._dirty:
@@ -1341,11 +1344,7 @@ class PublicationWorkspace(wx.Frame):
             self._member is not None and self._member in self._session_backups
         )
         self._external_btn.Enable(bool(self._source.members) and not self._source.packaged)
-        self._editor_btn.Enable(
-            bool(self._source.members)
-            and not self._source.packaged
-            and external_editor.configured()
-        )
+        self._editor_btn.Enable(bool(self._source.members) and external_editor.configured())
 
     def _toggle_pane(self) -> None:
         if self._tree.ctrl.HasFocus():
@@ -1415,10 +1414,52 @@ class PublicationWorkspace(wx.Frame):
 
     def _on_activate(self, event: wx.ActivateEvent) -> None:
         event.Skip()
-        if not event.GetActive() or self._member is None or self._dirty:
-            return
-        disk = source_mtime_ns(self._source, self._member)
+        if event.GetActive():
+            self.reload_if_changed()
+
+    def members_changed_on_disk(self, members: list[str]) -> None:
+        """Files changed outside this window (an external editor): show the new text."""
+        for member in members:
+            self._sync_preview_copy(member)
+        if self._shown_member in members:
+            self._refresh_preview()
+        self.reload_if_changed()
+
+    def _read_disk_bytes(self, member: str) -> bytes:
+        if not self._source.packaged:
+            return b""
+        try:
+            return read_member_bytes(self._source, member)
+        except (OSError, KeyError, zipfile.BadZipFile):
+            return b""
+
+    def _changed_on_disk(self) -> bool:
+        """Has the open file changed on disk since it was loaded or saved here?
+
+        A package has one modification time for all its files, so for packaged
+        publications a newer time only counts when this file's bytes differ.
+        """
+        member = self._member
+        if member is None:
+            return False
+        disk = source_mtime_ns(self._source, member)
         if disk is None or self._disk_mtime is None or disk == self._disk_mtime:
+            return False
+        if not self._source.packaged:
+            return True
+        try:
+            same = read_member_bytes(self._source, member) == self._disk_bytes
+        except (OSError, KeyError, zipfile.BadZipFile):
+            return True
+        if same:
+            self._disk_mtime = disk
+        return not same
+
+    def reload_if_changed(self) -> None:
+        """Reload the open file if it changed on disk and has no unsaved edits here."""
+        if self._closing or self._member is None or self._dirty:
+            return
+        if not self._changed_on_disk():
             return
         member = self._member
         where = self._caret_line_column()

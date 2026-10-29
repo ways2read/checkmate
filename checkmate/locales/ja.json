@@ -5,7 +5,7 @@
   "native_name": "日本語",
   "display_name": "Japanese",
   "direction": "ltr",
-  "source_msgid_hash": "cacfae2bcde5dfcf",
+  "source_msgid_hash": "b37a387b6d71a545",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*注: AIの返答が途中で切れました。「続けてください」などの補足を送信してください。*",
     "&About": "バージョン情報(&A)",
@@ -971,7 +971,9 @@
     "The external editor command in Settings could not be read: {detail}": "設定の外部エディターのコマンドを読み取れませんでした: {detail}",
     "Could not start {editor}: {detail}": "{editor} を起動できませんでした: {detail}",
     "the external editor": "外部エディター",
-    "Files inside a packaged EPUB cannot be opened in an external editor. Use the Code tab, or check the publication as a folder instead.": "パッケージ化された EPUB 内のファイルは外部エディターで開けません。[コード] タブを使うか、出版物をフォルダーとしてチェックしてください。",
-    "Edit at location": "この場所で編集"
+    "Edit at location": "この場所で編集",
+    "Could not save your external edits into {package}:\n{error}\n\nYour edits are kept in {folder}.": "外部エディターでの編集内容を {package} に保存できませんでした:\n{error}\n\n編集内容は {folder} に残っています。",
+    "Exit anyway? Your external edits stay in the folder named above.": "それでも終了しますか? 外部エディターでの編集内容は上記のフォルダーに残ります。",
+    "Saved {files} from your external editor into {package}.": "外部エディターからの {files} を {package} に保存しました。"
   }
 }

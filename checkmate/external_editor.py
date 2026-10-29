@@ -273,11 +273,3 @@ def outcome_message(outcome: LaunchOutcome, file: str, line: int) -> str:
         detail=outcome.detail,
     )
 
-
-def packaged_message() -> str:
-    from .i18n import _
-
-    return _(
-        "Files inside a packaged EPUB cannot be opened in an external editor. "
-        "Use the Code tab, or check the publication as a folder instead."
-    )

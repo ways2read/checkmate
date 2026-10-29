@@ -5,7 +5,7 @@
   "native_name": "العربية",
   "display_name": "Arabic",
   "direction": "rtl",
-  "source_msgid_hash": "cacfae2bcde5dfcf",
+  "source_msgid_hash": "b37a387b6d71a545",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*ملاحظة: تم قطع رد الذكاء الاصطناعي مجددًا. اطرح سؤال متابعة مثل ”يرجى الاستمرار.“*",
     "&About": "&عن البرنامج",
@@ -971,7 +971,9 @@
     "The external editor command in Settings could not be read: {detail}": "تعذّرت قراءة أمر المحرر الخارجي في الإعدادات: {detail}",
     "Could not start {editor}: {detail}": "تعذّر تشغيل {editor}: {detail}",
     "the external editor": "المحرر الخارجي",
-    "Files inside a packaged EPUB cannot be opened in an external editor. Use the Code tab, or check the publication as a folder instead.": "لا يمكن فتح الملفات الموجودة داخل EPUB محزّم في محرر خارجي. استخدم علامة التبويب الرمز، أو افحص المنشور كمجلد بدلاً من ذلك.",
-    "Edit at location": "التحرير في هذا الموضع"
+    "Edit at location": "التحرير في هذا الموضع",
+    "Could not save your external edits into {package}:\n{error}\n\nYour edits are kept in {folder}.": "تعذّر حفظ تعديلاتك الخارجية في {package}:\n{error}\n\nتعديلاتك محفوظة في {folder}.",
+    "Exit anyway? Your external edits stay in the folder named above.": "هل تريد الخروج على أي حال؟ تبقى تعديلاتك الخارجية في المجلد المذكور أعلاه.",
+    "Saved {files} from your external editor into {package}.": "تم حفظ {files} من محررك الخارجي في {package}."
   }
 }

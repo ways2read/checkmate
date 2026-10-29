@@ -5477,6 +5477,12 @@ class MainFrame(wx.Frame):
         self._issue_detail_dialog = None
         # Issue details hidden while Edit files is open from it (shown again after).
         self._parked_details: IssueDetailDialog | None = None
+        # Packaged files open in an external editor, and the per-publication
+        # backups shared by those write-backs and Edit files.
+        from .package_working_copy import WorkingCopies
+
+        self._working_copies = WorkingCopies()
+        self._session_backups: dict[Path, dict[str, str]] = {}
         self._alt_assess_cancel: threading.Event | None = None
         self._alt_assess_progress: wx.ProgressDialog | None = None
         self._alt_assess_progress_timer: wx.Timer | None = None
@@ -5525,6 +5531,10 @@ class MainFrame(wx.Frame):
         else:
             wx.CallAfter(self._focus_select_button)
         wx.CallAfter(self._startup_tasks)
+        app = wx.GetApp()
+        if app is not None:
+            # Switching to and from another app (an external editor, say).
+            app.Bind(wx.EVT_ACTIVATE_APP, self._on_app_activate)
 
     def _apply_window_icon(self) -> None:
         """Use the app icon in the title bar / task switcher when available."""
@@ -6621,6 +6631,18 @@ class MainFrame(wx.Frame):
             if not workspace.confirm_unsaved():
                 event.Veto()
                 return
+        if not self.write_back_external_edits(quiet=True) and event.CanVeto():
+            answer = wx.MessageBox(
+                _("Exit anyway? Your external edits stay in the folder named above."),
+                _("External editor"),
+                wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING,
+                self,
+            )
+            if answer != wx.YES:
+                event.Veto()
+                return
+        else:
+            self._working_copies.remove_all()
         self._exiting = True
         self._stop_alt_inventory_open_timer()
         self._pending_alt_inventory = None
@@ -8137,7 +8159,7 @@ class MainFrame(wx.Frame):
         from . import external_editor
         from .ai.context import issue_member_position
         from .settings import edit_location_external
-        from .workspace_files import member_disk_path, open_source
+        from .workspace_files import open_source
 
         if not (edit_location_external() and external_editor.configured()):
             return False
@@ -8148,11 +8170,9 @@ class MainFrame(wx.Frame):
             source = open_source(target.expanduser().resolve())
         except (OSError, ValueError, zipfile.BadZipFile):
             return False
-        if source.packaged:
-            return False
         member, line, column = issue_member_position(source.target, issue)
         resolved = self._resolve_member(source, member)
-        path = member_disk_path(source, resolved) if resolved else None
+        path = self.external_file_for(source, resolved) if resolved else None
         if path is None:
             return False
         workspace = self._workspace
@@ -8174,6 +8194,89 @@ class MainFrame(wx.Frame):
         else:
             wx.MessageBox(message, _("Edit at location"), wx.OK | wx.ICON_WARNING, self)
         return True
+
+    def external_file_for(self, source, member: str) -> Path | None:
+        """A file on disk for *member*: itself, or a working copy inside a package."""
+        import zipfile
+
+        from .workspace_files import member_disk_path
+
+        if not source.packaged:
+            return member_disk_path(source, member)
+        try:
+            return self._working_copies.for_source(source).file_for(member)
+        except (OSError, KeyError, ValueError, zipfile.BadZipFile):
+            logger.debug("Could not extract %s for an external editor", member, exc_info=True)
+            return None
+
+    def session_backups_for(self, target: Path) -> dict[str, str]:
+        """Backups made this session for *target*, shared by every way of editing it."""
+        return self._session_backups.setdefault(Path(target), {})
+
+    def _on_app_activate(self, event: wx.ActivateEvent) -> None:
+        event.Skip()
+        if self._exiting:
+            return
+        if event.GetActive():
+            wx.CallAfter(self.write_back_external_edits)
+        else:
+            # Leaving for the editor: give it what CheckMate changed meanwhile.
+            self._working_copies.refresh_unchanged()
+
+    def write_back_external_edits(self, *, quiet: bool = False) -> bool:
+        """Put files saved in an external editor back into their packages.
+
+        Returns False when a write failed (the edits stay in the working folder).
+        """
+        import zipfile
+
+        from .edit_log import log_manual_edit
+
+        ok = True
+        for copy in self._working_copies:
+            try:
+                written = copy.write_back(self.session_backups_for(copy.package))
+            except (OSError, KeyError, ValueError, zipfile.BadZipFile) as exc:
+                ok = False
+                wx.MessageBox(
+                    _(
+                        "Could not save your external edits into {package}:\n{error}\n\n"
+                        "Your edits are kept in {folder}.",
+                        package=copy.package.name,
+                        error=exc,
+                        folder=copy.folder,
+                    ),
+                    _("External editor"),
+                    wx.OK | wx.ICON_ERROR,
+                    self,
+                )
+                continue
+            if written is None:
+                continue
+            for member in written.members:
+                try:
+                    log_manual_edit(
+                        target_path=copy.package,
+                        member=member,
+                        backup_path=written.outcome.backup_path,
+                    )
+                except OSError:
+                    logger.debug("Could not write edit changelog", exc_info=True)
+            workspace = self._workspace
+            if workspace is not None and workspace.target == copy.package:
+                workspace.members_changed_on_disk(written.members)
+            if not quiet:
+                from .accessibility import speak
+
+                speak(
+                    _(
+                        "Saved {files} from your external editor into {package}.",
+                        files=", ".join(written.members),
+                        package=copy.package.name,
+                    ),
+                    interrupt=False,
+                )
+        return ok
 
     @staticmethod
     def _resolve_member(source, member: str | None) -> str | None:
@@ -8416,6 +8519,8 @@ class MainFrame(wx.Frame):
     def on_check(self, _event: wx.CommandEvent | None) -> None:
         if self._busy:
             return
+        # Check what the external editor saved, not the package as it was.
+        self.write_back_external_edits()
         text = self._current_target()
         if not text:
             wx.MessageBox(

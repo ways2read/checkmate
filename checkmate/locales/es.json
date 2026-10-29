@@ -5,7 +5,7 @@
   "native_name": "Español",
   "display_name": "Spanish",
   "direction": "ltr",
-  "source_msgid_hash": "cacfae2bcde5dfcf",
+  "source_msgid_hash": "b37a387b6d71a545",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Nota: La respuesta de la IA se cortó de nuevo. Haz una pregunta de seguimiento como “Por favor, continúa”.*",
     "&About": "&Acerca de",
@@ -971,7 +971,9 @@
     "The external editor command in Settings could not be read: {detail}": "No se pudo leer el comando del editor externo en Configuración: {detail}",
     "Could not start {editor}: {detail}": "No se pudo iniciar {editor}: {detail}",
     "the external editor": "el editor externo",
-    "Files inside a packaged EPUB cannot be opened in an external editor. Use the Code tab, or check the publication as a folder instead.": "Los archivos de un EPUB empaquetado no se pueden abrir en un editor externo. Use la pestaña Código o compruebe la publicación como carpeta.",
-    "Edit at location": "Editar en la ubicación"
+    "Edit at location": "Editar en la ubicación",
+    "Could not save your external edits into {package}:\n{error}\n\nYour edits are kept in {folder}.": "No se pudieron guardar sus cambios externos en {package}:\n{error}\n\nSus cambios se conservan en {folder}.",
+    "Exit anyway? Your external edits stay in the folder named above.": "¿Salir de todos modos? Sus cambios externos permanecen en la carpeta indicada arriba.",
+    "Saved {files} from your external editor into {package}.": "Se guardó {files} desde su editor externo en {package}."
   }
 }
