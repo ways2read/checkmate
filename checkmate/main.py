@@ -1924,6 +1924,24 @@ class IssueDetailDialog(wx.Dialog):
             )
             self.edit_location_btn.Bind(wx.EVT_BUTTON, lambda _e: self._request_edit())
             export.Add(self.edit_location_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 6)
+            from . import external_editor
+
+            if external_editor.configured():
+                self.external_editor_btn = wx.Button(
+                    self, label=_("Open in e&xternal editor")
+                )
+                self.external_editor_btn.SetToolTip(
+                    _(
+                        "Open the issue's file in the external editor chosen in "
+                        "Settings, at the reported line (Ctrl+Shift+E)"
+                    )
+                )
+                self.external_editor_btn.Bind(
+                    wx.EVT_BUTTON, lambda _e: self._request_external_editor()
+                )
+                export.Add(
+                    self.external_editor_btn, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 6
+                )
         # Alias used by older AI helpers.
         self.copy_ai_btn = self.copy_btn
         root.Add(export, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 12)
@@ -2478,13 +2496,13 @@ class IssueDetailDialog(wx.Dialog):
         if event.GetKeyCode() == wx.WXK_ESCAPE:
             wx.CallAfter(self._on_close_dialog)
             return
-        if (
-            self._can_edit
-            and event.GetKeyCode() == ord("E")
-            and event.GetModifiers() == wx.MOD_CONTROL
-        ):
-            self._request_edit()
-            return
+        if self._can_edit and event.GetKeyCode() == ord("E"):
+            if event.GetModifiers() == wx.MOD_CONTROL:
+                self._request_edit()
+                return
+            if event.GetModifiers() == wx.MOD_CONTROL | wx.MOD_SHIFT:
+                self._request_external_editor()
+                return
         if dialog_handles_composer_enter(
             event, getattr(self, "followup_ctrl", None), self._on_ask_followup
         ):
@@ -2507,13 +2525,16 @@ class IssueDetailDialog(wx.Dialog):
             if self._fix_proposal is None:
                 return
             self.edit_fix = self._fix_proposal
-        elif self.GetParent().edit_issue_externally(self._issue):
-            # Opened in the external editor; this dialog stays as it is.
-            return
         # Drop deferred focus/paint work aimed at a dialog about to be hidden.
         self._ai_focus_gen = int(getattr(self, "_ai_focus_gen", 0)) + 1
         self._stop_pending_later()
         self._ensure_end_modal(wx.ID_EDIT)
+
+    def _request_external_editor(self) -> None:
+        """Open the issue's file in the external editor; this dialog stays open."""
+        if self._busy or self._closing:
+            return
+        self.GetParent().open_issue_in_external_editor(self._issue)
 
     def prepare_return(self, check_result: CheckResult | None) -> None:
         """Ready this dialog to be shown again after Edit files."""
@@ -7889,6 +7910,11 @@ class MainFrame(wx.Frame):
             if self._selected_issue() is not None:
                 self._show_issue_details()
                 return
+        if key == ord("E") and event.GetModifiers() == wx.MOD_CONTROL | wx.MOD_SHIFT:
+            issue = self._selected_issue()
+            if issue is not None:
+                self.open_issue_in_external_editor(issue)
+                return
         event.Skip()
 
     def _selected_source_name(self) -> str | None:
@@ -8143,38 +8169,50 @@ class MainFrame(wx.Frame):
         return False
 
     def on_open_workspace(self, _event: wx.CommandEvent | None) -> None:
+        # Always the Edit files window (starting at the issue, from the list),
+        # never the external editor: that has its own command.
         issue = self._selected_issue() if self._focus_in_issues_list() else None
-        if issue is not None and self.edit_issue_externally(issue):
-            return
         self._open_workspace(issue)
 
-    def edit_issue_externally(self, issue: Issue) -> bool:
-        """Edit at location in the external editor, when Settings ask for that.
-
-        False means use Edit files instead (not wanted, not set up, packaged, or
-        the issue names no file). True means handled, including errors shown.
-        """
+    def open_issue_in_external_editor(self, issue: Issue) -> None:
+        """Open *issue*'s file in the external editor at its line and column."""
         import zipfile
 
         from . import external_editor
         from .ai.context import issue_member_position
-        from .settings import edit_location_external
         from .workspace_files import open_source
 
-        if not (edit_location_external() and external_editor.configured()):
-            return False
+        def tell(message: str) -> None:
+            wx.MessageBox(message, _("External editor"), wx.OK | wx.ICON_INFORMATION, self)
+
+        if not external_editor.configured():
+            tell(_("Choose an external editor in Settings, on the Editing tab."))
+            return
         target = self._workspace_target()
-        if target is None:
-            return False
-        try:
-            source = open_source(target.expanduser().resolve())
-        except (OSError, ValueError, zipfile.BadZipFile):
-            return False
+        source = None
+        if target is not None:
+            try:
+                source = open_source(target.expanduser().resolve())
+            except (OSError, ValueError, zipfile.BadZipFile):
+                source = None
+        if source is None:
+            tell(
+                _(
+                    "Check a publication file or folder on this computer first. "
+                    "Browsing and editing files is not available for web pages "
+                    "or PDF files."
+                )
+            )
+            return
         member, line, column = issue_member_position(source.target, issue)
         resolved = self._resolve_member(source, member)
-        path = self.external_file_for(source, resolved) if resolved else None
+        if resolved is None:
+            tell(_("This issue does not point to a file."))
+            return
+        path = self.external_file_for(source, resolved)
         if path is None:
-            return False
+            tell(_("Could not find {file} in this publication.", file=resolved))
+            return
         workspace = self._workspace
         if (
             workspace is not None
@@ -8184,7 +8222,7 @@ class MainFrame(wx.Frame):
             # The external editor reads the file on disk.
             workspace.Raise()
             if not workspace.confirm_unsaved():
-                return True
+                return
         outcome = external_editor.open_at(path, line, column)
         message = external_editor.outcome_message(outcome, resolved, line or 1)
         if outcome.ok:
@@ -8192,8 +8230,7 @@ class MainFrame(wx.Frame):
 
             speak(message, interrupt=True)
         else:
-            wx.MessageBox(message, _("Edit at location"), wx.OK | wx.ICON_WARNING, self)
-        return True
+            wx.MessageBox(message, _("External editor"), wx.OK | wx.ICON_WARNING, self)
 
     def external_file_for(self, source, member: str) -> Path | None:
         """A file on disk for *member*: itself, or a working copy inside a package."""
@@ -8396,11 +8433,15 @@ class MainFrame(wx.Frame):
         edit = menu.Append(wx.ID_ANY, _("&Edit at location\tCtrl+E"))
         edit.Enable(self._workspace_target() is not None)
         menu.Bind(wx.EVT_MENU, lambda _e: self._show_issue_details(), details)
-        menu.Bind(
-            wx.EVT_MENU,
-            lambda _e, i=issue: self.edit_issue_externally(i) or self._open_workspace(i),
-            edit,
-        )
+        menu.Bind(wx.EVT_MENU, lambda _e, i=issue: self._open_workspace(i), edit)
+        from . import external_editor
+
+        if external_editor.configured():
+            outside = menu.Append(wx.ID_ANY, _("Open in e&xternal editor\tCtrl+Shift+E"))
+            outside.Enable(self._workspace_target() is not None)
+            menu.Bind(
+                wx.EVT_MENU, lambda _e, i=issue: self.open_issue_in_external_editor(i), outside
+            )
         pos = event.GetPosition()
         if pos == wx.DefaultPosition:
             # Keyboard (Applications key / Shift+F10): open over the list.

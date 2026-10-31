@@ -307,10 +307,6 @@ def external_editor_command() -> str:
     return str(read_settings().get("external_editor_command", "") or "")
 
 
-def edit_location_external() -> bool:
-    """True when Edit at location opens the external editor instead of Edit files."""
-    return bool(read_settings().get("edit_location_external", False))
-
 
 def color_theme() -> str:
     """Selected UI color theme (``system``, ``light``, or ``dark``)."""

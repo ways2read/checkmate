@@ -5,7 +5,7 @@
   "native_name": "Français",
   "display_name": "French",
   "direction": "ltr",
-  "source_msgid_hash": "b37a387b6d71a545",
+  "source_msgid_hash": "234d5ba06679e285",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Remarque : la réponse de l’IA a encore été coupée. Posez une question de suivi telle que « Veuillez continuer. »*",
     "&About": "À &propos",
@@ -961,8 +961,6 @@
     "Co&mmand:": "Co&mmande :",
     "Command": "Commande",
     "The program and its arguments. {file}, {line}, and {column} are replaced; for example: myeditor \"{file}\" --line {line}": "Le programme et ses arguments. {file}, {line} et {column} sont remplacés ; par exemple : myeditor \"{file}\" --line {line}",
-    "Edit at &location opens the external editor": "Modifier à cet &emplacement ouvre l’éditeur externe",
-    "From Issue details and the Issues list, open the issue's file in the external editor instead of Browse and edit files": "Depuis les détails du problème et la liste des problèmes, ouvre le fichier du problème dans l’éditeur externe au lieu de Parcourir et modifier les fichiers",
     "Open in e&xternal editor": "Ouvrir dans l’éditeur e&xterne",
     "Open this file in the external editor chosen in Settings, at the cursor's line and column (Ctrl+Shift+E)": "Ouvre ce fichier dans l’éditeur externe choisi dans les paramètres, à la ligne et à la colonne du curseur (Ctrl+Shift+E)",
     "Opened {file} in {editor} at line {line}.": "{file} ouvert dans {editor} à la ligne {line}.",
@@ -971,9 +969,10 @@
     "The external editor command in Settings could not be read: {detail}": "Impossible de lire la commande de l’éditeur externe dans les paramètres : {detail}",
     "Could not start {editor}: {detail}": "Impossible de démarrer {editor} : {detail}",
     "the external editor": "l’éditeur externe",
-    "Edit at location": "Modifier à cet emplacement",
     "Could not save your external edits into {package}:\n{error}\n\nYour edits are kept in {folder}.": "Impossible d’enregistrer vos modifications externes dans {package} :\n{error}\n\nVos modifications sont conservées dans {folder}.",
     "Exit anyway? Your external edits stay in the folder named above.": "Quitter quand même ? Vos modifications externes restent dans le dossier indiqué ci-dessus.",
-    "Saved {files} from your external editor into {package}.": "{files} enregistré depuis votre éditeur externe dans {package}."
+    "Saved {files} from your external editor into {package}.": "{files} enregistré depuis votre éditeur externe dans {package}.",
+    "Open in e&xternal editor\tCtrl+Shift+E": "Ouvrir dans l’éditeur e&xterne\tCtrl+Shift+E",
+    "Open the issue's file in the external editor chosen in Settings, at the reported line (Ctrl+Shift+E)": "Ouvre le fichier du problème dans l’éditeur externe choisi dans les paramètres, à la ligne signalée (Ctrl+Shift+E)"
   }
 }

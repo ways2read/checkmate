@@ -5,7 +5,7 @@
   "native_name": "العربية",
   "display_name": "Arabic",
   "direction": "rtl",
-  "source_msgid_hash": "b37a387b6d71a545",
+  "source_msgid_hash": "234d5ba06679e285",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*ملاحظة: تم قطع رد الذكاء الاصطناعي مجددًا. اطرح سؤال متابعة مثل ”يرجى الاستمرار.“*",
     "&About": "&عن البرنامج",
@@ -961,8 +961,6 @@
     "Co&mmand:": "الأم&ر:",
     "Command": "الأمر",
     "The program and its arguments. {file}, {line}, and {column} are replaced; for example: myeditor \"{file}\" --line {line}": "البرنامج ووسائطه. يُستبدل {file} و{line} و{column}؛ مثال: myeditor \"{file}\" --line {line}",
-    "Edit at &location opens the external editor": "التحرير في هذا الموضع يفتح المحرر ال&خارجي",
-    "From Issue details and the Issues list, open the issue's file in the external editor instead of Browse and edit files": "من تفاصيل المشكلة وقائمة المشكلات، يفتح ملف المشكلة في المحرر الخارجي بدلاً من استعراض الملفات وتحريرها",
     "Open in e&xternal editor": "فتح في المحرر ال&خارجي",
     "Open this file in the external editor chosen in Settings, at the cursor's line and column (Ctrl+Shift+E)": "يفتح هذا الملف في المحرر الخارجي المحدد في الإعدادات عند سطر المؤشر وعموده (Ctrl+Shift+E)",
     "Opened {file} in {editor} at line {line}.": "تم فتح {file} في {editor} عند السطر {line}.",
@@ -971,9 +969,10 @@
     "The external editor command in Settings could not be read: {detail}": "تعذّرت قراءة أمر المحرر الخارجي في الإعدادات: {detail}",
     "Could not start {editor}: {detail}": "تعذّر تشغيل {editor}: {detail}",
     "the external editor": "المحرر الخارجي",
-    "Edit at location": "التحرير في هذا الموضع",
     "Could not save your external edits into {package}:\n{error}\n\nYour edits are kept in {folder}.": "تعذّر حفظ تعديلاتك الخارجية في {package}:\n{error}\n\nتعديلاتك محفوظة في {folder}.",
     "Exit anyway? Your external edits stay in the folder named above.": "هل تريد الخروج على أي حال؟ تبقى تعديلاتك الخارجية في المجلد المذكور أعلاه.",
-    "Saved {files} from your external editor into {package}.": "تم حفظ {files} من محررك الخارجي في {package}."
+    "Saved {files} from your external editor into {package}.": "تم حفظ {files} من محررك الخارجي في {package}.",
+    "Open in e&xternal editor\tCtrl+Shift+E": "فتح في المحرر ال&خارجي\tCtrl+Shift+E",
+    "Open the issue's file in the external editor chosen in Settings, at the reported line (Ctrl+Shift+E)": "يفتح ملف المشكلة في المحرر الخارجي المحدد في الإعدادات عند السطر المُبلَّغ عنه (Ctrl+Shift+E)"
   }
 }

@@ -5,7 +5,7 @@
   "native_name": "日本語",
   "display_name": "Japanese",
   "direction": "ltr",
-  "source_msgid_hash": "b37a387b6d71a545",
+  "source_msgid_hash": "234d5ba06679e285",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*注: AIの返答が途中で切れました。「続けてください」などの補足を送信してください。*",
     "&About": "バージョン情報(&A)",
@@ -961,8 +961,6 @@
     "Co&mmand:": "コマンド(&M):",
     "Command": "コマンド",
     "The program and its arguments. {file}, {line}, and {column} are replaced; for example: myeditor \"{file}\" --line {line}": "プログラムとその引数です。{file}、{line}、{column} は置き換えられます。例: myeditor \"{file}\" --line {line}",
-    "Edit at &location opens the external editor": "[この場所で編集] で外部エディターを開く(&L)",
-    "From Issue details and the Issues list, open the issue's file in the external editor instead of Browse and edit files": "問題の詳細と問題の一覧から、[ファイルの参照と編集] ではなく外部エディターで問題のファイルを開きます",
     "Open in e&xternal editor": "外部エディターで開く(&X)",
     "Open this file in the external editor chosen in Settings, at the cursor's line and column (Ctrl+Shift+E)": "設定で選んだ外部エディターで、このファイルをカーソルの行と列で開きます (Ctrl+Shift+E)",
     "Opened {file} in {editor} at line {line}.": "{file} を {editor} の {line} 行目で開きました。",
@@ -971,9 +969,10 @@
     "The external editor command in Settings could not be read: {detail}": "設定の外部エディターのコマンドを読み取れませんでした: {detail}",
     "Could not start {editor}: {detail}": "{editor} を起動できませんでした: {detail}",
     "the external editor": "外部エディター",
-    "Edit at location": "この場所で編集",
     "Could not save your external edits into {package}:\n{error}\n\nYour edits are kept in {folder}.": "外部エディターでの編集内容を {package} に保存できませんでした:\n{error}\n\n編集内容は {folder} に残っています。",
     "Exit anyway? Your external edits stay in the folder named above.": "それでも終了しますか? 外部エディターでの編集内容は上記のフォルダーに残ります。",
-    "Saved {files} from your external editor into {package}.": "外部エディターからの {files} を {package} に保存しました。"
+    "Saved {files} from your external editor into {package}.": "外部エディターからの {files} を {package} に保存しました。",
+    "Open in e&xternal editor\tCtrl+Shift+E": "外部エディターで開く(&X)\tCtrl+Shift+E",
+    "Open the issue's file in the external editor chosen in Settings, at the reported line (Ctrl+Shift+E)": "設定で選んだ外部エディターで、問題のファイルを報告された行で開きます (Ctrl+Shift+E)"
   }
 }

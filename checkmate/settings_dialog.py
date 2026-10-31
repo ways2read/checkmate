@@ -32,7 +32,6 @@ from .settings import (
     autosave_edits,
     check_immediately,
     code_editor,
-    edit_location_external,
     color_theme,
     epub_checkers,
     external_editor,
@@ -260,18 +259,7 @@ class SettingsDialog(wx.Dialog):
             )
         )
         box.Add(self.external_command, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
-
-        self.edit_location_external_cb = wx.CheckBox(
-            parent, label=_("Edit at &location opens the external editor")
-        )
-        self.edit_location_external_cb.SetValue(edit_location_external())
-        self.edit_location_external_cb.SetToolTip(
-            _(
-                "From Issue details and the Issues list, open the issue's file in "
-                "the external editor instead of Browse and edit files"
-            )
-        )
-        box.Add(self.edit_location_external_cb, 0, wx.ALL, 8)
+        box.AddSpacer(8)
         sizer.Add(box, 0, wx.EXPAND | wx.ALL, 8)
 
         self.external_choice.Bind(wx.EVT_CHOICE, lambda _e: self._sync_external_editor())
@@ -283,7 +271,6 @@ class SettingsDialog(wx.Dialog):
         editor = self._selected(self.external_choice, self._external_values, EXTERNAL_NONE)
         custom = editor == EXTERNAL_CUSTOM
         self.external_command.Enable(custom)
-        self.edit_location_external_cb.Enable(editor != EXTERNAL_NONE)
         if editor in (EXTERNAL_NONE, EXTERNAL_CUSTOM):
             found = ""
         else:
@@ -495,7 +482,6 @@ class SettingsDialog(wx.Dialog):
                 self.external_choice, self._external_values, EXTERNAL_NONE
             ),
             "external_editor_command": self.external_command.GetValue().strip(),
-            "edit_location_external": bool(self.edit_location_external_cb.GetValue()),
             "show_issues_always": bool(self.show_issues_cb.GetValue()),
             "sound_scheme": self.selected_sound_scheme(),
             "ui_color_theme": self.selected_color_theme(),

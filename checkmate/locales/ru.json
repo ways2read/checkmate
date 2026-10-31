@@ -5,7 +5,7 @@
   "native_name": "Русский",
   "display_name": "Russian",
   "direction": "ltr",
-  "source_msgid_hash": "b37a387b6d71a545",
+  "source_msgid_hash": "234d5ba06679e285",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Примечание: ответ ИИ снова был обрезан. Задайте уточняющий вопрос, например «Пожалуйста, продолжите».*",
     "&About": "&О программе",
@@ -961,8 +961,6 @@
     "Co&mmand:": "&Команда:",
     "Command": "Команда",
     "The program and its arguments. {file}, {line}, and {column} are replaced; for example: myeditor \"{file}\" --line {line}": "Программа и её аргументы. {file}, {line} и {column} заменяются; например: myeditor \"{file}\" --line {line}",
-    "Edit at &location opens the external editor": "«Изменить в этом &месте» открывает внешний редактор",
-    "From Issue details and the Issues list, open the issue's file in the external editor instead of Browse and edit files": "Из сведений о проблеме и списка проблем открывает файл с проблемой во внешнем редакторе вместо окна «Просмотр и редактирование файлов»",
     "Open in e&xternal editor": "Открыть во &внешнем редакторе",
     "Open this file in the external editor chosen in Settings, at the cursor's line and column (Ctrl+Shift+E)": "Открывает этот файл во внешнем редакторе, выбранном в настройках, на строке и в столбце курсора (Ctrl+Shift+E)",
     "Opened {file} in {editor} at line {line}.": "Файл {file} открыт в {editor} на строке {line}.",
@@ -971,9 +969,10 @@
     "The external editor command in Settings could not be read: {detail}": "Не удалось прочитать команду внешнего редактора в настройках: {detail}",
     "Could not start {editor}: {detail}": "Не удалось запустить {editor}: {detail}",
     "the external editor": "внешний редактор",
-    "Edit at location": "Изменить в этом месте",
     "Could not save your external edits into {package}:\n{error}\n\nYour edits are kept in {folder}.": "Не удалось сохранить внешние изменения в {package}:\n{error}\n\nВаши изменения сохранены в {folder}.",
     "Exit anyway? Your external edits stay in the folder named above.": "Всё равно выйти? Ваши внешние изменения останутся в указанной выше папке.",
-    "Saved {files} from your external editor into {package}.": "{files}: изменения из внешнего редактора сохранены в {package}."
+    "Saved {files} from your external editor into {package}.": "{files}: изменения из внешнего редактора сохранены в {package}.",
+    "Open in e&xternal editor\tCtrl+Shift+E": "Открыть во &внешнем редакторе\tCtrl+Shift+E",
+    "Open the issue's file in the external editor chosen in Settings, at the reported line (Ctrl+Shift+E)": "Открывает файл с проблемой во внешнем редакторе, выбранном в настройках, на указанной строке (Ctrl+Shift+E)"
   }
 }
