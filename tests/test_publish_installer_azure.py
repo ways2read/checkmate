@@ -15,13 +15,13 @@ import publish_installer_azure as pub  # noqa: E402
 def test_merge_windows_preserves_macos_version(tmp_path: Path) -> None:
     existing = {
         "windows_latest_version": "0.7.40",
-        "macos_latest_version": "0.7.41.12",
+        "macos_latest_version": "0.7.41",
         "windows_download_url": "https://example.invalid/old.exe",
         "macos_download_url": "https://example.invalid/old.dmg",
     }
     merged = pub.merge_version_manifest(existing, platform="windows", version="0.7.42")
     assert merged["windows_latest_version"] == "0.7.42"
-    assert merged["macos_latest_version"] == "0.7.41.12"
+    assert merged["macos_latest_version"] == "0.7.41"
     assert merged["windows_download_url"] == pub.PUBLIC_SETUP_WINDOWS_URL
     assert merged["macos_download_url"] == "https://example.invalid/old.dmg"
 
@@ -29,11 +29,11 @@ def test_merge_windows_preserves_macos_version(tmp_path: Path) -> None:
 def test_merge_macos_preserves_windows_version() -> None:
     existing = {
         "windows_latest_version": "0.7.42",
-        "macos_latest_version": "0.7.40.3",
+        "macos_latest_version": "0.7.40",
     }
-    merged = pub.merge_version_manifest(existing, platform="macos", version="0.7.42.15")
+    merged = pub.merge_version_manifest(existing, platform="macos", version="0.7.43")
     assert merged["windows_latest_version"] == "0.7.42"
-    assert merged["macos_latest_version"] == "0.7.42.15"
+    assert merged["macos_latest_version"] == "0.7.43"
     assert merged["macos_download_url"] == pub.PUBLIC_SETUP_MACOS_URL
 
 
@@ -76,7 +76,7 @@ def test_macos_skip_upload_accepts_setup_dmg(tmp_path: Path, monkeypatch) -> Non
             "--setup-dmg",
             str(dmg),
             "--version",
-            "0.7.42.15",
+            "0.7.43",
             "--write-version-json",
             str(out),
             "--skip-upload",
@@ -84,6 +84,14 @@ def test_macos_skip_upload_accepts_setup_dmg(tmp_path: Path, monkeypatch) -> Non
     )
     assert pub.main() == 0
     loaded = json.loads(out.read_text(encoding="utf-8"))
-    assert loaded["macos_latest_version"] == "0.7.42.15"
+    assert loaded["macos_latest_version"] == "0.7.43"
     assert loaded["macos_download_url"] == pub.PUBLIC_SETUP_MACOS_URL
     assert loaded["windows_latest_version"] == ""
+
+
+def test_bundle_build_encodes_xyz() -> None:
+    import package as pkg
+
+    assert pkg._bundle_build_from_version("0.7.43") == 743
+    assert pkg._bundle_build_from_version("1.2.3") == 10203
+    assert pkg._bundle_build_from_version("dev") == 0

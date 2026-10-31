@@ -409,13 +409,13 @@ extension `.ebrl`. Rename the file if needed.
 
 The drag-to-Applications DMG is not a wizard installer — Finder refuses to
 replace the app when the copy in `/Applications` has a higher `CFBundleVersion`
-build number than the one in the disk image (common when reinstalling the same
-marketing version from an older DMG).
+than the one in the disk image (common when reinstalling an older DMG of the
+same marketing version).
 
 Remove the existing app first (`Applications` → move `CheckMate.app` to
 Trash → empty Trash), then drag the new app from the DMG onto Applications
-again. Each release build from `scripts/build_macos.sh` increments
-`build_counter.txt` so newer DMGs upgrade cleanly.
+again. Release builds stamp `CFBundleVersion` from the repo `x.y.z` version
+so a newer marketing version upgrades cleanly.
 
 ## Project layout
 
@@ -466,7 +466,7 @@ checkmate/
     build_macos.sh           # macOS: package .app + zip
     build_macos_dmg.sh       # macOS: drag-to-Applications .dmg
     build_macos_release.sh   # macOS: sign + .dmg + notarize + Azure
-    publish_installer_azure.py  # Azure Blob: CheckMate-setup.exe/.dmg + version.json
+    publish_installer_azure.py  # Azure Blob: CheckMate-setup.exe / CheckMate-setup.dmg + version.json
     make_icns.py             # Build .icns/.ico from installer/icon.png (blue on white)
     macos_release_arch_suffix.inc.sh
   installer/
@@ -666,11 +666,11 @@ EBC_NOTARY_PROFILE=fido-notary ./scripts/build_macos_release.sh --skip-azure-pub
 Outputs (arch suffix is `-AppleSilicon` or `-Intel`):
 
 - `dist/CheckMate_App/CheckMate.app`
-- `dist/CheckMate-macOS-<version>.<build>-<arch>.zip`
-- `dist/CheckMate-macos-<version>.<build>-<arch>.dmg` (signed + notarized when credentials are set)
+- `dist/CheckMate-macOS-<version>-<arch>.zip`
+- `dist/CheckMate-macos-<version>-<arch>.dmg` (signed + notarized when credentials are set)
 
 The finished `.dmg` is also copied to the shared **development builds** folder as
-`setupcheckmate_<version>.<build>-<arch>.dmg` and a stable `CheckMate-setup.dmg`
+`setupcheckmate_<version>-<arch>.dmg` and a stable `CheckMate-setup.dmg`
 (override with `EBC_DEV_BUILDS_DIR`, or skip with `EBC_SKIP_ONEDRIVE_COPY=1`).
 `checkmate-version.json` is copied there after Azure publish (or the local
 write when upload is skipped).
@@ -682,12 +682,11 @@ Public URLs:
 - `https://dl.daisy.org/tools/Fido/checkmate/CheckMate-setup.dmg`
 - `https://dl.daisy.org/tools/Fido/checkmate/version.json`
 
-`macos_latest_version` is the marketing version plus build number
-(e.g. `0.7.42.15`) so in-app update checks can tell builds apart. A macOS
-publish merges with the existing blob and does not overwrite the Windows
-version field. Credentials match Fido unlock/beta publish (`az login`
-plus `unlock_publish` in `checkmate.secrets.json` or sibling
-`FIDO/fido.secrets.json`, or `CHECKMATE_`/`FIDO_UNLOCK_PUBLISH_*` /
+`macos_latest_version` is the same repo `x.y.z` Windows publishes (for
+example `0.7.43`). A macOS publish merges with the existing blob and does
+not overwrite the Windows version field. Credentials match Fido unlock/beta
+publish (`az login` plus `unlock_publish` in `checkmate.secrets.json` or
+sibling `FIDO/fido.secrets.json`, or `CHECKMATE_`/`FIDO_UNLOCK_PUBLISH_*` /
 `FIDO_AZURE_BLOB_SAS`). Skip with `--skip-azure-publish` or
 `CHECKMATE_SKIP_AZURE_PUBLISH=1`.
 
@@ -716,8 +715,8 @@ Useful environment variables:
 | `EBC_SKIP_ONEDRIVE_COPY=1` | Do not copy the `.dmg` to the development builds folder |
 | `CHECKMATE_SKIP_AZURE_PUBLISH=1` | Do not upload `CheckMate-setup.dmg` / `version.json` (same as `--skip-azure-publish`) |
 
-**Upgrading / reinstalling:** macOS compares `CFBundleVersion` (an integer build
-number from `build_counter.txt`, bumped on each `build_macos.sh` run) when you
+**Upgrading / reinstalling:** macOS compares `CFBundleVersion` (an integer
+encoded from the repo `x.y.z` version) when you
 drag the app onto Applications. If Finder says a newer version is already
 installed, remove `CheckMate.app` from Applications first (Trash → empty
 Trash), then drag again. The DMG also includes `Install CheckMate.txt`

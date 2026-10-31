@@ -8,7 +8,7 @@
 # Arrow in the background is centred near y=248 so it lines up with those icons.
 #
 # Usage:  ./scripts/build_macos_dmg.sh [marketing-version]
-# Output: dist/CheckMate-macos-<version>.<build>-<arch>.dmg
+# Output: dist/CheckMate-macos-<version>-<arch>.dmg
 
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"

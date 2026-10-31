@@ -48,7 +48,7 @@ def app_installers_supported() -> bool:
 
 
 def version_from_info_plist(plist_path: Path) -> str | None:
-    """Return marketing.build from a macOS Info.plist, or the marketing version."""
+    """Return the marketing version (x.y.z) from a macOS Info.plist."""
     if not plist_path.is_file():
         return None
     try:
@@ -59,14 +59,11 @@ def version_from_info_plist(plist_path: Path) -> str | None:
     if not isinstance(data, dict):
         return None
     short = str(data.get("CFBundleShortVersionString") or "").strip()
-    build = str(data.get("CFBundleVersion") or "").strip()
-    if short and build.isdigit() and not short.endswith("." + build):
-        return f"{short}.{build}"
     return short or None
 
 
 def running_app_version() -> str:
-    """Version of this running CheckMate (macOS packaged builds include the build number)."""
+    """Version of this running CheckMate (same x.y.z Windows publishes)."""
     if sys.platform == "darwin" and is_frozen():
         bundled = version_from_info_plist(application_dir() / "Info.plist")
         if bundled:

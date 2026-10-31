@@ -8,9 +8,10 @@
 # Example:
 #   EBC_NOTARY_PROFILE=ebraille-notary ./scripts/build_macos_release.sh 0.1.0
 #
-# Installer filenames always include the marketing version and build counter:
-#   dist/CheckMate-macos-<version>.<build>-<arch>.dmg
-#   development builds/setupcheckmate_<version>.<build>-<arch>.dmg
+# Version is x.y.z from the repo (Windows sets this; macOS uses the same).
+# Installer filenames:
+#   dist/CheckMate-macos-<version>-<arch>.dmg
+#   development builds/setupcheckmate_<version>-<arch>.dmg
 #   development builds/CheckMate-setup.dmg
 #
 # Azure Blob (after development-builds copy):
@@ -18,8 +19,7 @@
 #   Public URL: https://dl.daisy.org/tools/Fido/checkmate/CheckMate-setup.dmg
 #   version.json keeps windows_latest_version and macos_latest_version separate
 #   so a macOS publish merges with the existing blob and does not overwrite the
-#   Windows version field. The published macos_latest_version includes the build
-#   number (e.g. 0.7.42.15) to match in-app update checks.
+#   Windows version field. macos_latest_version is the same x.y.z as Windows.
 #   CHECKMATE_SKIP_AZURE_PUBLISH=1 or --skip-azure-publish — skip upload
 #   Credentials: same as Fido unlock/beta publish (az login + unlock_publish,
 #   CHECKMATE_/FIDO_UNLOCK_PUBLISH_*, or FIDO_AZURE_BLOB_SAS + azcopy)
@@ -39,7 +39,7 @@
 #   EBC_NOTARY_ISSUER         — API key issuer UUID
 #   EBC_NOTARY_KEY            — path to AuthKey_*.p8
 #   EBC_NOTARY_ALSO_SUBMIT_ZIP=1 — also notarize the zip archive
-#   EBC_BUILD_NUMBER          — stamp this CFBundleVersion instead of incrementing build_counter.txt
+#   EBC_BUILD_NUMBER          — stamp this CFBundleVersion instead of encoding x.y.z
 #   EBC_SKIP_ONEDRIVE_COPY=1  — do not copy the .dmg to the dev builds folder
 #   CHECKMATE_SKIP_AZURE_PUBLISH=1 — do not upload the .dmg / version.json
 #   EBC_MACOS_RELEASE_ARCH_SUFFIX / EBC_NO_MACOS_RELEASE_ARCH_SUFFIX — see
@@ -409,7 +409,7 @@ else
   fi
 fi
 
-# Copy dmg to shared OneDrive development builds (version + build in the filename).
+# Copy dmg to shared OneDrive development builds.
 DEFAULT_DEV_BUILDS_DIR="$HOME/Library/CloudStorage/OneDrive-SharedLibraries-DAISYConsortium/Shared Projects - Documents/Exploring AI/Experimentation app/development builds"
 DEV_BUILDS_DIR="${EBC_DEV_BUILDS_DIR:-$DEFAULT_DEV_BUILDS_DIR}"
 VERSION_JSON="$REPO_ROOT/installer/Output/version.json"
