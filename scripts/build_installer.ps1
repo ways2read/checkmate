@@ -6,6 +6,10 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipSign
 #   powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1 -SkipAzurePublish
 #
+# Version: edit pyproject.toml (and checkmate/__init__.py) by hand. Every run
+# bumps build_counter.txt, names the installer CheckMate-<version>.<build>-setup.exe
+# and publishes <version>.<build> as windows_latest_version.
+#
 # Requires: uv, and Inno Setup 6 (ISCC.exe on PATH or in the default install dir).
 #
 # Authenticode (same technique as Fido): after Inno compile, one signtool
@@ -17,7 +21,8 @@
 #   CHECKMATE_SIGN_TIMESTAMP_URL     — RFC 3161 TSA (default: GlobalSign r6 advanced)
 # Development builds copy (same folder as Fido DEV_BUILDS_DIR), after Output:
 #   CHECKMATE_DEV_BUILDS_DIR         — destination folder
-#                                      (default: D:\DAISY Consortium\Shared Projects - Documents\Exploring AI\Experimentation app\development builds)
+#                                      (default: the existing one of D:\ or C:\ plus
+#                                      DAISY Consortium\Shared Projects - Documents\Exploring AI\Experimentation app\development builds)
 #   CHECKMATE_SKIP_DEV_BUILDS_COPY=1 — do not copy to that folder
 # Azure Blob (after development-builds copy):
 #   Fido/checkmate/CheckMate-setup.exe and Fido/checkmate/version.json
@@ -98,6 +103,26 @@ or add ISCC.exe to your PATH.
 "@
 }
 
+# Version (edited by hand in pyproject.toml) and build number (bumped here on
+# every run, like Fido). macOS only reads build_counter.txt.
+$versionMatch = Select-String -Path (Join-Path $Root "pyproject.toml") `
+    -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
+if (-not $versionMatch) { Write-Error "Could not read version from pyproject.toml" }
+$appVersion = $versionMatch.Matches[0].Groups[1].Value
+$counterFile = Join-Path $Root "build_counter.txt"
+$buildNumber = 0
+if (Test-Path $counterFile) {
+    [void][int]::TryParse(((Get-Content $counterFile -Raw) -as [string]).Trim(), [ref]$buildNumber)
+}
+$buildNumber++
+Set-Content -Path $counterFile -Value $buildNumber -Encoding ascii
+$fullVersion = "$appVersion.$buildNumber"
+Write-Host "==> CheckMate $fullVersion (build $buildNumber)" -ForegroundColor Cyan
+Set-Content -Path (Join-Path $Root "installer\version.inc") -Encoding ascii -Value @(
+    "#define MyAppVersion `"$appVersion`"",
+    "#define MyBuild `"$buildNumber`""
+)
+
 $distRoot = Join-Path $Root "dist\CheckMate"
 $distExe = Join-Path $distRoot "CheckMate.exe"
 if (-not $SkipPackage) {
@@ -111,6 +136,9 @@ if (-not $SkipPackage) {
 elseif (-not (Test-Path $distExe)) {
     Write-Error "Packaged app not found at $distExe. Run without -SkipPackage first."
 }
+
+# The app reads this to report (and compare) its full version.
+Copy-Item $counterFile (Join-Path $distRoot "build_counter.txt") -Force
 
 # Ensure the installer will ship the Java runtime and checker tools.
 $requiredDirs = @(
@@ -159,6 +187,15 @@ finally {
     Remove-Item $tempOut -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+function Get-DefaultDevBuildsDir {
+    $tail = "DAISY Consortium\Shared Projects - Documents\Exploring AI\Experimentation app\development builds"
+    foreach ($drive in "D", "C") {
+        $candidate = "${drive}:\$tail"
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+    return "D:\$tail"
+}
+
 $setup = Get-ChildItem $outputDir -Filter "CheckMate-*-setup.exe" |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
@@ -173,20 +210,29 @@ elseif (-not $setup) {
 else {
     $devBuildsDir = $env:CHECKMATE_DEV_BUILDS_DIR
     if (-not $devBuildsDir) {
-        $devBuildsDir = "D:\DAISY Consortium\Shared Projects - Documents\Exploring AI\Experimentation app\development builds"
+        $devBuildsDir = Get-DefaultDevBuildsDir
     }
-    if (-not (Test-Path -LiteralPath $devBuildsDir)) {
-        New-Item -ItemType Directory -Force -Path $devBuildsDir | Out-Null
+    $devBuildsReady = Test-Path -LiteralPath $devBuildsDir
+    if (-not $devBuildsReady) {
+        try {
+            New-Item -ItemType Directory -Force -Path $devBuildsDir -ErrorAction Stop | Out-Null
+            $devBuildsReady = $true
+        }
+        catch {
+            Write-Warning "Skipping development-builds copy: cannot create `"$devBuildsDir`" ($($_.Exception.Message)). Set CHECKMATE_DEV_BUILDS_DIR or CHECKMATE_SKIP_DEV_BUILDS_COPY=1."
+        }
     }
-    try {
-        Copy-Item -LiteralPath $setup.FullName -Destination $devBuildsDir -Force -ErrorAction Stop
-        Copy-Item -LiteralPath $setup.FullName -Destination (Join-Path $devBuildsDir "CheckMate-setup.exe") -Force -ErrorAction Stop
+    if ($devBuildsReady) {
+        try {
+            Copy-Item -LiteralPath $setup.FullName -Destination $devBuildsDir -Force -ErrorAction Stop
+            Copy-Item -LiteralPath $setup.FullName -Destination (Join-Path $devBuildsDir "CheckMate-setup.exe") -Force -ErrorAction Stop
+        }
+        catch {
+            Write-Error "Failed to copy installer to `"$devBuildsDir`": $_"
+        }
+        Write-Host "Copied installer to: $devBuildsDir"
+        Write-Host "    $($setup.Name) and CheckMate-setup.exe"
     }
-    catch {
-        Write-Error "Failed to copy installer to `"$devBuildsDir`": $_"
-    }
-    Write-Host "Copied installer to: $devBuildsDir"
-    Write-Host "    $($setup.Name) and CheckMate-setup.exe"
 }
 
 $versionJson = Join-Path $outputDir "version.json"
@@ -196,7 +242,7 @@ if ($SkipAzurePublish -or $env:CHECKMATE_SKIP_AZURE_PUBLISH -eq "1") {
     $reason = if ($SkipAzurePublish) { "-SkipAzurePublish" } else { "CHECKMATE_SKIP_AZURE_PUBLISH=1" }
     Write-Host "Skipping Azure publish ($reason)" -ForegroundColor Yellow
     Write-Host "==> Writing local version.json (no Azure upload)…" -ForegroundColor Cyan
-    & uv run --extra dev python scripts/publish_installer_azure.py --platform windows --write-version-json $versionJson --skip-upload
+    & uv run --extra dev python scripts/publish_installer_azure.py --platform windows --version $fullVersion --write-version-json $versionJson --skip-upload
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 elseif (-not $setup) {
@@ -204,7 +250,7 @@ elseif (-not $setup) {
 }
 else {
     Write-Host "==> Publishing installer and version.json to Azure Blob (Fido/checkmate/)…" -ForegroundColor Cyan
-    & uv run --extra dev python scripts/publish_installer_azure.py --platform windows --setup-exe $setup.FullName --write-version-json $versionJson
+    & uv run --extra dev python scripts/publish_installer_azure.py --platform windows --setup-exe $setup.FullName --version $fullVersion --write-version-json $versionJson
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
@@ -212,7 +258,7 @@ if ((-not $env:CHECKMATE_SKIP_DEV_BUILDS_COPY) -or ($env:CHECKMATE_SKIP_DEV_BUIL
     if ((Test-Path -LiteralPath $versionJson) -and $setup) {
         $devBuildsDir = $env:CHECKMATE_DEV_BUILDS_DIR
         if (-not $devBuildsDir) {
-            $devBuildsDir = "D:\DAISY Consortium\Shared Projects - Documents\Exploring AI\Experimentation app\development builds"
+            $devBuildsDir = Get-DefaultDevBuildsDir
         }
         if (Test-Path -LiteralPath $devBuildsDir) {
             Copy-Item -LiteralPath $versionJson -Destination (Join-Path $devBuildsDir "checkmate-version.json") -Force

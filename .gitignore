@@ -52,3 +52,6 @@ Thumbs.db
 *.PDF
 checkmate.secrets.json
 fido.secrets.json
+
+# Written by scripts/build_installer.ps1
+installer/version.inc

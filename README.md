@@ -223,7 +223,7 @@ uv run checkmate
    under **Tools → Settings…**.
 3. Use **Report → View full log** (`Ctrl+L`) only when you need the raw
    checker output.
-4. **Tools → Re-check publication** (`F5`) re-runs the current path after you
+4. **Tools → Check publication** (`F5`) re-runs the current path after you
    fix issues.
 5. **Report → Clear results** (`Ctrl+Shift+N`) clears the path, verdict, issues,
    and log back to the launch state.
@@ -414,8 +414,8 @@ marketing version from an older DMG).
 
 Remove the existing app first (`Applications` → move `CheckMate.app` to
 Trash → empty Trash), then drag the new app from the DMG onto Applications
-again. Each release build from `scripts/build_macos.sh` increments
-`build_counter.txt` so newer DMGs upgrade cleanly.
+again. Each release build from `scripts/build_macos.sh` stamps the current
+`build_counter.txt` (bumped by the Windows build) so newer DMGs upgrade cleanly.
 
 ## Project layout
 
@@ -561,9 +561,11 @@ bundled copies in the install folder are not modified.
 
 ### Windows installer (Inno Setup)
 
-Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php). Keep
-`MyAppVersion` in `installer/CheckMate.iss` in sync with
-`pyproject.toml` / `checkmate/__init__.py`.
+Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php). Bump the version
+by hand in `pyproject.toml` and `checkmate/__init__.py`. Every
+`build_installer.ps1` run increments the build number in `build_counter.txt`
+(macOS only reads it) and gives the installer the full version
+`<version>.<build>`, for example `0.8.0.11`.
 
 One-shot (packages the app, then compiles the setup):
 
@@ -577,10 +579,10 @@ Or step by step:
 uv sync --extra dev
 uv run python scripts/package.py --clean
 # Then compile with Inno Setup Compiler, or:
-iscc installer\CheckMate.iss
+iscc installer\CheckMate.iss  # version.inc, if present, sets version and build
 ```
 
-Output: `installer/Output/CheckMate-<version>-setup.exe`
+Output: `installer/Output/CheckMate-<version>.<build>-setup.exe`
 
 `build_installer.ps1` then Authenticode-signs that setup with the same
 `signtool` flow as Fido (`/a`, SHA-256, GlobalSign RFC 3161 timestamp) so
@@ -717,7 +719,8 @@ Useful environment variables:
 | `CHECKMATE_SKIP_AZURE_PUBLISH=1` | Do not upload `CheckMate-setup.dmg` / `version.json` (same as `--skip-azure-publish`) |
 
 **Upgrading / reinstalling:** macOS compares `CFBundleVersion` (an integer build
-number from `build_counter.txt`, bumped on each `build_macos.sh` run) when you
+number from `build_counter.txt`, bumped on each Windows `build_installer.ps1` run
+and only read by `build_macos.sh`) when you
 drag the app onto Applications. If Finder says a newer version is already
 installed, remove `CheckMate.app` from Applications first (Trash → empty
 Trash), then drag again. The DMG also includes `Install CheckMate.txt`

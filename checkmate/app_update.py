@@ -66,12 +66,25 @@ def version_from_info_plist(plist_path: Path) -> str | None:
 
 
 def running_app_version() -> str:
-    """Version of this running CheckMate (macOS packaged builds include the build number)."""
+    """Version of this running CheckMate (packaged builds include the build number)."""
     if sys.platform == "darwin" and is_frozen():
         bundled = version_from_info_plist(application_dir() / "Info.plist")
         if bundled:
             return bundled
+    if sys.platform == "win32" and is_frozen():
+        build = _read_build_counter(application_dir() / "build_counter.txt")
+        if build:
+            return f"{__version__}.{build}"
     return str(__version__)
+
+
+def _read_build_counter(path: Path) -> str:
+    """Build number written by build_installer.ps1; empty when absent or invalid."""
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return text if text.isdigit() else ""
 
 
 def platform_latest_from_payload(payload: dict[str, Any] | None) -> tuple[str | None, str | None]:

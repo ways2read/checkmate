@@ -250,17 +250,41 @@ def _ensure_chromium(ace_dir: Path, node_exe: Path) -> Path:
                 f"Chrome missing from {cache} and no puppeteer install script "
                 f"at {install_script}"
             )
-        print("Downloading Chrome for Testing (puppeteer install)…")
-        proc = subprocess.run(
-            [str(node_exe), str(install_script)],
-            cwd=install_script.parent,
-            env=_npm_env(ace_dir, node_exe.parent),
-            check=False,
-            text=True,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(f"puppeteer install failed (exit {proc.returncode})")
+        for attempt in (1, 2):
+            # A half-extracted browser folder (no executable) makes puppeteer
+            # refuse to reinstall, so clear it before every attempt.
+            shutil.rmtree(cache / "chrome", ignore_errors=True)
+            print(f"Downloading Chrome for Testing (puppeteer install, try {attempt})…")
+            proc = subprocess.run(
+                [str(node_exe), str(install_script)],
+                cwd=install_script.parent,
+                env=_npm_env(ace_dir, node_exe.parent),
+                check=False,
+                text=True,
+            )
+            if proc.returncode == 0:
+                break
+        else:
+            raise RuntimeError(
+                f"puppeteer install failed (exit {proc.returncode}). If the "
+                "extracted chrome.exe keeps disappearing, antivirus may be "
+                f"quarantining it; exclude {cache} and retry."
+            )
         chrome = find_chrome()
+        if chrome is None:
+            # Puppeteer's extractor can stop partway through the archive
+            # while still exiting 0 and leaving the zip behind; extract it
+            # ourselves.
+            for archive in (cache / "chrome").glob("*-chrome-*.zip"):
+                version, _, platform_zip = archive.stem.partition("-")
+                platform = platform_zip.removeprefix("chrome-")
+                dest = archive.parent / f"{platform}-{version}"
+                shutil.rmtree(dest, ignore_errors=True)
+                print(f"Extracting {archive.name} with Python…")
+                with zipfile.ZipFile(archive) as zf:
+                    zf.extractall(dest)
+                archive.unlink()
+            chrome = find_chrome()
     if chrome is None:
         raise RuntimeError(f"Chrome for Testing not found under {cache}")
     return chrome

@@ -15,11 +15,22 @@
 ;   runtime\   (JRE), checker\ (eBraille Checker), epubcheck\ (W3C EPUBCheck),
 ;   verapdf\   (veraPDF CLI), ace\ (Ace by DAISY with Node + Chromium)
 ;
-; Output: installer\Output\CheckMate-<version>-setup.exe
+; Output: installer\Output\CheckMate-<version>.<build>-setup.exe
 
 #define MyAppName "CheckMate"
 #define MyAppFullName "CheckMate"
-#define MyAppVersion "0.7.43"
+; build_installer.ps1 writes version.inc (pyproject.toml version and the
+; build_counter.txt build); the defaults below only serve a hand-run ISCC.
+#if FileExists(SourcePath + "version.inc")
+#include "version.inc"
+#endif
+#ifndef MyAppVersion
+#define MyAppVersion "0.8.0"
+#endif
+#ifndef MyBuild
+#define MyBuild "0"
+#endif
+#define MyAppBuildVersion MyAppVersion + "." + MyBuild
 #define MyAppPublisher "ways2read"
 #define MyAppURL "https://github.com/ways2read/checkmate"
 #define MyAppExeName "CheckMate.exe"
@@ -31,8 +42,8 @@
 [Setup]
 AppId={#MyAppId}
 AppName={#MyAppFullName}
-AppVersion={#MyAppVersion}
-AppVerName={#MyAppFullName} {#MyAppVersion}
+AppVersion={#MyAppBuildVersion}
+AppVerName={#MyAppFullName} {#MyAppBuildVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}/issues
@@ -43,7 +54,7 @@ AllowNoIcons=yes
 LicenseFile=..\LICENSE
 InfoBeforeFile=welcome.rtf
 OutputDir=Output
-OutputBaseFilename=CheckMate-{#MyAppVersion}-setup
+OutputBaseFilename=CheckMate-{#MyAppBuildVersion}-setup
 SetupIconFile=CheckMate.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppFullName}

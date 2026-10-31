@@ -8,7 +8,7 @@
 #   dist/CheckMate_App/CheckMate.app
 #   dist/CheckMate-macOS-<version>.<build>-<arch>.zip
 #
-# Each run increments build_counter.txt and stamps CFBundleVersion so a new DMG
+# Each run stamps CFBundleVersion from build_counter.txt (not incremented here) so a new DMG
 # can replace an older build of the same marketing version in /Applications.
 
 set -euo pipefail
@@ -33,12 +33,9 @@ if [[ -z "$VERSION" ]]; then
 fi
 VERSION="${VERSION:-dev}"
 
-if [[ -n "${EBC_BUILD_NUMBER:-}" ]]; then
-  BUILD_NUMBER="$EBC_BUILD_NUMBER"
-  write_build_counter "$BUILD_NUMBER"
-else
-  BUILD_NUMBER="$(next_build_number)"
-fi
+# build_counter.txt is bumped by the Windows build (scripts/build_installer.ps1);
+# macOS only reads it, so both platforms share one build number per release.
+BUILD_NUMBER="${EBC_BUILD_NUMBER:-$(read_build_counter)}"
 
 APP_NAME="CheckMate"
 APP_DIR="dist/CheckMate_App"

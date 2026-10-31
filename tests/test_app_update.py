@@ -126,3 +126,17 @@ def test_linux_has_no_app_installer(monkeypatch) -> None:
     assert not info.available
     assert info.latest is None
     assert info.error is None
+
+
+def test_running_version_includes_windows_build_number(tmp_path) -> None:
+    from checkmate import __version__
+
+    (tmp_path / "build_counter.txt").write_text("12", encoding="utf-8")
+    with (
+        patch("checkmate.app_update.sys.platform", "win32"),
+        patch("checkmate.app_update.is_frozen", return_value=True),
+        patch("checkmate.app_update.application_dir", return_value=tmp_path),
+    ):
+        assert running_app_version() == f"{__version__}.12"
+        (tmp_path / "build_counter.txt").write_text("x", encoding="utf-8")
+        assert running_app_version() == __version__
