@@ -5,7 +5,7 @@
   "native_name": "Русский",
   "display_name": "Russian",
   "direction": "ltr",
-  "source_msgid_hash": "234d5ba06679e285",
+  "source_msgid_hash": "cccfb80cc7d263be",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Примечание: ответ ИИ снова был обрезан. Задайте уточняющий вопрос, например «Пожалуйста, продолжите».*",
     "&About": "&О программе",
@@ -23,7 +23,7 @@
     "&Import language…": "&Импортировать язык…",
     "&Knowledge Base…": "&База знаний…",
     "&Language": "&Язык",
-    "&Re-check publication\tF5": "&Повторить проверку публикации\tF5",
+    "&Check publication\tF5": "&Повторить проверку публикации\tF5",
     "&Regenerate all…": "&Пересоздать всё…",
     "&Remove…": "&Удалить…",
     "&Report": "&Отчёт",

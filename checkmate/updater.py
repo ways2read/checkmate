@@ -186,7 +186,7 @@ def fetch_latest_verapdf_release(timeout: float = 30.0) -> ReleaseInfo:
     folders = sorted(
         {
             match.group(1)
-            for match in re.finditer(r'href="/rel/(\d+\.\d+)(?:/|")', listing.text)
+            for match in re.finditer(r'href="(?:/rel/)?(\d+\.\d+)(?:/|")', listing.text)
         },
         key=Version,
     )

@@ -5,7 +5,7 @@
   "native_name": "العربية",
   "display_name": "Arabic",
   "direction": "rtl",
-  "source_msgid_hash": "234d5ba06679e285",
+  "source_msgid_hash": "cccfb80cc7d263be",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*ملاحظة: تم قطع رد الذكاء الاصطناعي مجددًا. اطرح سؤال متابعة مثل ”يرجى الاستمرار.“*",
     "&About": "&عن البرنامج",
@@ -23,7 +23,7 @@
     "&Import language…": "&استيراد لغة…",
     "&Knowledge Base…": "قاعدة ال&معرفة…",
     "&Language": "ال&لغة",
-    "&Re-check publication\tF5": "إ&عادة فحص المنشور\tF5",
+    "&Check publication\tF5": "إ&عادة فحص المنشور\tF5",
     "&Regenerate all…": "إعادة إ&نشاء الكل…",
     "&Remove…": "إ&زالة…",
     "&Report": "ال&تقرير",

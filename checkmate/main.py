@@ -6244,7 +6244,7 @@ class MainFrame(wx.Frame):
 
         tools_menu = wx.Menu()
         self.menu_check = tools_menu.Append(
-            wx.ID_ANY, _("&Re-check publication\tF5")
+            wx.ID_ANY, _("&Check publication\tF5")
         )
         tools_menu.AppendSeparator()
         self.menu_edit_files = tools_menu.Append(

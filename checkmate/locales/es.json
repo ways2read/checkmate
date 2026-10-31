@@ -5,7 +5,7 @@
   "native_name": "Español",
   "display_name": "Spanish",
   "direction": "ltr",
-  "source_msgid_hash": "234d5ba06679e285",
+  "source_msgid_hash": "cccfb80cc7d263be",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Nota: La respuesta de la IA se cortó de nuevo. Haz una pregunta de seguimiento como “Por favor, continúa”.*",
     "&About": "&Acerca de",
@@ -23,7 +23,7 @@
     "&Import language…": "&Importar idioma…",
     "&Knowledge Base…": "Base de &conocimiento…",
     "&Language": "&Idioma",
-    "&Re-check publication\tF5": "&Volver a comprobar publicación\tF5",
+    "&Check publication\tF5": "&Volver a comprobar publicación\tF5",
     "&Regenerate all…": "&Regenerar todo…",
     "&Remove…": "&Eliminar…",
     "&Report": "In&forme",

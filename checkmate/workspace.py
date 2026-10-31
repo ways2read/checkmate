@@ -820,6 +820,7 @@ class PublicationWorkspace(wx.Frame):
 
             view.Bind(html2.EVT_WEBVIEW_NAVIGATING, self._on_preview_navigating)
             view.Bind(html2.EVT_WEBVIEW_LOADED, self._on_preview_loaded)
+            view.Bind(html2.EVT_WEBVIEW_ERROR, self._on_preview_error)
             tip = _(
                 "Preview: press Enter to browse the page. Inside the page, Escape "
                 "returns to the file list, and Ctrl+Tab leaves the page."
@@ -1006,6 +1007,7 @@ class PublicationWorkspace(wx.Frame):
 
                 view.Reload(html2.WEBVIEW_RELOAD_NO_CACHE)
             else:
+                logger.info("Preview loading %s", uri)
                 view.LoadURL(uri)
             self._preview_url = uri
         except Exception:
@@ -1063,6 +1065,12 @@ class PublicationWorkspace(wx.Frame):
         if self._preview_view is not None:
             self._main_mod._webview_run_script(self._preview_view, _WEBVIEW_TAB_EXIT_JS)
         self._restore_tree_focus()
+
+    def _on_preview_error(self, event) -> None:
+        event.Skip()
+        logger.warning(
+            "Preview could not load %s: %s", event.GetURL(), event.GetString()
+        )
 
     def _on_preview_navigating(self, event) -> None:
         url = (event.GetURL() or "").strip()

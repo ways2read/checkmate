@@ -5,7 +5,7 @@
   "native_name": "日本語",
   "display_name": "Japanese",
   "direction": "ltr",
-  "source_msgid_hash": "234d5ba06679e285",
+  "source_msgid_hash": "cccfb80cc7d263be",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*注: AIの返答が途中で切れました。「続けてください」などの補足を送信してください。*",
     "&About": "バージョン情報(&A)",
@@ -23,7 +23,7 @@
     "&Import language…": "言語をインポート(&I)…",
     "&Knowledge Base…": "ナレッジベース(&K)…",
     "&Language": "言語(&L)",
-    "&Re-check publication\tF5": "出版物を再チェック(&R)\tF5",
+    "&Check publication\tF5": "出版物を再チェック(&R)\tF5",
     "&Regenerate all…": "すべて再生成(&R)…",
     "&Remove…": "削除(&R)…",
     "&Report": "レポート(&R)",
