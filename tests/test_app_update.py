@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 from checkmate.app_update import (
@@ -18,7 +19,7 @@ from checkmate.updater import is_update_available
 
 PAYLOAD = {
     "windows_latest_version": "0.7.43",
-    "macos_latest_version": "0.7.42.15",
+    "macos_latest_version": "0.7.43",
     "windows_download_url": SETUP_BASE_URL + SETUP_EXE,
     "macos_download_url": SETUP_BASE_URL + SETUP_DMG,
 }
@@ -31,7 +32,7 @@ def test_platform_fields_are_separate() -> None:
         assert url and url.endswith(SETUP_EXE)
     with patch("checkmate.app_update.sys.platform", "darwin"):
         latest, url = platform_latest_from_payload(PAYLOAD)
-        assert latest == "0.7.42.15"
+        assert latest == "0.7.43"
         assert url and url.endswith(SETUP_DMG)
     with patch("checkmate.app_update.sys.platform", "linux"):
         latest, url = platform_latest_from_payload(PAYLOAD)
@@ -62,14 +63,10 @@ def test_fallback_download_url_when_json_omits_it() -> None:
 def test_newer_marketing_version_is_an_update() -> None:
     assert is_update_available("0.7.43", "0.7.42")
     assert not is_update_available("0.7.42", "0.7.42")
+    assert not is_update_available("0.7.43", "0.7.43")
 
 
-def test_macos_build_number_newer_than_marketing_version() -> None:
-    assert is_update_available("0.7.42.15", "0.7.42")
-    assert not is_update_available("0.7.42.15", "0.7.42.15")
-
-
-def test_info_plist_combines_marketing_and_build(tmp_path: Path) -> None:
+def test_info_plist_uses_marketing_version(tmp_path: Path) -> None:
     plist = tmp_path / "Info.plist"
     plist.write_bytes(
         b"""<?xml version="1.0" encoding="UTF-8"?>
@@ -77,14 +74,14 @@ def test_info_plist_combines_marketing_and_build(tmp_path: Path) -> None:
 <plist version="1.0">
 <dict>
   <key>CFBundleShortVersionString</key>
-  <string>0.7.42</string>
+  <string>0.7.43</string>
   <key>CFBundleVersion</key>
-  <string>15</string>
+  <string>743</string>
 </dict>
 </plist>
 """
     )
-    assert version_from_info_plist(plist) == "0.7.42.15"
+    assert version_from_info_plist(plist) == "0.7.43"
 
 
 def test_running_version_defaults_to_package_version() -> None:

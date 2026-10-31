@@ -6,10 +6,11 @@
 #
 # Output:
 #   dist/CheckMate_App/CheckMate.app
-#   dist/CheckMate-macOS-<version>.<build>-<arch>.zip
+#   dist/CheckMate-macOS-<version>-<arch>.zip
 #
-# Each run increments build_counter.txt and stamps CFBundleVersion so a new DMG
-# can replace an older build of the same marketing version in /Applications.
+# Version is x.y.z from the repo (or the optional argument), the same string
+# Windows publishes. CFBundleVersion is derived from that version so Finder
+# upgrades work; it is not appended to filenames or version.json.
 
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -35,9 +36,8 @@ VERSION="${VERSION:-dev}"
 
 if [[ -n "${EBC_BUILD_NUMBER:-}" ]]; then
   BUILD_NUMBER="$EBC_BUILD_NUMBER"
-  write_build_counter "$BUILD_NUMBER"
 else
-  BUILD_NUMBER="$(next_build_number)"
+  BUILD_NUMBER="$(bundle_build_from_version "$VERSION")"
 fi
 
 APP_NAME="CheckMate"
@@ -46,7 +46,7 @@ ARCHIVE_NAME="CheckMate-macOS-$(installer_version_tag "$VERSION")${EBC_MACOS_REL
 
 echo "Building CheckMate for macOS"
 echo "  version: $VERSION"
-echo "  build:   $BUILD_NUMBER"
+echo "  CFBundleVersion: $BUILD_NUMBER"
 echo "  arch suffix: '${EBC_MACOS_RELEASE_ARCH_SUFFIX}'"
 
 echo "==> Packaging with PyInstaller (scripts/package.py)…"

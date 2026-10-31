@@ -402,7 +402,7 @@ def main() -> int:
         dest="setup_exe",
         type=Path,
         default=None,
-        help="Path to CheckMate-setup.exe (Windows) or the signed .dmg (macOS)",
+        help="Path to CheckMate-setup.exe (Windows) or CheckMate-setup.dmg (macOS)",
     )
     parser.add_argument(
         "--platform",

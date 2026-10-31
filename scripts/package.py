@@ -27,7 +27,6 @@ APP_NAME = "CheckMate"
 ENTRY = ROOT / "run.py"
 APP_ICON_ICO = ROOT / "installer" / "CheckMate.ico"
 APP_ICON_ICNS = ROOT / "installer" / "CheckMate.icns"
-BUILD_COUNTER_FILE = ROOT / "build_counter.txt"
 
 
 def _ensure_macos_icns() -> None:
@@ -361,11 +360,17 @@ def _patch_macos_document_types(app_bundle: Path) -> None:
     print(f"Registered .ebrl/.epub/.pdf/.html/.svg/.css/.mml document types in {info_plist}")
 
 
-def _read_build_counter() -> int:
-    if not BUILD_COUNTER_FILE.is_file():
-        return 0
-    text = BUILD_COUNTER_FILE.read_text(encoding="utf-8").strip()
-    return int(text) if text.isdigit() else 0
+def _bundle_build_from_version(version: str) -> int:
+    """Encode x.y.z as a monotonic CFBundleVersion integer (0.7.43 -> 743)."""
+    parts: list[int] = []
+    for token in (version or "").split("."):
+        if token.isdigit():
+            parts.append(int(token))
+        if len(parts) == 3:
+            break
+    while len(parts) < 3:
+        parts.append(0)
+    return parts[0] * 10000 + parts[1] * 100 + parts[2]
 
 
 def _patch_macos_bundle_version(
@@ -376,15 +381,13 @@ def _patch_macos_bundle_version(
         return
     info_plist, info = loaded
     info["CFBundleShortVersionString"] = short_version
-    if build_number is not None:
-        info["CFBundleVersion"] = str(build_number)
+    if build_number is None:
+        build_number = _bundle_build_from_version(short_version)
+    info["CFBundleVersion"] = str(build_number)
     _save_info_plist(info_plist, info)
-    if build_number is not None:
-        print(
-            f"Set bundle version {short_version} (build {build_number}) in {info_plist}"
-        )
-    else:
-        print(f"Set bundle short version {short_version} in {info_plist}")
+    print(
+        f"Set bundle version {short_version} (CFBundleVersion {build_number}) in {info_plist}"
+    )
 
 
 def build(
@@ -582,10 +585,7 @@ def build(
         print("Registering .ebrl/.epub/.pdf/.html/.svg/.css document types in Info.plist…")
         _patch_macos_document_types(output)
         short_version = _project_version()
-        bundle_build = build_number
-        if bundle_build is None and BUILD_COUNTER_FILE.is_file():
-            bundle_build = _read_build_counter() or None
-        _patch_macos_bundle_version(output, short_version, bundle_build)
+        _patch_macos_bundle_version(output, short_version, build_number)
 
     if bundle_java:
         if onefile:
@@ -771,8 +771,9 @@ def main() -> None:
         type=int,
         metavar="N",
         help=(
-            "macOS CFBundleVersion build number (monotonic integer). "
-            "build_macos.sh sets this from build_counter.txt."
+            "macOS CFBundleVersion integer. Default encodes the repo "
+            "x.y.z version (0.7.43 -> 743). Override with EBC_BUILD_NUMBER "
+            "in build_macos.sh if needed."
         ),
     )
     args = parser.parse_args()

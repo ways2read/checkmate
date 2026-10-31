@@ -1,43 +1,25 @@
-# Sourced by macOS packaging scripts for CFBundleVersion (build number).
+# Sourced by macOS packaging scripts.
 #
-# CFBundleShortVersionString = marketing version (pyproject.toml / arg).
-# CFBundleVersion = monotonic integer from build_counter.txt so each DMG can
-# replace an older build of the same marketing version in /Applications.
+# Public version is x.y.z from the repo (pyproject.toml / __init__.py), the
+# same string Windows publishes. Do not append build_counter.txt.
+#
+# CFBundleShortVersionString = marketing version (x.y.z).
+# CFBundleVersion = encoded integer from that version (0.7.43 -> 743) so
+# Finder treats a new DMG as newer than older integer-only build_counter
+# stamps. Override with EBC_BUILD_NUMBER if needed.
 
-EBC_BUILD_COUNTER_FILE="${EBC_BUILD_COUNTER_FILE:-$REPO_ROOT/build_counter.txt}"
-
-read_build_counter() {
-  if [[ -f "$EBC_BUILD_COUNTER_FILE" ]]; then
-    tr -d '\r\n' < "$EBC_BUILD_COUNTER_FILE" | head -c 20
-  else
-    echo "0"
-  fi
-}
-
-write_build_counter() {
-  printf '%s\n' "$1" > "$EBC_BUILD_COUNTER_FILE"
-}
-
-# Increment build_counter.txt and print the new value.
-next_build_number() {
-  local current next
-  current="$(read_build_counter)"
-  if [[ "$current" =~ ^[0-9]+$ ]]; then
-    next=$((current + 1))
-  else
-    next=1
-  fi
-  write_build_counter "$next"
-  echo "$next"
-}
-
-# Filename stem: marketing version plus build counter (e.g. 0.7.32.8).
+# Filename stem: marketing version only (e.g. 0.7.43).
 installer_version_tag() {
-  local ver="${1:-dev}"
-  local bc
-  bc="$(read_build_counter)"
-  if [[ ! "$bc" =~ ^[0-9]+$ ]]; then
-    bc="0"
-  fi
-  printf '%s.%s' "$ver" "$bc"
+  printf '%s' "${1:-dev}"
+}
+
+# Encode x.y.z as a monotonic CFBundleVersion integer.
+bundle_build_from_version() {
+  local ver="${1:-0.0.0}"
+  local major=0 minor=0 patch=0
+  IFS='.' read -r major minor patch _ <<< "${ver}."
+  [[ "$major" =~ ^[0-9]+$ ]] || major=0
+  [[ "$minor" =~ ^[0-9]+$ ]] || minor=0
+  [[ "$patch" =~ ^[0-9]+$ ]] || patch=0
+  echo $((major * 10000 + minor * 100 + patch))
 }
