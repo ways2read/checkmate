@@ -7,6 +7,7 @@ import platform
 import shutil
 import sys
 import tarfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -82,25 +83,52 @@ def _install_java_home(java_home: Path, target: Path) -> Path:
     return target
 
 
+def _download(link: str, attempts: int = 6) -> io.BytesIO:
+    """Download link into memory, resuming from the bytes received after a failure."""
+    data = io.BytesIO()
+    total = 0
+    for attempt in range(1, attempts + 1):
+        downloaded = data.tell()
+        headers = {"Range": f"bytes={downloaded}-"} if downloaded else {}
+        try:
+            with requests.get(link, headers=headers, timeout=(30, 60), stream=True) as response:
+                response.raise_for_status()
+                if downloaded and response.status_code != 206:
+                    # Server ignored the Range header; start over.
+                    data.seek(0)
+                    data.truncate()
+                    downloaded = 0
+                if not total:
+                    total = downloaded + int(response.headers.get("content-length", 0))
+                for chunk in response.iter_content(chunk_size=1024 * 256):
+                    if chunk:
+                        data.write(chunk)
+                        downloaded += len(chunk)
+                        if total:
+                            pct = downloaded * 100 // total
+                            print(
+                                f"\r  {pct}% ({downloaded // (1024 * 1024)} MB)",
+                                end="",
+                                flush=True,
+                            )
+            if total and data.tell() < total:
+                raise requests.exceptions.ConnectionError("Download ended early")
+            print()
+            return data
+        except (requests.exceptions.RequestException, OSError) as exc:
+            print(f"\n  Download interrupted ({exc.__class__.__name__}); attempt {attempt}/{attempts}")
+            if attempt == attempts:
+                raise
+            time.sleep(2 * attempt)
+    raise RuntimeError("unreachable")
+
+
 def install_jre(target_dir: Path, version: int = DEFAULT_JRE_VERSION) -> Path:
     """Download Temurin JRE and install to target_dir (e.g. dist/.../runtime)."""
     link, name = fetch_download_url(version=version)
     print(f"Downloading {name}…")
 
-    response = requests.get(link, timeout=300, stream=True)
-    response.raise_for_status()
-    data = io.BytesIO()
-    total = int(response.headers.get("content-length", 0))
-    downloaded = 0
-    for chunk in response.iter_content(chunk_size=1024 * 256):
-        if chunk:
-            data.write(chunk)
-            downloaded += len(chunk)
-            if total:
-                pct = downloaded * 100 // total
-                print(f"\r  {pct}% ({downloaded // (1024 * 1024)} MB)", end="", flush=True)
-    print()
-
+    data = _download(link)
     data.seek(0)
     staging = target_dir.parent / f".{target_dir.name}-staging"
     if staging.exists():

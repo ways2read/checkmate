@@ -274,12 +274,13 @@ def autosave_edits() -> bool:
 EDITOR_NATIVE = "native"
 EDITOR_SCINTILLA = "scintilla"
 CODE_EDITORS: tuple[str, ...] = (EDITOR_NATIVE, EDITOR_SCINTILLA)
+DEFAULT_CODE_EDITOR = EDITOR_SCINTILLA
 
 
 def code_editor() -> str:
     """Editor control for the Code tab: ``native`` or ``scintilla``."""
-    value = read_settings().get("code_editor", EDITOR_NATIVE)
-    return value if value in CODE_EDITORS else EDITOR_NATIVE
+    value = read_settings().get("code_editor", DEFAULT_CODE_EDITOR)
+    return value if value in CODE_EDITORS else DEFAULT_CODE_EDITOR
 
 
 # External code editor that files open in at a line and column.

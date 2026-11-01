@@ -389,6 +389,17 @@ class PublicationWorkspace(wx.Frame):
         self._update_buttons()
         self._fit_to_screen()
 
+    def _tree_width_needed(self) -> int:
+        """Pixels the Files tree needs to show its longest name without eliding."""
+        dc = wx.ClientDC(self._tree.ctrl)
+        dc.SetFont(self._tree.ctrl.GetFont())
+        indent = self.FromDIP(22)
+        widest = 0
+        for member in self._tree._member_by_item.values():
+            parts = member.split("/")
+            widest = max(widest, dc.GetTextExtent(parts[-1]).width + indent * len(parts))
+        return widest + self.FromDIP(48)
+
     def _fit_to_screen(self) -> None:
         """Size to the work area of the main window's display, never past its edges."""
         index = wx.Display.GetFromWindow(self._main)
@@ -399,7 +410,9 @@ class PublicationWorkspace(wx.Frame):
         height = min(want.height, int(area.height * 0.88))
         self.SetMinSize(wx.Size(min(self.FromDIP(560), width), min(self.FromDIP(380), height)))
         self.SetSize(wx.Size(width, height))
-        self._splitter.SetSashPosition(min(self.FromDIP(280), width // 3))
+        self._splitter.SetSashPosition(
+            min(max(self.FromDIP(280), self._tree_width_needed()), width // 2)
+        )
         self.CentreOnParent()
         x, y = self.GetPosition()
         x = max(area.x, min(x, area.x + area.width - width))

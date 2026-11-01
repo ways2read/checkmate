@@ -31,15 +31,15 @@ class LineColumnTests(unittest.TestCase):
 
 
 class CodeEditorSettingTests(unittest.TestCase):
-    def test_defaults_to_native_and_rejects_unknown(self) -> None:
+    def test_default_and_rejects_unknown(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
             with mock.patch.object(settings_mod, "settings_path", return_value=path):
+                self.assertEqual(settings_mod.code_editor(), settings_mod.DEFAULT_CODE_EDITOR)
+                settings_mod.update_settings(code_editor=settings_mod.EDITOR_NATIVE)
                 self.assertEqual(settings_mod.code_editor(), settings_mod.EDITOR_NATIVE)
-                settings_mod.update_settings(code_editor=settings_mod.EDITOR_SCINTILLA)
-                self.assertEqual(settings_mod.code_editor(), settings_mod.EDITOR_SCINTILLA)
                 settings_mod.update_settings(code_editor="notepad")
-                self.assertEqual(settings_mod.code_editor(), settings_mod.EDITOR_NATIVE)
+                self.assertEqual(settings_mod.code_editor(), settings_mod.DEFAULT_CODE_EDITOR)
 
 
 if __name__ == "__main__":
