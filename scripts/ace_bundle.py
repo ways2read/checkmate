@@ -332,6 +332,10 @@ def install_ace_bundle(
     # Belt and braces: drop the headless shell if a puppeteer version
     # downloaded it despite the skip env var.
     shutil.rmtree(target_dir / "puppeteer" / "chrome-headless-shell", ignore_errors=True)
+    # The downloaded archive can be left beside the extracted browser. It is dead
+    # weight, and Apple's notary opens zips and rejects the unsigned Chrome inside.
+    for archive in (target_dir / "puppeteer" / "chrome").glob("*.zip"):
+        archive.unlink()
     reported = _verify(target_dir, node_exe)
 
     (target_dir / "bundled_version.txt").write_text(
