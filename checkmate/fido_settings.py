@@ -56,7 +56,121 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def read_api_keys() -> dict[str, Any]:
+    """Non-secret FIDO values (URLs, model names) plus any keys not yet moved to the OS store."""
     return _read_json(fido_app_data_dir() / "api_keys.json")
+
+
+# --- FIDO secure credential store (read-only mirror of fido/secret_store.py) ---------------
+# FIDO keeps every ``*_key`` value and ``unlock_code`` in the OS credential store
+# (Windows Credential Manager / macOS Keychain / Linux Secret Service) under service
+# ``Fido`` and username ``<name>``. Long values are split: the head entry holds
+# ``__fido_chunks__:<n>`` and the parts live in ``<name>#1`` … ``<name>#n``.
+# CheckMate only reads these entries; it never writes or deletes them.
+
+_FIDO_SECRET_SERVICE = "Fido"
+_FIDO_CHUNK_MARKER = "__fido_chunks__:"
+_secret_backend: Any = None
+_secret_backend_failed = False
+_secret_cache: dict[str, str | None] = {}
+
+
+def is_fido_secret_name(name: str) -> bool:
+    return isinstance(name, str) and (name == "unlock_code" or name.endswith("_key"))
+
+
+def _secure_store_disabled() -> bool:
+    import os
+
+    return (os.environ.get("FIDO_SECURE_STORE") or "").strip().lower() in (
+        "off",
+        "0",
+        "false",
+        "no",
+    )
+
+
+def _get_secret_backend() -> Any:
+    """Keyring backend matching FIDO's choice, or None when unavailable."""
+    global _secret_backend, _secret_backend_failed
+    if _secret_backend is not None or _secret_backend_failed:
+        return _secret_backend
+    if _secure_store_disabled():
+        _secret_backend_failed = True
+        return None
+    try:
+        import platform
+
+        system = platform.system()
+        if system == "Windows":
+            from keyring.backends.Windows import WinVaultKeyring
+
+            _secret_backend = WinVaultKeyring()
+        elif system == "Darwin":
+            from keyring.backends.macOS import Keyring as MacKeyring
+
+            _secret_backend = MacKeyring()
+        else:
+            import keyring
+
+            kr = keyring.get_keyring()
+            mod = type(kr).__module__ or ""
+            if mod.startswith(("keyring.backends.fail", "keyring.backends.null", "keyrings.alt")):
+                raise RuntimeError(f"no secure keyring backend ({type(kr).__name__})")
+            _secret_backend = kr
+    except Exception as e:
+        logger.info("FIDO secure key storage not readable: %s", e)
+        _secret_backend_failed = True
+        _secret_backend = None
+    return _secret_backend
+
+
+def _read_secure_secret(name: str) -> str | None:
+    """Value FIDO stored for *name* in the OS credential store, or None."""
+    if name in _secret_cache:
+        return _secret_cache[name]
+    backend = _get_secret_backend()
+    if backend is None:
+        return None
+    value: str | None
+    try:
+        head = backend.get_password(_FIDO_SECRET_SERVICE, name)
+        if head is not None and head.startswith(_FIDO_CHUNK_MARKER):
+            try:
+                count = int(head[len(_FIDO_CHUNK_MARKER):])
+            except ValueError:
+                count = -1
+            if count >= 0:
+                parts: list[str] = []
+                for i in range(1, count + 1):
+                    part = backend.get_password(_FIDO_SECRET_SERVICE, f"{name}#{i}")
+                    if part is None:
+                        logger.warning("FIDO secure key storage: part %d of %s missing", i, name)
+                        parts = []
+                        head = None
+                        break
+                    parts.append(part)
+                if head is not None:
+                    head = "".join(parts)
+        value = head
+    except Exception as e:
+        logger.warning("FIDO secure key storage: could not read %s (%s)", name, type(e).__name__)
+        return None
+    _secret_cache[name] = value
+    return value
+
+
+def refresh_fido_secrets() -> None:
+    """Forget cached secure-store values (FIDO may have changed them)."""
+    _secret_cache.clear()
+
+
+def _read_fido_value(key: str) -> Any:
+    """A FIDO api value: OS credential store first for secrets, then api_keys.json."""
+    if is_fido_secret_name(key):
+        secure = _read_secure_secret(key)
+        if isinstance(secure, str) and secure.strip():
+            return secure
+    return read_api_keys().get(key)
 
 
 def read_user_settings() -> dict[str, Any]:
@@ -78,8 +192,10 @@ def get_user_setting(key: str, default: Any = None) -> Any:
 
 
 def get_persisted_api_key(key: str, default: str | None = None) -> str | None:
-    """Value from api_keys.json only (no unlock overlay)."""
-    val = read_api_keys().get(key, default)
+    """Value FIDO saved (OS credential store or api_keys.json), without the unlock overlay."""
+    val = _read_fido_value(key)
+    if val is None:
+        val = default
     if isinstance(val, str) and val.strip():
         return val.strip()
     if val is None:
@@ -107,7 +223,7 @@ def get_api_key(key: str, default: str | None = None) -> str | None:
 
 
 def get_unlock_code() -> str:
-    code = read_api_keys().get("unlock_code")
+    code = _read_fido_value("unlock_code")
     if isinstance(code, str) and code.strip():
         return code.strip()
     # Optional CheckMate-local code (settings.json), never keys.
@@ -216,6 +332,7 @@ def resolve_litellm_model_and_key(
 
     ``api_base`` is set for Gateway / LM Studio / Ollama when configured in FIDO keys.
     """
+    refresh_fido_secrets()
     svc_str = (service_str or selected_model_service_string() or "").strip()
     if not svc_str or ":" not in svc_str:
         return None, None, None

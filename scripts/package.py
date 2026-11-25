@@ -478,6 +478,14 @@ def build(
         "accessible_output2",
         "--hidden-import",
         "accessible_output2.outputs.auto",
+        # FIDO keeps API keys in the OS credential store; pick backends explicitly
+        # because PyInstaller can miss keyring's entry-point discovery.
+        "--hidden-import",
+        "keyring",
+        "--hidden-import",
+        "keyring.backends.Windows",
+        "--hidden-import",
+        "keyring.backends.macOS",
         "--collect-submodules",
         "checkmate",
     ]
