@@ -5,7 +5,7 @@
   "native_name": "العربية",
   "display_name": "Arabic",
   "direction": "rtl",
-  "source_msgid_hash": "42500a6bcf4725dc",
+  "source_msgid_hash": "2bdda10c39bb371e",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*ملاحظة: تم قطع رد الذكاء الاصطناعي مجددًا. اطرح سؤال متابعة مثل ”يرجى الاستمرار.“*",
     "&About": "&عن البرنامج",
@@ -146,6 +146,8 @@
     "Choose a language CheckMate does not ship. AI will translate the UI strings and save them on this computer.": "اختر لغة لا يأتي بها CheckMate. سيقوم الذكاء الاصطناعي بترجمة نصوص واجهة المستخدم وحفظها على هذا الكمبيوتر.",
     "Clear filters": "مسح أدوات التصفية",
     "Click to enlarge": "انقر للتكبير",
+    "Ready to check": "جاهز للفحص",
+    "Click to start checking (F5)": "انقر لبدء الفحص (F5)",
     "Click to select a file": "انقر لتحديد ملف",
     "Close": "إغلاق",
     "Code": "الرمز",

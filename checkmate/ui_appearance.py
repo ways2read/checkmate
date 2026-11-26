@@ -117,6 +117,30 @@ def prefers_dark() -> bool:
     return os_prefers_dark()
 
 
+def os_prefers_reduced_motion() -> bool:
+    """True when the OS asks apps to avoid non-essential animation.
+
+    Windows: "Show animations in Windows" off (SPI_GETCLIENTAREAANIMATION).
+    macOS: Accessibility > Display > Reduce motion.
+    """
+    try:
+        if sys.platform == "win32":
+            SPI_GETCLIENTAREAANIMATION = 0x1042
+            enabled = ctypes.c_int(1)
+            ok = ctypes.windll.user32.SystemParametersInfoW(
+                SPI_GETCLIENTAREAANIMATION, 0, ctypes.byref(enabled), 0
+            )
+            return bool(ok) and not enabled.value
+        if sys.platform == "darwin":
+            from AppKit import NSWorkspace  # type: ignore[import-not-found]
+
+            workspace = NSWorkspace.sharedWorkspace()
+            return bool(workspace.accessibilityDisplayShouldReduceMotion())
+    except Exception:
+        return False
+    return False
+
+
 def system_prefers_dark() -> bool:
     """Alias for :func:`prefers_dark` (includes the user's color theme)."""
     return prefers_dark()

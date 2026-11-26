@@ -5,7 +5,7 @@
   "native_name": "Español",
   "display_name": "Spanish",
   "direction": "ltr",
-  "source_msgid_hash": "42500a6bcf4725dc",
+  "source_msgid_hash": "2bdda10c39bb371e",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Nota: La respuesta de la IA se cortó de nuevo. Haz una pregunta de seguimiento como “Por favor, continúa”.*",
     "&About": "&Acerca de",
@@ -146,6 +146,8 @@
     "Choose a language CheckMate does not ship. AI will translate the UI strings and save them on this computer.": "Elija un idioma que CheckMate no incluya de fábrica. La IA traducirá los textos de la interfaz y los guardará en este equipo.",
     "Clear filters": "Borrar filtros",
     "Click to enlarge": "Hacer clic para ampliar",
+    "Ready to check": "Listo para comprobar",
+    "Click to start checking (F5)": "Hacer clic para empezar a comprobar (F5)",
     "Click to select a file": "Hacer clic para seleccionar un archivo",
     "Close": "Cerrar",
     "Code": "Código",

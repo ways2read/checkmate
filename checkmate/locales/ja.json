@@ -5,7 +5,7 @@
   "native_name": "日本語",
   "display_name": "Japanese",
   "direction": "ltr",
-  "source_msgid_hash": "42500a6bcf4725dc",
+  "source_msgid_hash": "2bdda10c39bb371e",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*注: AIの返答が途中で切れました。「続けてください」などの補足を送信してください。*",
     "&About": "バージョン情報(&A)",
@@ -146,6 +146,8 @@
     "Choose a language CheckMate does not ship. AI will translate the UI strings and save them on this computer.": "CheckMateに標準搭載されていない言語を選択してください。AIがUI文字列を翻訳し、このコンピューターに保存します。",
     "Clear filters": "フィルターをクリア",
     "Click to enlarge": "クリックして拡大",
+    "Ready to check": "チェックの準備完了",
+    "Click to start checking (F5)": "クリックしてチェックを開始 (F5)",
     "Click to select a file": "クリックしてファイルを選択",
     "Close": "閉じる",
     "Code": "コード",

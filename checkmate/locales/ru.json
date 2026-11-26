@@ -5,7 +5,7 @@
   "native_name": "Русский",
   "display_name": "Russian",
   "direction": "ltr",
-  "source_msgid_hash": "42500a6bcf4725dc",
+  "source_msgid_hash": "2bdda10c39bb371e",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Примечание: ответ ИИ снова был обрезан. Задайте уточняющий вопрос, например «Пожалуйста, продолжите».*",
     "&About": "&О программе",
@@ -141,6 +141,8 @@
     "CheckMate translation of DAISY KB article {path}. Switch to Original English in the viewer for the authoritative text.": "Перевод CheckMate статьи базы знаний DAISY {path}. Для официального текста переключитесь на «Оригинал (английский)» в просмотрщике.",
     "Clear filters": "Сбросить фильтры",
     "Click to enlarge": "Click to enlarge",
+    "Ready to check": "Готово к проверке",
+    "Click to start checking (F5)": "Нажмите, чтобы начать проверку (F5)",
     "Click to select a file": "Нажмите, чтобы выбрать файл",
     "Close": "Закрыть",
     "Code": "Код",

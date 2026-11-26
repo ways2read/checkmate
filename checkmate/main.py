@@ -5577,6 +5577,12 @@ class MainFrame(wx.Frame):
         self._source_filter_wanted = False
         self._result_icon_cache: dict[tuple[str, int, bool], wx.Bitmap] = {}
         self._result_icon_key: tuple[str, int, bool] | None = None
+        # Animated hourglass while a check runs (frames cached per size/theme).
+        self._wait_frames_cache: dict[tuple[int, bool], list[wx.Bitmap]] = {}
+        self._wait_frames: list[wx.Bitmap] = []
+        self._wait_step = 0
+        self._wait_timer = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self._on_wait_timer, self._wait_timer)
         self._initial_focus_pending = True
         self._pending_open_paths = list(initial_paths or [])
         self._apply_window_icon()
@@ -5846,12 +5852,13 @@ class MainFrame(wx.Frame):
         return 72
 
     def _result_status_icon_key(self) -> str:
-        """Return down / wait / ok / x for the result status graphic."""
+        """Return down / play / wait / ok / x for the result status graphic."""
         if self._busy:
             return "wait"
         result = self._last_result
         if result is None:
-            return "down"
+            # Loaded but not checked yet (Start checking immediately off).
+            return "play" if self._current_target() else "down"
         if result.issues or result.verdict in (Verdict.FAILED, Verdict.ERROR):
             return "x"
         return "ok"
@@ -5859,6 +5866,7 @@ class MainFrame(wx.Frame):
     def _result_status_icon_path(self, key: str) -> Path | None:
         names = {
             "down": "checkmate-down.png",
+            "play": "checkmate-play.png",
             "wait": "checkmate-wait.png",
             "ok": "checkmate.png",
             "x": "checkmate-x.png",
@@ -5895,6 +5903,93 @@ class MainFrame(wx.Frame):
         self._result_icon_cache[cache_key] = bitmap
         return bitmap
 
+    # Hourglass animation: flip 180° in _WAIT_FLIP_STEPS frames, then rest.
+    _WAIT_FLIP_STEPS = 12
+    _WAIT_REST_TICKS = 14
+    _WAIT_TICK_MS = 50
+
+    def _wait_animation_frames(self, size: int) -> list[wx.Bitmap]:
+        """Frames of the hourglass turning over inside its fixed frame."""
+        from .ui_appearance import prefers_dark
+
+        cache_key = (size, prefers_dark())
+        cached = self._wait_frames_cache.get(cache_key)
+        if cached:
+            return cached
+        path = self._result_status_icon_path("wait")
+        if path is None:
+            return []
+        base = wx.Image(str(path), wx.BITMAP_TYPE_PNG)
+        if not base.IsOk():
+            return []
+        if not base.HasAlpha():
+            base.InitAlpha()
+        w, h = base.GetWidth(), base.GetHeight()
+        # The square frame's transparent interior (see images/checkmate-wait.png).
+        lo, hi = round(w * 51 / 256), round(w * 206 / 256)
+        inner_rect = wx.Rect(lo, lo, hi - lo, hi - lo)
+        inner = base.GetSubImage(inner_rect)
+        frame_only = base.Copy()
+        frame_only.SetRGB(inner_rect, 0, 0, 0)
+        for y in range(inner_rect.y, inner_rect.y + inner_rect.height):
+            for x in range(inner_rect.x, inner_rect.x + inner_rect.width):
+                frame_only.SetAlpha(x, y, 0)
+        cw, ch = inner.GetWidth(), inner.GetHeight()
+        centre = wx.Point(cw // 2, ch // 2)
+        frames: list[wx.Bitmap] = []
+        import math
+
+        for i in range(self._WAIT_FLIP_STEPS + 1):
+            angle = math.pi * i / self._WAIT_FLIP_STEPS
+            rotated = inner.Rotate(angle, centre, True)
+            rw, rh = rotated.GetWidth(), rotated.GetHeight()
+            rotated = rotated.GetSubImage(
+                wx.Rect((rw - cw) // 2, (rh - ch) // 2, cw, ch)
+            )
+            img = frame_only.Copy()
+            img.Paste(rotated, inner_rect.x, inner_rect.y)
+            if w != size or h != size:
+                img = img.Scale(size, size, wx.IMAGE_QUALITY_HIGH)
+            bmp = wx.Bitmap(img)
+            if bmp.IsOk():
+                frames.append(bmp)
+        self._wait_frames_cache[cache_key] = frames
+        return frames
+
+    def _start_wait_animation(self, size: int) -> None:
+        from .ui_appearance import os_prefers_reduced_motion
+
+        if os_prefers_reduced_motion():
+            self._stop_wait_animation()
+            return
+        self._wait_frames = self._wait_animation_frames(size)
+        if len(self._wait_frames) < 2:
+            return
+        if not self._wait_timer.IsRunning():
+            self._wait_step = 0
+            self._wait_timer.Start(self._WAIT_TICK_MS)
+
+    def _stop_wait_animation(self) -> None:
+        if self._wait_timer.IsRunning():
+            self._wait_timer.Stop()
+        self._wait_frames = []
+
+    def _on_wait_timer(self, _event: wx.TimerEvent) -> None:
+        frames = self._wait_frames
+        if not self._busy or not frames or not hasattr(self, "result_icon"):
+            self._stop_wait_animation()
+            return
+        flip = len(frames) - 1
+        self._wait_step = (self._wait_step + 1) % (flip + self._WAIT_REST_TICKS)
+        step = self._wait_step
+        if step <= flip:
+            index = step  # turning over
+        elif step < flip + self._WAIT_REST_TICKS // 2:
+            index = flip  # upside down: sand at the top
+        else:
+            index = 0  # same outline, sand has run through
+        self.result_icon.SetBitmap(frames[index])
+
     def _update_result_status_icon(self) -> None:
         """Show waiting / pass / issues graphic beside the result box."""
         if not hasattr(self, "result_icon"):
@@ -5903,6 +5998,10 @@ class MainFrame(wx.Frame):
 
         key = self._result_status_icon_key()
         size = self._result_icon_display_size()
+        if key == "wait":
+            self._start_wait_animation(size)
+        else:
+            self._stop_wait_animation()
         token = (key, size, prefers_dark())
         if token == self._result_icon_key:
             current = self.result_icon.GetBitmap()
@@ -5919,11 +6018,15 @@ class MainFrame(wx.Frame):
         self.result_icon.SetBitmap(bitmap)
         tip = {
             "down": _("Waiting for a publication"),
+            "play": _("Ready to check"),
             "wait": _("Check in progress"),
             "ok": _("No issues found"),
             "x": _("Issues found"),
         }[key]
-        open_hint = _("Click to select a file")
+        if key == "play":
+            open_hint = _("Click to start checking (F5)")
+        else:
+            open_hint = _("Click to select a file")
         self.result_icon.SetToolTip(f"{tip}\n{open_hint}")
         self.result_icon.SetName(
             _("Check status: {status}. {action}", status=tip, action=open_hint)
@@ -8087,9 +8190,12 @@ class MainFrame(wx.Frame):
     # --- Events ---
 
     def on_result_icon_click(self, event: wx.MouseEvent) -> None:
-        """Status icon acts as a shortcut for Select file…"""
+        """Status icon: play starts the check (F5); otherwise Select file…"""
         event.Skip()
         if self._busy:
+            return
+        if self._result_status_icon_key() == "play":
+            self.on_check(None)
             return
         self.on_browse_file(None)
 
@@ -8143,6 +8249,7 @@ class MainFrame(wx.Frame):
         self._clear_to_launch_state()
         self.path_ctrl.SetValue(path)
         self._update_report_actions_enabled()
+        self._update_result_status_icon()  # down arrow -> play button
         name = Path(path).name or path
         if self._workspace_target() is not None:
             message = _(
