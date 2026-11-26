@@ -5,7 +5,7 @@
   "native_name": "日本語",
   "display_name": "Japanese",
   "direction": "ltr",
-  "source_msgid_hash": "cccfb80cc7d263be",
+  "source_msgid_hash": "42500a6bcf4725dc",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*注: AIの返答が途中で切れました。「続けてください」などの補足を送信してください。*",
     "&About": "バージョン情報(&A)",
@@ -973,6 +973,13 @@
     "Exit anyway? Your external edits stay in the folder named above.": "それでも終了しますか? 外部エディターでの編集内容は上記のフォルダーに残ります。",
     "Saved {files} from your external editor into {package}.": "外部エディターからの {files} を {package} に保存しました。",
     "Open in e&xternal editor\tCtrl+Shift+E": "外部エディターで開く(&X)\tCtrl+Shift+E",
-    "Open the issue's file in the external editor chosen in Settings, at the reported line (Ctrl+Shift+E)": "設定で選んだ外部エディターで、問題のファイルを報告された行で開きます (Ctrl+Shift+E)"
+    "Open the issue's file in the external editor chosen in Settings, at the reported line (Ctrl+Shift+E)": "設定で選んだ外部エディターで、問題のファイルを報告された行で開きます (Ctrl+Shift+E)",
+    "Package folder as e&Braille…": "フォルダーを eBraille にパッケージ化(&B)…",
+    "Zip an exploded eBraille folder into a valid .ebrl package (mimetype stored first and uncompressed)": "展開された eBraille フォルダーを有効な .ebrl パッケージに圧縮（mimetype を先頭に非圧縮で格納）",
+    "Package folder as eBraille": "フォルダーを eBraille にパッケージ化",
+    "Select an exploded eBraille folder first.": "先に展開された eBraille フォルダーを選択してください。",
+    "eBraille files (*.ebrl)|*.ebrl|All files (*.*)|*.*": "eBraille ファイル (*.ebrl)|*.ebrl|すべてのファイル (*.*)|*.*",
+    "{path}\n\ndoes not look like an exploded eBraille folder (no package document declaring the eBraille format found).": "{path}\n\nは展開された eBraille フォルダーではないようです（eBraille 形式を宣言するパッケージ文書が見つかりません）。",
+    "Could not create the eBraille package:\n{error}": "eBraille パッケージを作成できませんでした:\n{error}"
   }
 }

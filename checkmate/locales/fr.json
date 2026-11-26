@@ -5,7 +5,7 @@
   "native_name": "Français",
   "display_name": "French",
   "direction": "ltr",
-  "source_msgid_hash": "cccfb80cc7d263be",
+  "source_msgid_hash": "42500a6bcf4725dc",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*Remarque : la réponse de l’IA a encore été coupée. Posez une question de suivi telle que « Veuillez continuer. »*",
     "&About": "À &propos",
@@ -973,6 +973,13 @@
     "Exit anyway? Your external edits stay in the folder named above.": "Quitter quand même ? Vos modifications externes restent dans le dossier indiqué ci-dessus.",
     "Saved {files} from your external editor into {package}.": "{files} enregistré depuis votre éditeur externe dans {package}.",
     "Open in e&xternal editor\tCtrl+Shift+E": "Ouvrir dans l’éditeur e&xterne\tCtrl+Shift+E",
-    "Open the issue's file in the external editor chosen in Settings, at the reported line (Ctrl+Shift+E)": "Ouvre le fichier du problème dans l’éditeur externe choisi dans les paramètres, à la ligne signalée (Ctrl+Shift+E)"
+    "Open the issue's file in the external editor chosen in Settings, at the reported line (Ctrl+Shift+E)": "Ouvre le fichier du problème dans l’éditeur externe choisi dans les paramètres, à la ligne signalée (Ctrl+Shift+E)",
+    "Package folder as e&Braille…": "Empaqueter le dossier en e&Braille…",
+    "Zip an exploded eBraille folder into a valid .ebrl package (mimetype stored first and uncompressed)": "Compresser un dossier eBraille décompressé en un paquet .ebrl valide (mimetype stocké en premier et sans compression)",
+    "Package folder as eBraille": "Empaqueter le dossier en eBraille",
+    "Select an exploded eBraille folder first.": "Sélectionnez d’abord un dossier eBraille décompressé.",
+    "eBraille files (*.ebrl)|*.ebrl|All files (*.*)|*.*": "Fichiers eBraille (*.ebrl)|*.ebrl|Tous les fichiers (*.*)|*.*",
+    "{path}\n\ndoes not look like an exploded eBraille folder (no package document declaring the eBraille format found).": "{path}\n\nne semble pas être un dossier eBraille décompressé (aucun document de paquet déclarant le format eBraille trouvé).",
+    "Could not create the eBraille package:\n{error}": "Impossible de créer le paquet eBraille :\n{error}"
   }
 }

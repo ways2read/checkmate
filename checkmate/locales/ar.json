@@ -5,7 +5,7 @@
   "native_name": "العربية",
   "display_name": "Arabic",
   "direction": "rtl",
-  "source_msgid_hash": "cccfb80cc7d263be",
+  "source_msgid_hash": "42500a6bcf4725dc",
   "strings": {
     "\n\n---\n*Note: The AI reply was cut off again. Ask a follow-up such as “Please continue.”*": "\n\n---\n*ملاحظة: تم قطع رد الذكاء الاصطناعي مجددًا. اطرح سؤال متابعة مثل ”يرجى الاستمرار.“*",
     "&About": "&عن البرنامج",
@@ -973,6 +973,13 @@
     "Exit anyway? Your external edits stay in the folder named above.": "هل تريد الخروج على أي حال؟ تبقى تعديلاتك الخارجية في المجلد المذكور أعلاه.",
     "Saved {files} from your external editor into {package}.": "تم حفظ {files} من محررك الخارجي في {package}.",
     "Open in e&xternal editor\tCtrl+Shift+E": "فتح في المحرر ال&خارجي\tCtrl+Shift+E",
-    "Open the issue's file in the external editor chosen in Settings, at the reported line (Ctrl+Shift+E)": "يفتح ملف المشكلة في المحرر الخارجي المحدد في الإعدادات عند السطر المُبلَّغ عنه (Ctrl+Shift+E)"
+    "Open the issue's file in the external editor chosen in Settings, at the reported line (Ctrl+Shift+E)": "يفتح ملف المشكلة في المحرر الخارجي المحدد في الإعدادات عند السطر المُبلَّغ عنه (Ctrl+Shift+E)",
+    "Package folder as e&Braille…": "حزم المجلد بتنسيق e&Braille…",
+    "Zip an exploded eBraille folder into a valid .ebrl package (mimetype stored first and uncompressed)": "ضغط مجلد eBraille مفكوك في حزمة ‎.ebrl صالحة (يُخزَّن mimetype أولاً دون ضغط)",
+    "Package folder as eBraille": "حزم المجلد بتنسيق eBraille",
+    "Select an exploded eBraille folder first.": "حدد مجلد eBraille مفكوكًا أولاً.",
+    "eBraille files (*.ebrl)|*.ebrl|All files (*.*)|*.*": "ملفات eBraille ‏(*.ebrl)|*.ebrl|كل الملفات (*.*)|*.*",
+    "{path}\n\ndoes not look like an exploded eBraille folder (no package document declaring the eBraille format found).": "{path}\n\nلا يبدو مجلد eBraille مفكوكًا (لم يُعثر على مستند حزمة يعلن تنسيق eBraille).",
+    "Could not create the eBraille package:\n{error}": "تعذر إنشاء حزمة eBraille:\n{error}"
   }
 }

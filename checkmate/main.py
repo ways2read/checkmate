@@ -6265,6 +6265,15 @@ class MainFrame(wx.Frame):
                 "(mimetype stored first and uncompressed)"
             )
         )
+        self.menu_package_ebraille = tools_menu.Append(
+            wx.ID_ANY, _("Package folder as e&Braille…")
+        )
+        self.menu_package_ebraille.SetHelp(
+            _(
+                "Zip an exploded eBraille folder into a valid .ebrl package "
+                "(mimetype stored first and uncompressed)"
+            )
+        )
         if sys.platform != "darwin":
             tools_menu.AppendSeparator()
             self.menu_settings = tools_menu.Append(
@@ -6446,6 +6455,7 @@ class MainFrame(wx.Frame):
         self.menu_view_clipboard.Enable(clipboard_ok)
         self.menu_view_clipboard_report.Enable(current_clipboard)
         self.menu_package_epub.Enable(self._current_target_is_epub_folder())
+        self.menu_package_ebraille.Enable(self._current_target_is_ebraille_folder())
         self.menu_edit_files.Enable(self._workspace_target() is not None)
         # AI overview is hidden when features are off; only enable when shown.
         if self.ai_overview_btn is not None and ai_features_enabled():
@@ -6561,6 +6571,9 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_check, self.menu_check)
         self.Bind(wx.EVT_MENU, self.on_open_workspace, self.menu_edit_files)
         self.Bind(wx.EVT_MENU, self.on_package_epub_folder, self.menu_package_epub)
+        self.Bind(
+            wx.EVT_MENU, self.on_package_ebraille_folder, self.menu_package_ebraille
+        )
         self.Bind(wx.EVT_MENU, self.on_settings, self.menu_settings)
         self.Bind(wx.EVT_MENU, self.on_settings, id=wx.ID_PREFERENCES)
         self.Bind(wx.EVT_MENU, self.on_view_full_log, self.menu_view_log)
@@ -7643,6 +7656,18 @@ class MainFrame(wx.Frame):
         except OSError:
             return False
 
+    def _current_target_is_ebraille_folder(self) -> bool:
+        """True when the path field is an exploded eBraille publication folder."""
+        path = self._current_path()
+        if path is None or not path.is_dir():
+            return False
+        from .publication import PublicationKind, classify_publication
+
+        try:
+            return classify_publication(path) == PublicationKind.EBRAILLE
+        except OSError:
+            return False
+
     def open_publication_paths(
         self,
         filenames: list[str],
@@ -8080,38 +8105,63 @@ class MainFrame(wx.Frame):
 
     def on_package_epub_folder(self, _event: wx.CommandEvent | None) -> None:
         """Zip the selected exploded EPUB folder into a valid .epub package."""
+        self._package_folder(ebraille=False)
+
+    def on_package_ebraille_folder(self, _event: wx.CommandEvent | None) -> None:
+        """Zip the selected exploded eBraille folder into a valid .ebrl package."""
+        self._package_folder(ebraille=True)
+
+    def _package_folder(self, *, ebraille: bool) -> None:
+        """Package an exploded EPUB or eBraille folder.
+
+        eBraille uses the same OCF ZIP container as EPUB (``mimetype`` stored
+        first, uncompressed), so both go through ``create_epub``; only the
+        expected folder kind and the file extension differ.
+        """
         if self._busy:
-            return
-        folder = self._current_path()
-        if folder is None or not folder.is_dir():
-            wx.MessageBox(
-                _("Select an exploded EPUB folder first."),
-                _("Package folder as EPUB"),
-                wx.OK | wx.ICON_INFORMATION,
-                self,
-            )
             return
         from .publication import PublicationKind, classify_publication
 
-        if classify_publication(folder) != PublicationKind.EPUB:
-            wx.MessageBox(
-                _(
+        if ebraille:
+            title = _("Package folder as eBraille")
+            select_first = _("Select an exploded eBraille folder first.")
+            expected = PublicationKind.EBRAILLE
+            suffix = ".ebrl"
+            wildcard = _("eBraille files (*.ebrl)|*.ebrl|All files (*.*)|*.*")
+        else:
+            title = _("Package folder as EPUB")
+            select_first = _("Select an exploded EPUB folder first.")
+            expected = PublicationKind.EPUB
+            suffix = ".epub"
+            wildcard = _("EPUB files (*.epub)|*.epub|All files (*.*)|*.*")
+
+        folder = self._current_path()
+        if folder is None or not folder.is_dir():
+            wx.MessageBox(select_first, title, wx.OK | wx.ICON_INFORMATION, self)
+            return
+
+        if classify_publication(folder) != expected:
+            if ebraille:
+                message = _(
+                    "{path}\n\ndoes not look like an exploded eBraille folder "
+                    "(no package document declaring the eBraille format found).",
+                    path=folder,
+                )
+            else:
+                message = _(
                     "{path}\n\ndoes not look like an exploded EPUB folder "
                     "(no META-INF/container.xml or package document found).",
                     path=folder,
-                ),
-                _("Package folder as EPUB"),
-                wx.OK | wx.ICON_WARNING,
-                self,
-            )
+                )
+            wx.MessageBox(message, title, wx.OK | wx.ICON_WARNING, self)
             return
 
         with wx.FileDialog(
             self,
-            _("Package folder as EPUB"),
+            title,
             defaultDir=str(folder.parent),
-            defaultFile=f"{folder.name}.epub",
-            wildcard=_("EPUB files (*.epub)|*.epub|All files (*.*)|*.*"),
+            defaultFile=f"{folder.name}{suffix}",
+            wildcard=wildcard,
             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
         ) as dlg:
             if dlg.ShowModal() != wx.ID_OK:
@@ -8123,12 +8173,11 @@ class MainFrame(wx.Frame):
         try:
             create_epub(folder, output_path)
         except OSError as exc:
-            wx.MessageBox(
-                _("Could not create the EPUB package:\n{error}", error=exc),
-                _("Error"),
-                wx.OK | wx.ICON_ERROR,
-                self,
-            )
+            if ebraille:
+                error = _("Could not create the eBraille package:\n{error}", error=exc)
+            else:
+                error = _("Could not create the EPUB package:\n{error}", error=exc)
+            wx.MessageBox(error, _("Error"), wx.OK | wx.ICON_ERROR, self)
             return
 
         reply = wx.MessageBox(
@@ -8136,7 +8185,7 @@ class MainFrame(wx.Frame):
                 "Created {path}.\n\nValidate the new package now?",
                 path=output_path,
             ),
-            _("Package folder as EPUB"),
+            title,
             wx.YES_NO | wx.ICON_QUESTION,
             self,
         )
