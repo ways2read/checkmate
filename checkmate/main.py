@@ -2037,12 +2037,21 @@ class IssueDetailDialog(wx.Dialog):
             from .ai.markdown_html import issue_details_page
 
             view.Bind(html2.EVT_WEBVIEW_NAVIGATING, self._on_details_webview_navigating)
-            view.SetPage(
-                issue_details_page(
-                    self._issue, count=self._issue_count, tab_exit=True
-                ),
-                "",
+            view.Bind(html2.EVT_WEBVIEW_LOADED, self._on_details_webview_loaded)
+            view.Bind(html2.EVT_WEBVIEW_ERROR, self._on_details_webview_error)
+            page = issue_details_page(
+                self._issue, count=self._issue_count, tab_exit=True
             )
+            self._details_loaded = False
+            self._details_sent_at = time.monotonic()
+            logger.info(
+                "Issue details: page sent to WebView (%d chars) source=%s code=%s",
+                len(page),
+                self._issue.source,
+                self._issue.code,
+            )
+            view.SetPage(page, "")
+            self._call_later(5000, self._check_details_loaded)
         else:
             if hasattr(view, "ChangeValue"):
                 view.ChangeValue(self._details_plain)
@@ -2595,6 +2604,38 @@ class IssueDetailDialog(wx.Dialog):
                     return
         open_knowledge_base_url(self, url)
 
+    def _on_details_webview_loaded(self, event) -> None:
+        event.Skip()
+        if getattr(self, "_details_loaded", False):
+            return
+        self._details_loaded = True
+        elapsed = time.monotonic() - getattr(self, "_details_sent_at", time.monotonic())
+        logger.info(
+            "Issue details: WebView loaded after %.2fs url=%s",
+            elapsed,
+            event.GetURL() or "(none)",
+        )
+
+    def _on_details_webview_error(self, event) -> None:
+        event.Skip()
+        logger.warning(
+            "Issue details: WebView error url=%s target=%s detail=%s",
+            event.GetURL() or "(none)",
+            event.GetTarget() or "(none)",
+            event.GetString() or "(none)",
+        )
+
+    def _check_details_loaded(self) -> None:
+        """Log when the details page never reported loading (pane left blank)."""
+        if getattr(self, "_details_loaded", True) or not self._ai_dialog_alive():
+            return
+        logger.warning(
+            "Issue details: WebView has not reported loading 5s after the page "
+            "was sent; the pane is probably blank. source=%s code=%s",
+            self._issue.source,
+            self._issue.code,
+        )
+
     def _on_details_webview_navigating(self, event) -> None:
         """Tab/Escape leave the details WebView; open http(s) externally."""
         url = (event.GetURL() or "").strip()
@@ -2722,6 +2763,16 @@ class IssueDetailDialog(wx.Dialog):
         self._stop_pending_later()
         if reclaim_focus:
             self._focus_dialog_chrome()
+        if getattr(self, "_details_is_webview", False):
+            details = getattr(self, "details_view", None)
+            if details is not None:
+                try:
+                    import wx.html2 as html2
+
+                    details.Unbind(html2.EVT_WEBVIEW_LOADED)
+                    details.Unbind(html2.EVT_WEBVIEW_ERROR)
+                except Exception:
+                    pass
         if not getattr(self, "_ai_output_is_webview", False):
             return
         view = getattr(self, "ai_output", None)
