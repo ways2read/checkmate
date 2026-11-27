@@ -289,6 +289,47 @@ def test_dark_mode_status_icons_exist() -> None:
         assert (images / name).is_file(), name
 
 
+def test_wait_hourglass_animation_sand_settles_with_gravity() -> None:
+    """Sand must sit at the bottom of the active bulb, never hanging at the top."""
+    import wx
+
+    from checkmate.main import MainFrame
+    from checkmate.paths import application_dir
+
+    _ensure_wx_app()
+    images = application_dir() / "images"
+    expected_len = (
+        MainFrame._WAIT_DRAIN_STEPS
+        + 1
+        + MainFrame._WAIT_PAUSE_TICKS
+        + MainFrame._WAIT_FLIP_STEPS
+        - 1
+    )
+    for name in ("checkmate-wait.png", "checkmate-wait-dark.png"):
+        base = wx.Image(str(images / name), wx.BITMAP_TYPE_PNG)
+        frames = MainFrame._build_wait_animation_images(base, 256)
+        assert len(frames) == expected_len
+        assert all(f.GetWidth() == 256 and f.GetHeight() == 256 for f in frames)
+
+        # Frame 0 (start of drain): empty space near top of upper bulb (y=84),
+        # solid sand resting near the neck (y=118), lower bulb empty (y=168).
+        f0 = frames[0]
+        assert f0.GetAlpha(128, 84) < 32
+        assert f0.GetAlpha(128, 118) > 200
+        assert f0.GetAlpha(128, 168) < 32
+
+        # Drained frame (before flip): upper bulb empty (y=118), lower bulb full (y=168).
+        drained = frames[MainFrame._WAIT_DRAIN_STEPS]
+        assert drained.GetAlpha(128, 118) < 32
+        assert drained.GetAlpha(128, 168) > 200
+
+        # Final flip frame (just before 180° -> frame 0): sand settled into the
+        # lower part of the upper bulb (y=118), empty space above it (y=84).
+        last_flip = frames[-1]
+        assert last_flip.GetAlpha(128, 84) < 32
+        assert last_flip.GetAlpha(128, 118) > 200
+
+
 def test_ui_appearance_imports_on_non_windows() -> None:
     """Win32 callback types must not be built at import time."""
     import ctypes

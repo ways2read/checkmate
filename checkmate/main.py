@@ -5903,13 +5903,240 @@ class MainFrame(wx.Frame):
         self._result_icon_cache[cache_key] = bitmap
         return bitmap
 
-    # Hourglass animation: flip 180° in _WAIT_FLIP_STEPS frames, then rest.
-    _WAIT_FLIP_STEPS = 12
-    _WAIT_REST_TICKS = 14
+    # Hourglass animation: drain sand while upright, pause briefly, then flip
+    # 180° with gravity-settled sand so the next drain cycle starts seamlessly.
+    _WAIT_DRAIN_STEPS = 16
+    _WAIT_PAUSE_TICKS = 2
+    _WAIT_FLIP_STEPS = 10
     _WAIT_TICK_MS = 50
 
+    @classmethod
+    def _build_wait_animation_images(cls, base: wx.Image, size: int) -> list[wx.Image]:
+        """Build animation frames from the wait PNG (drain -> pause -> 180° flip)."""
+        import math
+
+        if not base.IsOk():
+            return []
+        if not base.HasAlpha():
+            base = base.Copy()
+            base.InitAlpha()
+        w, h = base.GetWidth(), base.GetHeight()
+        # The square frame's transparent interior (50..205 in the 256px asset).
+        lo, hi = round(w * 50 / 256), round(w * 206 / 256)
+        cw = ch = hi - lo
+        if cw <= 0 or ch <= 0:
+            return []
+
+        # Sample the icon's foreground colour from the outer square frame.
+        fr_x, fr_y = round(w * 38 / 256), round(h * 128 / 256)
+        cr = base.GetRed(fr_x, fr_y)
+        cg = base.GetGreen(fr_x, fr_y)
+        cb = base.GetBlue(fr_x, fr_y)
+
+        # Keep the outer square frame fixed and clear its interior.
+        frame_only = base.Copy()
+        frame_alpha = bytearray(frame_only.GetAlpha())
+        blank_row = bytes(cw)
+        for y in range(lo, hi):
+            row_off = y * w
+            frame_alpha[row_off + lo : row_off + hi] = blank_row
+        frame_only.SetAlpha(bytes(frame_alpha))
+
+        # Locate the hourglass inside the interior so it rotates about its centre.
+        base_alpha = bytes(base.GetAlpha())
+        hg_xs: list[int] = []
+        hg_ys: list[int] = []
+        for y in range(lo, hi):
+            row_off = y * w
+            for x in range(lo, hi):
+                if base_alpha[row_off + x] > 128:
+                    hg_xs.append(x)
+                    hg_ys.append(y)
+        if not hg_xs or not hg_ys:
+            return []
+        hg_cx = (min(hg_xs) + max(hg_xs)) / 2.0
+        hg_cy = (min(hg_ys) + max(hg_ys)) / 2.0
+        lcx = (cw - 1) / 2.0
+        lcy = (ch - 1) / 2.0
+
+        # Extract a clean, vertically symmetric empty hourglass shell from the
+        # unobstructed regions of the source PNG (lower walls without centre
+        # dots, and upper cap + walls).
+        shell_alpha = bytearray(cw * ch)
+        half_h = int(math.ceil((max(hg_ys) - min(hg_ys)) / 2.0)) + 2
+        neck_clear_half = round(w * 5 / 256)
+        cap_zone_dy = round(h * 42 / 256)
+        for dy in range(half_h + 1):
+            ly_top = int(round(lcy - 0.5 - dy))
+            ly_bot = int(round(lcy + 0.5 + dy))
+            if dy < cap_zone_dy:
+                src_y = int(round(hg_cy + 0.5 + dy))
+                strip_center = True
+            else:
+                src_y = int(round(hg_cy - 0.5 - dy))
+                strip_center = False
+            if not (lo <= src_y < hi):
+                continue
+            src_row_off = src_y * w
+            for lx in range(cw):
+                dx = lx - lcx
+                src_x = int(round(hg_cx + dx))
+                if not (lo <= src_x < hi):
+                    continue
+                if strip_center and abs(dx) <= neck_clear_half:
+                    a = 0
+                else:
+                    a = base_alpha[src_row_off + src_x]
+                if 0 <= ly_top < ch:
+                    shell_alpha[ly_top * cw + lx] = a
+                if 0 <= ly_bot < ch:
+                    shell_alpha[ly_bot * cw + lx] = a
+
+        # Collect the interior pixels of the upper and lower bulbs.
+        top_cap_inner = int(round(lcy - 0.5 - round(h * 53 / 256)))
+        bot_cap_inner = int(round(lcy + 0.5 + round(h * 53 / 256)))
+        mid_y_top = int(math.floor(lcy))
+        mid_y_bot = mid_y_top + 1
+        cx_i = int(round(lcx))
+
+        def _row_interior(ly: int) -> tuple[int, int] | None:
+            row_off = ly * cw
+            xl = cx_i
+            while xl >= 0 and shell_alpha[row_off + xl] < 200:
+                xl -= 1
+            xr = cx_i
+            while xr < cw and shell_alpha[row_off + xr] < 200:
+                xr += 1
+            if xl < 0 or xr >= cw or xl >= xr - 1:
+                return None
+            return (xl + 1, xr - 1)
+
+        upper_rows: list[tuple[int, int, int]] = []
+        for ly in range(top_cap_inner, mid_y_top + 1):
+            span = _row_interior(ly)
+            if span:
+                upper_rows.append((ly, span[0], span[1]))
+        lower_rows: list[tuple[int, int, int]] = []
+        for ly in range(mid_y_bot, bot_cap_inner + 1):
+            span = _row_interior(ly)
+            if span:
+                lower_rows.append((ly, span[0], span[1]))
+        if not upper_rows or not lower_rows:
+            return []
+
+        upper_pts = [(x, y) for y, xl, xr in upper_rows for x in range(xl, xr + 1)]
+        lower_pts = [(x, y) for y, xl, xr in lower_rows for x in range(xl, xr + 1)]
+        sand_area = int(len(upper_pts) * 0.68)
+        upper_by_bottom = sorted(upper_pts, key=lambda p: -p[1])
+        local_rgb = bytes([cr, cg, cb]) * (cw * ch)
+
+        # Slight shrink (~7%) so the hourglass diagonal clears the square frame at 45°.
+        scaled_c = round(cw * 0.93)
+        paste_off = lo + (cw - scaled_c) // 2
+
+        def _make_local_image(alpha_buf: bytearray) -> wx.Image:
+            img = wx.Image(cw, ch)
+            img.SetData(local_rgb)
+            img.SetAlpha(bytes(alpha_buf))
+            return img
+
+        def _composite_on_frame(local_img: wx.Image) -> wx.Image:
+            if scaled_c != cw:
+                local_img = local_img.Scale(scaled_c, scaled_c, wx.IMAGE_QUALITY_HIGH)
+            out = frame_only.Copy()
+            out.Paste(local_img, paste_off, paste_off)
+            if w != size or h != size:
+                out = out.Scale(size, size, wx.IMAGE_QUALITY_HIGH)
+            return out
+
+        images: list[wx.Image] = []
+        drain_steps = cls._WAIT_DRAIN_STEPS
+        dot_r = max(2.0, w * 3.4 / 256)
+        dot_spacing = w * 11.5 / 256
+        half_w = max(1.0, (lower_rows[-1][2] - lower_rows[-1][1]) / 2.0)
+
+        # Phase 1: Sand drains from upper bulb to lower bulb while upright.
+        for step in range(drain_steps + 1):
+            p = step / drain_steps
+            alpha = bytearray(shell_alpha)
+
+            n_upper = int(round(sand_area * (1.0 - p)))
+            for x, y in upper_by_bottom[:n_upper]:
+                alpha[y * cw + x] = 255
+
+            n_lower = int(round(sand_area * p))
+            pile_top_y = bot_cap_inner
+            if n_lower > 0:
+                cone = (1.0 - p) * (w * 14.0 / 256)
+                scored = sorted(
+                    lower_pts,
+                    key=lambda pt: -(pt[1] + cone * (1.0 - abs(pt[0] - lcx) / half_w)),
+                )
+                chosen = scored[:n_lower]
+                for x, y in chosen:
+                    alpha[y * cw + x] = 255
+                center_ys = [y for x, y in chosen if abs(x - lcx) <= 1.5]
+                if center_ys:
+                    pile_top_y = min(center_ys)
+
+            if 0 < step < drain_steps:
+                y_start = mid_y_bot + w * 2.5 / 256
+                y_end = pile_top_y - dot_r
+                phase = (step * (dot_spacing / 3.0)) % dot_spacing
+                dy_cur = y_start + phase
+                while dy_cur < y_end:
+                    iy0 = max(0, int(math.floor(dy_cur - dot_r - 1)))
+                    iy1 = min(ch - 1, int(math.ceil(dy_cur + dot_r + 1)))
+                    ix0 = max(0, int(math.floor(lcx - dot_r - 1)))
+                    ix1 = min(cw - 1, int(math.ceil(lcx + dot_r + 1)))
+                    for yy in range(iy0, iy1 + 1):
+                        for xx in range(ix0, ix1 + 1):
+                            dist = math.hypot(xx - lcx, yy - dy_cur)
+                            if dist <= dot_r + 0.5:
+                                a = (
+                                    255
+                                    if dist <= dot_r - 0.5
+                                    else int(round(255 * (dot_r + 0.5 - dist)))
+                                )
+                                idx = yy * cw + xx
+                                if a > alpha[idx]:
+                                    alpha[idx] = a
+                    dy_cur += dot_spacing
+
+            images.append(_composite_on_frame(_make_local_image(alpha)))
+
+        # Brief pause at the drained state before flipping.
+        for _ in range(cls._WAIT_PAUSE_TICKS):
+            images.append(images[-1])
+
+        # Phase 2: Clockwise 180° flip; sand settles under gravity inside the
+        # filled bulb so it arrives at the neck of the new upper bulb (matching
+        # frame 0 seamlessly).
+        centre = wx.Point(cw // 2, ch // 2)
+        for i in range(1, cls._WAIT_FLIP_STEPS):
+            t = i / cls._WAIT_FLIP_STEPS
+            eased = 0.5 * (1.0 - math.cos(math.pi * t))
+            angle = -math.pi * eased
+            sin_a = math.sin(angle)
+            cos_a = math.cos(angle)
+            settled = sorted(
+                lower_pts,
+                key=lambda pt: -(-(pt[0] - lcx) * sin_a + (pt[1] - lcy) * cos_a),
+            )[:sand_area]
+            alpha = bytearray(shell_alpha)
+            for x, y in settled:
+                alpha[y * cw + x] = 255
+            rotated = _make_local_image(alpha).Rotate(angle, centre, True)
+            rw, rh = rotated.GetWidth(), rotated.GetHeight()
+            rotated = rotated.GetSubImage(
+                wx.Rect((rw - cw) // 2, (rh - ch) // 2, cw, ch)
+            )
+            images.append(_composite_on_frame(rotated))
+
+        return images
+
     def _wait_animation_frames(self, size: int) -> list[wx.Bitmap]:
-        """Frames of the hourglass turning over inside its fixed frame."""
+        """Frames of the hourglass draining and turning over inside its frame."""
         from .ui_appearance import prefers_dark
 
         cache_key = (size, prefers_dark())
@@ -5920,36 +6147,8 @@ class MainFrame(wx.Frame):
         if path is None:
             return []
         base = wx.Image(str(path), wx.BITMAP_TYPE_PNG)
-        if not base.IsOk():
-            return []
-        if not base.HasAlpha():
-            base.InitAlpha()
-        w, h = base.GetWidth(), base.GetHeight()
-        # The square frame's transparent interior (see images/checkmate-wait.png).
-        lo, hi = round(w * 51 / 256), round(w * 206 / 256)
-        inner_rect = wx.Rect(lo, lo, hi - lo, hi - lo)
-        inner = base.GetSubImage(inner_rect)
-        frame_only = base.Copy()
-        frame_only.SetRGB(inner_rect, 0, 0, 0)
-        for y in range(inner_rect.y, inner_rect.y + inner_rect.height):
-            for x in range(inner_rect.x, inner_rect.x + inner_rect.width):
-                frame_only.SetAlpha(x, y, 0)
-        cw, ch = inner.GetWidth(), inner.GetHeight()
-        centre = wx.Point(cw // 2, ch // 2)
         frames: list[wx.Bitmap] = []
-        import math
-
-        for i in range(self._WAIT_FLIP_STEPS + 1):
-            angle = math.pi * i / self._WAIT_FLIP_STEPS
-            rotated = inner.Rotate(angle, centre, True)
-            rw, rh = rotated.GetWidth(), rotated.GetHeight()
-            rotated = rotated.GetSubImage(
-                wx.Rect((rw - cw) // 2, (rh - ch) // 2, cw, ch)
-            )
-            img = frame_only.Copy()
-            img.Paste(rotated, inner_rect.x, inner_rect.y)
-            if w != size or h != size:
-                img = img.Scale(size, size, wx.IMAGE_QUALITY_HIGH)
+        for img in self._build_wait_animation_images(base, size):
             bmp = wx.Bitmap(img)
             if bmp.IsOk():
                 frames.append(bmp)
@@ -5979,16 +6178,8 @@ class MainFrame(wx.Frame):
         if not self._busy or not frames or not hasattr(self, "result_icon"):
             self._stop_wait_animation()
             return
-        flip = len(frames) - 1
-        self._wait_step = (self._wait_step + 1) % (flip + self._WAIT_REST_TICKS)
-        step = self._wait_step
-        if step <= flip:
-            index = step  # turning over
-        elif step < flip + self._WAIT_REST_TICKS // 2:
-            index = flip  # upside down: sand at the top
-        else:
-            index = 0  # same outline, sand has run through
-        self.result_icon.SetBitmap(frames[index])
+        self._wait_step = (self._wait_step + 1) % len(frames)
+        self.result_icon.SetBitmap(frames[self._wait_step])
 
     def _update_result_status_icon(self) -> None:
         """Show waiting / pass / issues graphic beside the result box."""
@@ -6007,7 +6198,10 @@ class MainFrame(wx.Frame):
             current = self.result_icon.GetBitmap()
             if current.IsOk() and current.GetWidth() == size:
                 return
-        bitmap = self._scaled_result_icon_bitmap(key, size)
+        if key == "wait" and self._wait_timer.IsRunning() and self._wait_frames:
+            bitmap = self._wait_frames[self._wait_step % len(self._wait_frames)]
+        else:
+            bitmap = self._scaled_result_icon_bitmap(key, size)
         if bitmap is None:
             self.result_icon.SetBitmap(wx.NullBitmap)
             self.result_icon.SetToolTip("")
